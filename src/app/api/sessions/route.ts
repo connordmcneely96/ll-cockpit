@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const agentName = searchParams.get('agent')
 
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
 
   const query = agentName
     ? DB.prepare(
