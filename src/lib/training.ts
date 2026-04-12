@@ -1,5 +1,4 @@
 import type { D1Database } from '@cloudflare/workers-types'
-import { randomUUID } from 'crypto'
 
 interface CaptureTrainingDataParams {
   db: D1Database
@@ -29,7 +28,7 @@ export async function captureTrainingData({
         `INSERT INTO training_data (id, instruction, response, agent_name, quality_score, collected_at)
          VALUES (?, ?, ?, ?, ?, unixepoch())`
       )
-      .bind(randomUUID(), instruction, response, agentName, qualityScore)
+      .bind(crypto.randomUUID(), instruction, response, agentName, qualityScore)
       .run()
   } catch {
     // Non-critical — don't fail the request if training capture fails

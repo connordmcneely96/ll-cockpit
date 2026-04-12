@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { TerminalPane } from './TerminalPane'
 
 export default function TerminalPage() {
