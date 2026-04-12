@@ -19,8 +19,3 @@ export default async function AgentPage({ params }: AgentPageProps) {
     </div>
   )
 }
-
-export async function generateStaticParams() {
-  const agents = ['nexus', 'scout', 'intake', 'forge', 'builder', 'atlas', 'herald', 'reel', 'sentinel', 'dispatch', 'anchor']
-  return agents.map((name) => ({ name }))
-}
