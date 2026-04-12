@@ -12,7 +12,7 @@ export async function GET() {
   }
 
   try {
-    const { DB, KV } = await getBindings()
+    const { DB, KV } = getBindings()
 
     // D1 check
     try {

@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 4. Get bindings ───────────────────────────────────────────────────────────
-  const { DB, KV, ANTHROPIC_API_KEY } = await getBindings()
+  const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })

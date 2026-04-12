@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'toolCallId required' }, { status: 400 })
   }
 
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
 
   try {
     // Log the approval/rejection
