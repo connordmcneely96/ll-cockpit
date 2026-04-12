@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { KanbanBoard } from './KanbanBoard'
 
 export default function PipelinePage() {
