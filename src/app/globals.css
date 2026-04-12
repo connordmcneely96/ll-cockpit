@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Design Tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --navy:  #07091a;
+  --navy2: #0d1230;
+  --navy3: #111936;
+  --navy4: #1a2245;
+  --gold:  #f5c842;
+  --cyan:  #00d4ff;
+  --green: #2ed573;
+  --red:   #ff4757;
+  --text1: #ffffff;
+  --text2: #b8c4e0;
+  --text3: #6b7a99;
+  --border: rgba(245, 200, 66, 0.12);
+}
+
+/* ─── Base ────────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  background-color: var(--navy);
+  color: var(--text1);
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--navy4);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 200, 66, 0.3);
+}
+
+/* ─── Prose (agent message output) ───────────────────────────────────────── */
+.agent-prose pre {
+  background: var(--navy4);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.agent-prose code:not(pre code) {
+  background: var(--navy4);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+  font-size: 0.875em;
+  color: var(--cyan);
+}
+
+.agent-prose p {
+  margin-bottom: 0.75rem;
+  line-height: 1.7;
+}
+
+.agent-prose ul,
+.agent-prose ol {
+  padding-left: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.agent-prose li {
+  margin-bottom: 0.25rem;
+}
+
+.agent-prose h1,
+.agent-prose h2,
+.agent-prose h3 {
+  color: var(--text1);
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.agent-prose strong {
+  color: var(--gold);
+}
+
+.agent-prose blockquote {
+  border-left: 3px solid var(--gold);
+  padding-left: 1rem;
+  color: var(--text2);
+  margin: 0.75rem 0;
+}
