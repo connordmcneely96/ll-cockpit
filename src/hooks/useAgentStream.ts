@@ -41,8 +41,8 @@ export function useAgentStream(agentName: AgentName) {
         })
 
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: 'Stream failed' }))
-          appendToLastMessage(agentName, `\n\n**Error:** ${err.error ?? 'Unknown error'}`)
+          const err = await res.json().catch(() => ({ error: 'Stream failed' })) as Record<string, unknown>
+          appendToLastMessage(agentName, `\n\n**Error:** ${String(err.error ?? 'Unknown error')}`)
           return
         }
 
