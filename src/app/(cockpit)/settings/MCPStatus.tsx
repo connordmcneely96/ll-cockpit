@@ -29,7 +29,7 @@ export function MCPStatus() {
     async function check() {
       try {
         const res = await fetch('/api/health')
-        const data = await res.json()
+        const data = await res.json() as Record<string, unknown>
 
         if (!active) return
 
