@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   // ── 2. Parse body ─────────────────────────────────────────────────────────────
   let agentName: string, message: string
   try {
-    const body = await req.json()
+    const body = await req.json() as { agentName: string; message: string }
     agentName = body.agentName
     message = body.message
   } catch {
