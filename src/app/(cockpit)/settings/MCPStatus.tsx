@@ -36,9 +36,9 @@ export function MCPStatus() {
         setStatuses((prev) =>
           prev.map((s) => {
             if (s.name === 'D1 Database')
-              return { ...s, status: data.d1 === true ? 'ok' : 'error', detail: data.d1_error }
+              return { ...s, status: data.d1 === true ? 'ok' : 'error' as const, detail: data.d1_error as string | undefined }
             if (s.name === 'KV Namespace')
-              return { ...s, status: data.kv === true ? 'ok' : 'error', detail: data.kv_error }
+              return { ...s, status: data.kv === true ? 'ok' : 'error' as const, detail: data.kv_error as string | undefined }
             if (s.name === 'Supabase')
               return { ...s, status: data.supabase === true ? 'ok' : 'error' }
             if (s.name === 'Anthropic API')
