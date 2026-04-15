@@ -1,15 +1,11 @@
 export const runtime = 'edge'
 
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-server'
 import { AGENT_LIST } from '@/lib/agents'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 
-export default async function DashboardPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
+export default function DashboardPage() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
@@ -18,7 +14,7 @@ export default async function DashboardPage() {
           NEXUS PRIME
         </h1>
         <p className="text-text3 font-mono text-sm mt-1">
-          Welcome, {user?.email} — Leadership Legacy Digital AI Cockpit
+          Leadership Legacy Digital AI Cockpit
         </p>
       </div>
 
