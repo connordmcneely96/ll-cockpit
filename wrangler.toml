@@ -1,0 +1,17 @@
+name = "ll-cockpit"
+compatibility_date = "2026-04-12"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ll-cockpit-db"
+database_id = "831eeccf-60bc-4378-8a3b-71dfb910756e"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "db6866496e1f426e9d84758c9329ccfe"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "ll-cockpit-r2"
