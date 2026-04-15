@@ -4,16 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npx @opennextjs/cloudflare build",
     "start": "next start",
     "lint": "next lint",
-    "preview": "npm run build && wrangler pages dev .vercel/output/static --compatibility-flag=nodejs_compat",
-    "deploy": "npm run build && wrangler pages deploy .vercel/output/static",
+    "preview": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@cloudflare/next-on-pages": "^1.13.12",
     "@monaco-editor/react": "^4.6.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.4",
@@ -26,6 +25,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250409.0",
+    "@opennextjs/cloudflare": "^1.0.0",
     "@types/node": "^20.17.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

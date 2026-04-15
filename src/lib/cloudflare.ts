@@ -1,10 +1,10 @@
 import type { CloudflareEnv } from '@/types'
-import { getRequestContext } from '@cloudflare/next-on-pages'
+import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 /**
  * Returns Cloudflare bindings (D1, KV, R2, secrets).
- * Uses @cloudflare/next-on-pages for Cloudflare Pages deployment.
+ * Uses @opennextjs/cloudflare for Cloudflare Workers deployment.
  */
 export function getBindings(): CloudflareEnv {
-  return getRequestContext().env as CloudflareEnv
+  return getCloudflareContext().env as CloudflareEnv
 }
