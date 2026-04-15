@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
   let body: { toolCallId: string; taskId: string; approved: boolean }
   try {
-    body = await req.json()
+    body = await req.json() as { toolCallId: string; taskId: string; approved: boolean }
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
