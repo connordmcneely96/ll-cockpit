@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import '@xterm/xterm/css/xterm.css'
 
 export function TerminalPane() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -13,7 +14,6 @@ export function TerminalPane() {
     async function init() {
       const { Terminal } = await import('@xterm/xterm')
       const { FitAddon } = await import('@xterm/addon-fit')
-      await import('@xterm/xterm/css/xterm.css')
 
       term = new Terminal({
         theme: {
