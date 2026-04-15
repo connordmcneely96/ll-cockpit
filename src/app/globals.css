@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Font Variables ──────────────────────────────────────────────────────── */
+/* Loaded via <link> in layout.tsx — Google Fonts served from browser side    */
+:root {
+  --font-mono: 'JetBrains Mono';
+  --font-condensed: 'Barlow Condensed';
+  --font-sans: 'Barlow';
+}
+
 /* ─── Design Tokens ─────────────────────────────────────────────────────────── */
 :root {
   --navy:  #07091a;
