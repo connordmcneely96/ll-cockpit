@@ -11,20 +11,6 @@ const config: OpenNextConfig = {
       queue: "dummy",
     },
   },
-  functions: {
-    authCallback: {
-      routes: ["app/(auth)/callback/route"],
-      patterns: ["/callback"],
-      override: {
-        wrapper: "cloudflare-edge",
-        converter: "edge",
-        proxyExternalRequest: "fetch",
-        incrementalCache: "dummy",
-        tagCache: "dummy",
-        queue: "dummy",
-      },
-    },
-  },
   edgeExternals: ["node:crypto"],
   middleware: {
     external: true,
