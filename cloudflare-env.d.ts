@@ -11,4 +11,10 @@ interface CloudflareEnv {
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
   SUPABASE_SERVICE_ROLE_KEY: string
+  MEMORY?: VectorizeIndex
+  ATLAS_RAG?: VectorizeIndex
+  RESEARCH_INDEX?: VectorizeIndex
+  TASKS?: Queue
+  RESEARCH_QUEUE?: Queue
+  AI?: Ai
 }
