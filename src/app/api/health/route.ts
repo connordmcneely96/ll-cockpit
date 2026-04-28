@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getBindings } from '@/lib/cloudflare'
 
-export const runtime = 'edge'
 
 export async function GET() {
   const checks: Record<string, boolean | string> = {

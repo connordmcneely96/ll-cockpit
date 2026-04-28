@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
-export const runtime = 'edge'
 
 // Tool execution endpoint — currently stubs pending real integrations.
 // Each tool implementation will be added here as integrations are wired up.

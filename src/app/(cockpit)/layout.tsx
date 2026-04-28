@@ -1,4 +1,3 @@
-export const runtime = 'edge'
 
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'

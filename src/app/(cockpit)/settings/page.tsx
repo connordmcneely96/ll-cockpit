@@ -1,4 +1,3 @@
-export const runtime = 'edge'
 
 import { AgentPermissions } from './AgentPermissions'
 import { BudgetSettings } from './BudgetSettings'

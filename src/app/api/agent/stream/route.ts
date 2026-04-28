@@ -7,7 +7,6 @@ import { calculateCost, SESSION_TOKEN_LIMIT } from '@/lib/cost'
 import { captureTrainingData } from '@/lib/training'
 import type { SSEEvent } from '@/types'
 
-export const runtime = 'edge'
 
 const encoder = new TextEncoder()
 

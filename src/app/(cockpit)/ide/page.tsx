@@ -1,4 +1,3 @@
-export const runtime = 'edge'
 
 import { FileTree } from './FileTree'
 import { CodeEditor } from './CodeEditor'
