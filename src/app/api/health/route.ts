@@ -1,44 +1,52 @@
-import { NextResponse } from 'next/server'
-import { getBindings } from '@/lib/cloudflare'
-
+import { NextResponse } from 'next/server';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 export async function GET() {
-  const checks: Record<string, boolean | string> = {
-    status: 'ok',
-    d1: false,
-    kv: false,
-    supabase: false,
-  }
+  const checks: Record<string, 'ok' | 'error' | 'missing'> = {};
+  let allHealthy = true;
 
+  // D1 check
   try {
-    const { DB, KV } = getBindings()
-
-    // D1 check
-    try {
-      await DB.prepare('SELECT 1').run()
-      checks.d1 = true
-    } catch (e) {
-      checks.d1_error = e instanceof Error ? e.message : 'unknown'
-    }
-
-    // KV check
-    try {
-      await KV.put('health_check', Date.now().toString(), { expirationTtl: 60 })
-      checks.kv = true
-    } catch (e) {
-      checks.kv_error = e instanceof Error ? e.message : 'unknown'
-    }
-
-    // Supabase check (just validate env vars exist)
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    checks.supabase = !!supabaseUrl && supabaseUrl.startsWith('https://')
-  } catch (e) {
-    checks.bindings_error = e instanceof Error ? e.message : 'unknown'
+    const { env } = await getCloudflareContext();
+    const result = await env.DB.prepare('SELECT 1 AS ok').first<{ ok: number }>();
+    checks.d1 = result?.ok === 1 ? 'ok' : 'error';
+  } catch {
+    checks.d1 = 'error';
+    allHealthy = false;
   }
 
-  const allOk = checks.d1 === true && checks.kv === true && checks.supabase === true
+  // KV check
+  try {
+    const { env } = await getCloudflareContext();
+    await env.KV.get('__health__'); // null return is fine — just confirms binding works
+    checks.kv = 'ok';
+  } catch {
+    checks.kv = 'error';
+    allHealthy = false;
+  }
+
+  // Supabase env check
+  try {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_ANON_KEY;
+    if (!url || !key) {
+      checks.supabase = 'missing';
+      allHealthy = false;
+    } else {
+      checks.supabase = 'ok';
+    }
+  } catch {
+    checks.supabase = 'error';
+    allHealthy = false;
+  }
+
   return NextResponse.json(
-    { ...checks, timestamp: new Date().toISOString() },
-    { status: allOk ? 200 : 503 }
-  )
+    {
+      status: allHealthy ? 'ok' : 'degraded',
+      checks,
+      timestamp: new Date().toISOString(),
+      version: '1.0.0',
+    },
+    { status: allHealthy ? 200 : 503 }
+  );
 }
