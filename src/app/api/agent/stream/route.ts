@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
                 type: 'tool_call',
                 id: chunk.content_block.id,
                 name: chunk.content_block.name,
-                input: {},
+                input: chunk.content_block.input as Record<string, unknown>,
                 requiresApproval,
               })
 
