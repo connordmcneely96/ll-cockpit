@@ -96,6 +96,59 @@ CREATE TABLE IF NOT EXISTS cockpit_terminal_sessions (
   last_active INTEGER
 );
 
+-- ── Agent runtime tables ──────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  agent_name TEXT NOT NULL,
+  task_type TEXT NOT NULL DEFAULT 'chat',
+  input TEXT,
+  output TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  error_log TEXT,
+  tokens_used INTEGER,
+  cost_usd REAL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_user ON agent_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent ON agent_tasks(agent_name);
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON agent_tasks(created_at);
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  agent_name TEXT NOT NULL,
+  title TEXT,
+  last_active INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON agent_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON agent_sessions(user_id, agent_name);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  user_id TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  tool_input TEXT,
+  user_approved INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_task ON tool_calls(task_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_user ON tool_calls(user_id);
+
+CREATE TABLE IF NOT EXISTS training_data (
+  id TEXT PRIMARY KEY,
+  agent_name TEXT NOT NULL,
+  instruction TEXT NOT NULL,
+  response TEXT NOT NULL,
+  quality_score REAL NOT NULL DEFAULT 0.5,
+  collected_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_training_agent ON training_data(agent_name);
+CREATE INDEX IF NOT EXISTS idx_training_score ON training_data(quality_score);
+
 CREATE TABLE IF NOT EXISTS agent_perf (
   id TEXT PRIMARY KEY,
   agent TEXT NOT NULL,
