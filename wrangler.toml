@@ -18,25 +18,3 @@ id = "db6866496e1f426e9d84758c9329ccfe"
 binding = "R2"
 bucket_name = "ll-cockpit-r2"
 
-[[vectorize]]
-binding = "MEMORY"
-index_name = "nexus-memory"
-
-[[vectorize]]
-binding = "ATLAS_RAG"
-index_name = "atlas-engineering"
-
-[[vectorize]]
-binding = "RESEARCH_INDEX"
-index_name = "cockpit-research"
-
-[[queues.producers]]
-queue = "nexus-tasks"
-binding = "TASKS"
-
-[[queues.producers]]
-queue = "research-ingest"
-binding = "RESEARCH_QUEUE"
-
-[ai]
-binding = "AI"
