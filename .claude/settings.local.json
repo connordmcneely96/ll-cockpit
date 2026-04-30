@@ -1,0 +1,9 @@
+{
+  "enabledMcpjsonServers": [
+    "playwright",
+    "filesystem",
+    "github",
+    "memory",
+    "fetch"
+  ]
+}
