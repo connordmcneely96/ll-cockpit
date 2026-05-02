@@ -1,0 +1,21 @@
+name = "knowledge-embed-consumer"
+main = "index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ll-cockpit-db"
+database_id = "831eeccf-60bc-4378-8a3b-71dfb910756e"
+
+[[queues.consumers]]
+queue = "knowledge-embed-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "KNOWLEDGE_VECTORIZE"
+index_name = "nexus-knowledge"
