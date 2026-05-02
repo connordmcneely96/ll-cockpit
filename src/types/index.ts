@@ -133,6 +133,7 @@ export interface CloudflareEnv {
   DB: D1Database
   KV: KVNamespace
   R2: R2Bucket
+  KNOWLEDGE_QUEUE: Queue
   ANTHROPIC_API_KEY: string
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
