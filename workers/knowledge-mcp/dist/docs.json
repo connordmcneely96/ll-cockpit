@@ -1,0 +1,54 @@
+{
+  "KnowledgeMCP": {
+    "exported_as": "default",
+    "description": null,
+    "methods": [
+      {
+        "name": "search_knowledge",
+        "description": "Search the NEXUS knowledge base for study guide concepts,\narchitecture decisions, tech stack details, and agent descriptions.\nUse this when you need context about the NEXUS project during a build session.",
+        "params": [
+          {
+            "description": "Natural language search query",
+            "name": "query",
+            "type": "string"
+          },
+          {
+            "description": "Number of results to return (default 5, max 10)",
+            "name": "limit",
+            "type": "number"
+          }
+        ],
+        "returns": {
+          "description": "JSON array of matching knowledge records with relevance scores",
+          "type": "string"
+        }
+      },
+      {
+        "name": "get_sprint_status",
+        "description": "Get current sprint items and their completion status.\nUse this to check what has been built, what is in progress, and what is pending.",
+        "params": [
+          {
+            "description": "Sprint number to filter by. Omit to get all sprints.",
+            "name": "sprint_number",
+            "type": "number"
+          },
+          {
+            "description": "Filter by status: todo, in_progress, or done. Omit for all.",
+            "name": "status",
+            "type": "string"
+          }
+        ],
+        "returns": {
+          "description": "JSON array of sprint items ordered by sprint number and priority",
+          "type": "string"
+        }
+      },
+      {
+        "name": "fetch",
+        "params": [],
+        "returns": null
+      }
+    ],
+    "statics": {}
+  }
+}
