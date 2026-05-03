@@ -16,3 +16,18 @@ id = "db6866496e1f426e9d84758c9329ccfe"
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "ll-cockpit-r2"
+<<<<<<< HEAD
+=======
+
+[[queues.producers]]
+queue = "knowledge-embed-queue"
+binding = "KNOWLEDGE_QUEUE"
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "KNOWLEDGE_VECTORIZE"
+index_name = "nexus-knowledge"
+
+>>>>>>> 098cb64ae266e787c7f7a62d30d528c12b015b63

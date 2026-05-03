@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  color TEXT,
+  model_default TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+  status TEXT NOT NULL DEFAULT 'active',
+  badge TEXT NOT NULL DEFAULT 'READ',
+  can_deploy INTEGER NOT NULL DEFAULT 0,
+  can_write_files INTEGER NOT NULL DEFAULT 0,
+  can_send_email INTEGER NOT NULL DEFAULT 0,
+  can_delete INTEGER NOT NULL DEFAULT 0,
+  read_only INTEGER NOT NULL DEFAULT 0,
+  requires_approval TEXT NOT NULL DEFAULT '[]',
+  system_prompt_kv_key TEXT,
+  tools_json TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);

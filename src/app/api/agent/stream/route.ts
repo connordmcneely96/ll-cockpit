@@ -22,6 +22,31 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
+  // ── 1b. Agent permission check ────────────────────────────────────────────────
+  // Parse agentName early so we can check permission before proceeding
+  let agentNameEarly: string
+  try {
+    const rawBody = await req.clone().json() as { agentName: string; message: string }
+    agentNameEarly = rawBody.agentName
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
+  }
+
+  const { data: permission } = await supabase
+    .from('user_agent_permissions')
+    .select('can_access')
+    .eq('user_id', user.id)
+    .eq('agent_id', agentNameEarly.toUpperCase())
+    .single()
+
+  // If a permission row exists and explicitly blocks → 403
+  if (permission && !permission.can_access) {
+    return new Response(
+      JSON.stringify({ error: 'Agent access denied' }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
   // ── 2. Parse body ─────────────────────────────────────────────────────────────
   let agentName: string, message: string
   try {
