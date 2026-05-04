@@ -21,7 +21,7 @@ class_name = "KnowledgeMCP"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["KnowledgeMCP"]
+new_sqlite_classes = ["KnowledgeMCP"]
 
 [vars]
 ENVIRONMENT = "production"
