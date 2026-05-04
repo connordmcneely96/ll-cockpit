@@ -1,21 +1,37 @@
-import { McpAgent } from 'agents/mcp';
+import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpAgent } from 'agents/mcp';
 import { z } from 'zod';
+import app from './auth';
 
-interface Env {
+// Props passed from OAuth token into the McpAgent
+// Single-tenant: userId is always 'nexus-admin'
+// Multi-tenant: userId becomes the tenant's authenticated user ID
+export type Props = {
+  userId: string;
+  tenantId: string;
+};
+
+export interface Env {
   DB: D1Database;
   AI: Ai;
   KNOWLEDGE_VECTORIZE: VectorizeIndex;
   MCP_OBJECT: DurableObjectNamespace;
+  OAUTH_KV: KVNamespace;
+  COOKIE_ENCRYPTION_KEY: string;
 }
 
-export class KnowledgeMCP extends McpAgent<Env> {
+export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer({
     name: 'nexus-knowledge-mcp',
     version: '1.0.0',
   });
 
   async init() {
+    // Single-tenant: tenantId is always 'default'
+    // Multi-tenant: swap this.props.tenantId in for all queries
+    const tenantId = this.props.tenantId ?? 'default';
+
     this.server.registerTool(
       'search_knowledge',
       {
@@ -42,14 +58,18 @@ export class KnowledgeMCP extends McpAgent<Env> {
         const results = await this.env.KNOWLEDGE_VECTORIZE.query(embedding.data[0], {
           topK: cappedLimit,
           returnMetadata: 'all',
+          // Multi-tenant: uncomment and use tenantId filter
+          // filter: { tenant_id: tenantId },
         });
 
         const enriched = await Promise.all(
           results.matches.map(async (match) => {
             const [table, id] = match.id.split('::');
             const tableName = table === 'study_nodes' ? 'study_nodes' : 'sprint_items';
-            const row = await this.env.DB.prepare(`SELECT * FROM ${tableName} WHERE id = ?`)
-              .bind(id)
+            const row = await this.env.DB.prepare(
+              `SELECT * FROM ${tableName} WHERE id = ? AND tenant_id = ?`
+            )
+              .bind(id, tenantId)
               .first();
             return { score: match.score, type: table, ...row };
           })
@@ -75,8 +95,8 @@ export class KnowledgeMCP extends McpAgent<Env> {
         },
       },
       async ({ sprint_number, status }) => {
-        let query = 'SELECT * FROM sprint_items WHERE 1=1';
-        const bindings: (string | number)[] = [];
+        let query = 'SELECT * FROM sprint_items WHERE tenant_id = ?';
+        const bindings: (string | number)[] = [tenantId];
 
         if (sprint_number !== undefined) {
           query += ' AND sprint_number = ?';
@@ -99,14 +119,15 @@ export class KnowledgeMCP extends McpAgent<Env> {
   }
 }
 
-export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const url = new URL(request.url);
-
-    if (url.pathname === '/mcp') {
-      return KnowledgeMCP.serve('/mcp').fetch(request, env, ctx);
-    }
-
-    return new Response('NEXUS Knowledge MCP — connect at /mcp', { status: 200 });
-  },
-};
+// OAuthProvider wraps everything:
+// - Routes /mcp traffic to McpAgent (the actual MCP tools)
+// - Routes everything else to the Hono auth app (handles /authorize, /approve)
+// - Handles /token and /register automatically
+export default new OAuthProvider({
+  apiRoute: '/mcp',
+  apiHandler: KnowledgeMCP.serve('/mcp') as any,
+  defaultHandler: app as any,
+  authorizeEndpoint: '/authorize',
+  tokenEndpoint: '/token',
+  clientRegistrationEndpoint: '/register',
+});
