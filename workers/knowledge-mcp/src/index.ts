@@ -82,6 +82,4 @@ export class KnowledgeMCP extends McpAgent<Env> {
   }
 }
 
-export default {
-  fetch: KnowledgeMCP.mount('/'),
-};
+export default KnowledgeMCP.mount('/');
