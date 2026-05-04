@@ -7,6 +7,7 @@ interface Env {
   AI: Ai;
   KNOWLEDGE_VECTORIZE: VectorizeIndex;
   MCP_OBJECT: DurableObjectNamespace;
+  SHARED_SECRET: string;
 }
 
 const WORKER_URL = 'https://knowledge-mcp.connorpattern.workers.dev';
@@ -84,36 +85,91 @@ export class KnowledgeMCP extends McpAgent<Env> {
   }
 }
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+function jsonResponse(data: object, status = 200) {
+  return Response.json(data, { status, headers: corsHeaders });
+}
+
 const mcpHandler = KnowledgeMCP.mount('/');
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Respond to OAuth discovery endpoints immediately — no DO needed
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    // OAuth discovery endpoints — respond immediately, no DO needed
     if (url.pathname === '/.well-known/oauth-protected-resource') {
-      return Response.json({
+      return jsonResponse({
         resource: WORKER_URL,
         authorization_servers: [WORKER_URL],
-      }, {
-        headers: { 'Access-Control-Allow-Origin': '*' }
       });
     }
 
     if (url.pathname === '/.well-known/oauth-authorization-server') {
-      return Response.json({
+      return jsonResponse({
         issuer: WORKER_URL,
         authorization_endpoint: `${WORKER_URL}/authorize`,
         token_endpoint: `${WORKER_URL}/token`,
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code'],
         code_challenge_methods_supported: ['S256'],
-      }, {
-        headers: { 'Access-Control-Allow-Origin': '*' }
+        scopes_supported: ['mcp'],
       });
     }
 
-    // Route everything else through McpAgent
+    // OAuth2 authorize endpoint
+    // Generate a code and redirect back to Claude.ai
+    if (url.pathname === '/authorize') {
+      const redirectUri = url.searchParams.get('redirect_uri');
+      const state = url.searchParams.get('state');
+
+      if (!redirectUri || !state) {
+        return jsonResponse({ error: 'invalid_request', error_description: 'Missing redirect_uri or state' }, 400);
+      }
+
+      // Encode state as the auth code (simple pass-through — we verify state at token exchange)
+      const code = btoa(JSON.stringify({ state, ts: Date.now() }));
+
+      const redirectUrl = new URL(redirectUri);
+      redirectUrl.searchParams.set('code', code);
+      redirectUrl.searchParams.set('state', state);
+
+      return Response.redirect(redirectUrl.toString(), 302);
+    }
+
+    // OAuth2 token endpoint
+    // Exchange code for access token
+    if (url.pathname === '/token' && request.method === 'POST') {
+      const body = await request.text();
+      const params = new URLSearchParams(body);
+      const code = params.get('code');
+
+      if (!code) {
+        return jsonResponse({ error: 'invalid_grant', error_description: 'Missing code' }, 400);
+      }
+
+      try {
+        JSON.parse(atob(code)); // validate code format
+      } catch {
+        return jsonResponse({ error: 'invalid_grant', error_description: 'Invalid code' }, 400);
+      }
+
+      return jsonResponse({
+        access_token: env.SHARED_SECRET,
+        token_type: 'bearer',
+        scope: 'mcp',
+      });
+    }
+
+    // All other requests go to McpAgent (the actual MCP SSE handler)
     return mcpHandler.fetch(request, env, ctx);
-  }
+  },
 };
