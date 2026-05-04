@@ -9,6 +9,8 @@ interface Env {
   MCP_OBJECT: DurableObjectNamespace;
 }
 
+const WORKER_URL = 'https://knowledge-mcp.connorpattern.workers.dev';
+
 export class KnowledgeMCP extends McpAgent<Env> {
   server = new McpServer({
     name: 'nexus-knowledge-mcp',
@@ -82,4 +84,36 @@ export class KnowledgeMCP extends McpAgent<Env> {
   }
 }
 
-export default KnowledgeMCP.mount('/');
+const mcpHandler = KnowledgeMCP.mount('/');
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+
+    // Respond to OAuth discovery endpoints immediately — no DO needed
+    if (url.pathname === '/.well-known/oauth-protected-resource') {
+      return Response.json({
+        resource: WORKER_URL,
+        authorization_servers: [WORKER_URL],
+      }, {
+        headers: { 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
+    if (url.pathname === '/.well-known/oauth-authorization-server') {
+      return Response.json({
+        issuer: WORKER_URL,
+        authorization_endpoint: `${WORKER_URL}/authorize`,
+        token_endpoint: `${WORKER_URL}/token`,
+        response_types_supported: ['code'],
+        grant_types_supported: ['authorization_code'],
+        code_challenge_methods_supported: ['S256'],
+      }, {
+        headers: { 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
+    // Route everything else through McpAgent
+    return mcpHandler.fetch(request, env, ctx);
+  }
+};
