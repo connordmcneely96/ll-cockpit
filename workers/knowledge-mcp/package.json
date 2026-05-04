@@ -11,6 +11,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "workers-mcp": "^0.0.13"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.12.3",
+    "workers-mcp": "^0.0.13",
+    "zod": "^4.4.2"
   }
 }

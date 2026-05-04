@@ -15,5 +15,13 @@ binding = "AI"
 binding = "KNOWLEDGE_VECTORIZE"
 index_name = "nexus-knowledge"
 
+[[durable_objects.bindings]]
+name = "MCP_OBJECT"
+class_name = "KnowledgeMCP"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["KnowledgeMCP"]
+
 [vars]
 ENVIRONMENT = "production"
