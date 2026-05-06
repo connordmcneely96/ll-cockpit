@@ -1,0 +1,97 @@
+openapi: 3.1.0
+info:
+  title: NEXUS Knowledge Search
+  description: >
+    Search the NEXUS knowledge base for architecture decisions, failure patterns,
+    technology references, and sprint build history. Use this during vibe coding
+    sessions to get grounded answers from actual build history instead of guessing.
+  version: 1.0.0
+
+servers:
+  - url: https://lewmvmyettxryetzrxmv.supabase.co/functions/v1
+    description: Supabase Edge Functions
+
+paths:
+  /knowledge-search:
+    post:
+      operationId: searchKnowledge
+      summary: Semantic search over NEXUS knowledge base
+      description: >
+        Embeds the query using Cloudflare Workers AI and runs cosine similarity
+        search over study_nodes and sprint_items in Supabase pgvector. Returns
+        the most semantically relevant records with similarity scores.
+        Use this when you need context about the NEXUS project — architecture
+        decisions, failure patterns, technology patterns, or sprint history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  description: Natural language search query
+                  example: "How do we deploy standalone Cloudflare Workers?"
+                limit:
+                  type: integer
+                  description: Number of results to return (default 5, max 10)
+                  default: 5
+                  minimum: 1
+                  maximum: 10
+                tenant_id:
+                  type: string
+                  description: Tenant scope (always use "default" for single-tenant)
+                  default: default
+                category:
+                  type: string
+                  description: >
+                    Optional filter by category. Valid values:
+                    failure_pattern, architecture, technology, process, codebase
+                  enum:
+                    - failure_pattern
+                    - architecture
+                    - technology
+                    - process
+                    - codebase
+      responses:
+        "200":
+          description: Successful search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        title:
+                          type: string
+                        category:
+                          type: string
+                        content:
+                          type: string
+                        tags:
+                          type: string
+                        source:
+                          type: string
+                        tenant_id:
+                          type: string
+                        table_name:
+                          type: string
+                          description: Either "study_nodes" or "sprint_items"
+                        score:
+                          type: number
+                          description: Cosine similarity score (0-1, higher is more relevant)
+                  count:
+                    type: integer
+        "400":
+          description: Missing or invalid query
+        "500":
+          description: Embedding or search error
