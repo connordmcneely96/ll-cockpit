@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { getAgent } from '@/lib/agents'
@@ -12,6 +11,33 @@ const encoder = new TextEncoder()
 function sseChunk(event: SSEEvent): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
 }
+
+// Anthropic SSE event shapes
+interface AnthropicMessageStart {
+  type: 'message_start'
+  message: { usage: { input_tokens: number } }
+}
+interface AnthropicContentBlockStart {
+  type: 'content_block_start'
+  index: number
+  content_block: { type: string; id?: string; text?: string }
+}
+interface AnthropicContentBlockDelta {
+  type: 'content_block_delta'
+  index: number
+  delta: { type: string; text?: string; partial_json?: string }
+}
+interface AnthropicMessageDelta {
+  type: 'message_delta'
+  delta: { stop_reason: string }
+  usage?: { output_tokens: number }
+}
+type AnthropicEvent =
+  | AnthropicMessageStart
+  | AnthropicContentBlockStart
+  | AnthropicContentBlockDelta
+  | AnthropicMessageDelta
+  | { type: string }
 
 export async function POST(req: NextRequest) {
   // ── 1. Auth ──────────────────────────────────────────────────────────────────
@@ -63,7 +89,6 @@ export async function POST(req: NextRequest) {
   // ── 4. Get bindings ───────────────────────────────────────────────────────────
   const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
-  console.log('[stream] apiKey present:', !!apiKey, '| agent:', agentName)
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
   }
@@ -86,7 +111,52 @@ export async function POST(req: NextRequest) {
      VALUES (?, ?, ?, 'chat', ?, 'running', unixepoch())`
   ).bind(taskId, user.id, agentName, message).run()
 
-  // ── 7. Stream ─────────────────────────────────────────────────────────────────
+  // ── 7. Call Anthropic API directly via native fetch (SDK incompatible with CF Workers) ──
+  const anthropicBody: Record<string, unknown> = {
+    model: 'claude-sonnet-4-5',
+    max_tokens: 8096,
+    stream: true,
+    system: agent.systemPrompt,
+    messages: [{ role: 'user', content: message }],
+  }
+
+  if (agent.tools.length > 0) {
+    anthropicBody.tools = agent.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.input_schema,
+    }))
+  }
+
+  let anthropicRes: Response
+  try {
+    anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(anthropicBody),
+    })
+  } catch (fetchErr) {
+    console.error('[stream] fetch to Anthropic failed:', fetchErr)
+    return new Response(
+      JSON.stringify({ error: 'Failed to reach Anthropic API' }),
+      { status: 502 }
+    )
+  }
+
+  if (!anthropicRes.ok) {
+    const errText = await anthropicRes.text()
+    console.error('[stream] Anthropic error response:', anthropicRes.status, errText)
+    return new Response(
+      JSON.stringify({ error: `Anthropic API error: ${anthropicRes.status}` }),
+      { status: 502 }
+    )
+  }
+
+  // ── 8. Stream Anthropic SSE → client SSE ──────────────────────────────────────
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => controller.enqueue(sseChunk(event))
@@ -94,70 +164,87 @@ export async function POST(req: NextRequest) {
       let fullResponse = ''
       let totalInputTokens = 0
       let totalOutputTokens = 0
+      let currentToolId = ''
+      let currentToolName = ''
+      let currentToolInput = ''
 
       try {
-        const anthropic = new Anthropic({ apiKey })
+        const reader = anthropicRes.body!.getReader()
+        const dec = new TextDecoder()
+        let buffer = ''
 
-        const anthropicTools: Anthropic.Tool[] = agent.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.input_schema as Anthropic.Tool['input_schema'],
-        }))
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        const streamParams: Anthropic.MessageCreateParamsStreaming = {
-          model: 'claude-sonnet-4-5',
-          max_tokens: 8096,
-          stream: true,
-          system: agent.systemPrompt,
-          messages: [{ role: 'user', content: message }],
-          ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
-        }
+          buffer += dec.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
 
-        console.log('[stream] calling anthropic.messages.create, model:', streamParams.model)
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const raw = line.slice(6).trim()
+            if (raw === '[DONE]') continue
 
-        // Use messages.create with stream:true — more compatible with CF Workers
-        const msgStream = await anthropic.messages.create(streamParams)
-
-        for await (const chunk of msgStream) {
-          if (chunk.type === 'content_block_delta') {
-            if (chunk.delta.type === 'text_delta') {
-              fullResponse += chunk.delta.text
-              send({ type: 'text', content: chunk.delta.text })
+            let evt: AnthropicEvent
+            try {
+              evt = JSON.parse(raw) as AnthropicEvent
+            } catch {
+              continue
             }
-          } else if (chunk.type === 'content_block_start') {
-            if (chunk.content_block.type === 'tool_use') {
-              const requiresApproval = agent.permissions.requires_approval.includes(
-                chunk.content_block.name
-              )
-              send({
-                type: 'tool_call',
-                id: chunk.content_block.id,
-                name: chunk.content_block.name,
-                input: chunk.content_block.input as Record<string, unknown>,
-                requiresApproval,
-              })
 
-              await DB.prepare(
-                `INSERT INTO tool_calls (id, task_id, user_id, tool_name, user_approved, created_at)
-                 VALUES (?, ?, ?, ?, ?, unixepoch())`
-              ).bind(
-                chunk.content_block.id,
-                taskId,
-                user.id,
-                chunk.content_block.name,
-                requiresApproval ? 0 : 1
-              ).run()
+            if (evt.type === 'message_start') {
+              const e = evt as AnthropicMessageStart
+              totalInputTokens = e.message.usage.input_tokens
+            } else if (evt.type === 'content_block_start') {
+              const e = evt as AnthropicContentBlockStart
+              if (e.content_block.type === 'tool_use') {
+                currentToolId = e.content_block.id ?? ''
+                currentToolName = e.content_block.text ?? ''
+                currentToolInput = ''
+              }
+            } else if (evt.type === 'content_block_delta') {
+              const e = evt as AnthropicContentBlockDelta
+              if (e.delta.type === 'text_delta' && e.delta.text) {
+                fullResponse += e.delta.text
+                send({ type: 'text', content: e.delta.text })
+              } else if (e.delta.type === 'input_json_delta' && e.delta.partial_json) {
+                currentToolInput += e.delta.partial_json
+              }
+            } else if (evt.type === 'content_block_stop') {
+              // If we were accumulating a tool call, emit it now
+              if (currentToolId && currentToolName) {
+                let parsedInput: Record<string, unknown> = {}
+                try { parsedInput = JSON.parse(currentToolInput) } catch { /* ok */ }
+
+                const requiresApproval = agent.permissions.requires_approval.includes(currentToolName)
+                send({
+                  type: 'tool_call',
+                  id: currentToolId,
+                  name: currentToolName,
+                  input: parsedInput,
+                  requiresApproval,
+                })
+
+                await DB.prepare(
+                  `INSERT INTO tool_calls (id, task_id, user_id, tool_name, user_approved, created_at)
+                   VALUES (?, ?, ?, ?, ?, unixepoch())`
+                ).bind(currentToolId, taskId, user.id, currentToolName, requiresApproval ? 0 : 1).run()
+
+                currentToolId = ''
+                currentToolName = ''
+                currentToolInput = ''
+              }
+            } else if (evt.type === 'message_delta') {
+              const e = evt as AnthropicMessageDelta
+              if (e.usage?.output_tokens) {
+                totalOutputTokens = e.usage.output_tokens
+              }
             }
-          } else if (chunk.type === 'message_delta') {
-            if (chunk.usage) {
-              totalOutputTokens += chunk.usage.output_tokens
-            }
-          } else if (chunk.type === 'message_start') {
-            totalInputTokens = chunk.message.usage.input_tokens
           }
         }
 
-        // ── 8. Finalize ──────────────────────────────────────────────────────────
+        // ── 9. Finalize ────────────────────────────────────────────────────────
         const totalTokens = totalInputTokens + totalOutputTokens
         const costUsd = calculateCost(totalInputTokens, totalOutputTokens)
 
@@ -174,13 +261,9 @@ export async function POST(req: NextRequest) {
         console.log('[stream] done — tokens:', totalTokens, 'cost:', costUsd)
         send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId })
       } catch (e) {
-        // Full error logged to wrangler tail for diagnosis
-        console.error('[stream] ERROR:', e)
-        const errMsg = e instanceof Error
-          ? `${e.name}: ${e.message}`
-          : 'Unknown streaming error'
+        console.error('[stream] stream error:', e)
+        const errMsg = e instanceof Error ? `${e.name}: ${e.message}` : 'Unknown streaming error'
         send({ type: 'error', message: errMsg })
-
         await DB.prepare(
           `UPDATE agent_tasks SET status = 'error', error_log = ? WHERE id = ?`
         ).bind(errMsg, taskId).run()
