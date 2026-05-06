@@ -7,7 +7,6 @@ import { calculateCost, SESSION_TOKEN_LIMIT } from '@/lib/cost'
 import { captureTrainingData } from '@/lib/training'
 import type { SSEEvent } from '@/types'
 
-
 const encoder = new TextEncoder()
 
 function sseChunk(event: SSEEvent): Uint8Array {
@@ -23,7 +22,6 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 1b. Agent permission check ────────────────────────────────────────────────
-  // Parse agentName early so we can check permission before proceeding
   let agentNameEarly: string
   try {
     const rawBody = await req.clone().json() as { agentName: string; message: string }
@@ -39,7 +37,6 @@ export async function POST(req: NextRequest) {
     .eq('agent_id', agentNameEarly.toUpperCase())
     .single()
 
-  // If a permission row exists and explicitly blocks → 403
   if (permission && !permission.can_access) {
     return new Response(
       JSON.stringify({ error: 'Agent access denied' }),
@@ -66,6 +63,7 @@ export async function POST(req: NextRequest) {
   // ── 4. Get bindings ───────────────────────────────────────────────────────────
   const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
+  console.log('[stream] apiKey present:', !!apiKey, '| agent:', agentName)
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
   }
@@ -106,15 +104,19 @@ export async function POST(req: NextRequest) {
           input_schema: t.input_schema as Anthropic.Tool['input_schema'],
         }))
 
-        const streamParams: Anthropic.MessageStreamParams = {
-          model: 'claude-sonnet-4-6',
+        const streamParams: Anthropic.MessageCreateParamsStreaming = {
+          model: 'claude-sonnet-4-5',
           max_tokens: 8096,
+          stream: true,
           system: agent.systemPrompt,
           messages: [{ role: 'user', content: message }],
           ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
         }
 
-        const msgStream = anthropic.messages.stream(streamParams)
+        console.log('[stream] calling anthropic.messages.create, model:', streamParams.model)
+
+        // Use messages.create with stream:true — more compatible with CF Workers
+        const msgStream = await anthropic.messages.create(streamParams)
 
         for await (const chunk of msgStream) {
           if (chunk.type === 'content_block_delta') {
@@ -135,7 +137,6 @@ export async function POST(req: NextRequest) {
                 requiresApproval,
               })
 
-              // Log tool call to D1
               await DB.prepare(
                 `INSERT INTO tool_calls (id, task_id, user_id, tool_name, user_approved, created_at)
                  VALUES (?, ?, ?, ?, ?, unixepoch())`
@@ -160,22 +161,24 @@ export async function POST(req: NextRequest) {
         const totalTokens = totalInputTokens + totalOutputTokens
         const costUsd = calculateCost(totalInputTokens, totalOutputTokens)
 
-        // Update token budget in KV (expire after 24h)
         await KV.put(kvKey, String(currentTokens + totalTokens), { expirationTtl: 86400 })
 
-        // Update task in D1
         await DB.prepare(
           `UPDATE agent_tasks SET output = ?, status = 'complete', tokens_used = ?, cost_usd = ? WHERE id = ?`
         ).bind(fullResponse, totalTokens, costUsd, taskId).run()
 
-        // Capture training data
         if (fullResponse.length > 100) {
           await captureTrainingData({ db: DB, agentName, instruction: message, response: fullResponse })
         }
 
+        console.log('[stream] done — tokens:', totalTokens, 'cost:', costUsd)
         send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId })
       } catch (e) {
-        const errMsg = e instanceof Error ? e.message : 'Unknown streaming error'
+        // Full error logged to wrangler tail for diagnosis
+        console.error('[stream] ERROR:', e)
+        const errMsg = e instanceof Error
+          ? `${e.name}: ${e.message}`
+          : 'Unknown streaming error'
         send({ type: 'error', message: errMsg })
 
         await DB.prepare(
