@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useAgentStore } from '@/stores/agentStore'
 import { useAgentStream } from '@/hooks/useAgentStream'
 import { AgentMessage } from './AgentMessage'
@@ -16,23 +16,30 @@ interface AgentChatProps {
 
 type Tab = 'chat' | 'files' | 'plan'
 
+// Stable empty array — prevents new reference on every render when session is empty
+const EMPTY_MESSAGES: never[] = []
+
 export function AgentChat({ agent }: AgentChatProps) {
   const [input, setInput] = useState('')
   const [tab, setTab] = useState<Tab>('chat')
   const [taskId] = useState(() => crypto.randomUUID())
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const messages = useAgentStore((s) => s.sessions[agent.name] ?? [])
+  // Use stable fallback to prevent infinite re-render (React error #185)
+  const rawMessages = useAgentStore((s) => s.sessions[agent.name])
+  const messages = rawMessages ?? EMPTY_MESSAGES
+
   const isStreaming = useAgentStore((s) => s.isStreaming)
   const tokens = useAgentStore((s) => s.sessionTokens[agent.name] ?? 0)
   const cost = useAgentStore((s) => s.sessionCost[agent.name] ?? 0)
 
   const { sendMessage } = useAgentStream(agent.name)
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom on new messages
+  const messageCount = messages.length
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messageCount])
 
   const handleSubmit = async () => {
     const trimmed = input.trim()
@@ -65,11 +72,9 @@ export function AgentChat({ agent }: AgentChatProps) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Permissions badges */}
           {agent.permissions.can_deploy && <Badge variant="red">DEPLOY</Badge>}
           {agent.permissions.can_write_files && <Badge variant="gold">FILES</Badge>}
           {agent.permissions.can_send_email && <Badge variant="cyan">EMAIL</Badge>}
-          {/* Token/cost */}
           {tokens > 0 && (
             <span className="text-text3 font-mono text-xs">
               {tokens.toLocaleString()} tok · {formatCost(cost)}
