@@ -2,6 +2,55 @@ import { getBindings } from '@/lib/cloudflare';
 import { buildEmbedContent, generateId } from '@/lib/knowledge';
 import { NextRequest, NextResponse } from 'next/server';
 
+async function syncToSupabase(
+  type: 'study_node' | 'sprint_item',
+  table: string,
+  id: string,
+  data: Record<string, unknown>,
+  now: number
+): Promise<void> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseKey) return;
+
+  const payload = type === 'study_node'
+    ? {
+        id,
+        title: data.title,
+        category: data.category,
+        content: data.content,
+        tags: data.tags ?? null,
+        source: data.source ?? null,
+        tenant_id: (data.tenant_id as string) ?? 'default',
+        created_at: now,
+        updated_at: now,
+      }
+    : {
+        id,
+        sprint_number: data.sprint_number,
+        title: data.title,
+        description: data.description ?? null,
+        status: data.status ?? 'todo',
+        priority: data.priority ?? 2,
+        agent: data.agent ?? null,
+        category: data.category ?? null,
+        tenant_id: (data.tenant_id as string) ?? 'default',
+        created_at: now,
+        updated_at: now,
+      };
+
+  await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`,
+      'Prefer': 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 interface KnowledgeRequestBody {
   type: 'study_node' | 'sprint_item';
   data: Record<string, unknown>;
@@ -62,6 +111,8 @@ export async function POST(req: NextRequest) {
       now
     ).run();
   }
+
+  syncToSupabase(type, table, id, data, now).catch(console.error);
 
   const embedContent = buildEmbedContent(type, { ...data, id } as Parameters<typeof buildEmbedContent>[1]);
   await KNOWLEDGE_QUEUE.send({
