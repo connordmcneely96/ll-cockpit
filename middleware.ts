@@ -27,7 +27,12 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isAuthPath = pathname.startsWith('/login') || pathname.startsWith('/auth')
-  const isPublicApi = pathname === '/api/health'
+
+  // Public API routes — no auth required
+  // PaaS note: replace with API key validation (x-api-key header) before multi-tenant launch
+  const isPublicApi =
+    pathname === '/api/health' ||
+    pathname === '/api/knowledge'
 
   if (!user && !isAuthPath && !isPublicApi) {
     const loginUrl = new URL('/login', request.url)
