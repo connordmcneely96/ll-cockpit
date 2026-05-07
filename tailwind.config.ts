@@ -9,23 +9,30 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        navy: {
-          DEFAULT: '#07091a',
-          2: '#0d1230',
-          3: '#111936',
-          4: '#1a2245',
+        base: {
+          DEFAULT: '#0a0b0f',
+          1: '#0d0f1a',
+          2: '#111320',
+          3: '#161928',
+          4: '#1c2035',
+          5: '#232840',
+        },
+        blue: {
+          DEFAULT: '#3b82f6',
+          dim: '#1d4ed8',
+          bright: '#60a5fa',
+          glow: 'rgba(59,130,246,0.15)',
         },
         gold: '#f5c842',
-        cyan: '#00d4ff',
-        green: '#2ed573',
-        red: '#ff4757',
-        text1: '#ffffff',
-        text2: '#b8c4e0',
-        text3: '#6b7a99',
+        cyan: '#06b6d4',
+        green: '#10b981',
+        red: '#ef4444',
+        text1: '#e2e8f0',
+        text2: '#94a3b8',
+        text3: '#4b5563',
       },
       borderColor: {
-        DEFAULT: 'rgba(245, 200, 66, 0.12)',
-        gold: 'rgba(245, 200, 66, 0.12)',
+        DEFAULT: 'rgba(255,255,255,0.06)',
       },
       fontFamily: {
         mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'monospace'],
@@ -34,11 +41,16 @@ const config: Config = {
       },
       animation: {
         'cursor-blink': 'cursor-blink 1s step-end infinite',
+        'dot-bounce': 'dot-bounce 1.4s ease-in-out infinite both',
       },
       keyframes: {
         'cursor-blink': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0' },
+        },
+        'dot-bounce': {
+          '0%, 80%, 100%': { transform: 'scale(0.6)', opacity: '0.4' },
+          '40%': { transform: 'scale(1)', opacity: '1' },
         },
       },
     },
