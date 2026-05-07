@@ -11,31 +11,32 @@ interface AgentMessageProps {
 export function AgentMessage({ message, isLast, agentColor, agentName }: AgentMessageProps) {
   const isUser = message.role === 'user'
 
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] bg-base-3 border border-white/[0.08] rounded-2xl px-4 py-2 text-text1 font-mono text-sm whitespace-pre-wrap">
+          {message.content}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-      {/* Avatar */}
-      <div
-        className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
-          isUser ? 'bg-navy-4 text-text3' : ''
-        }`}
-        style={!isUser ? { backgroundColor: `${agentColor}22`, color: agentColor } : {}}
-      >
-        {isUser ? 'U' : agentName.slice(0, 2).toUpperCase()}
+    <div className="flex gap-3">
+      {/* Colored left indicator */}
+      <div className="flex flex-col items-center pt-1 shrink-0">
+        <div
+          className="w-0.5 rounded-full"
+          style={{ backgroundColor: agentColor, width: '2px', minHeight: '1rem', alignSelf: 'stretch' }}
+        />
       </div>
 
-      {/* Bubble */}
-      <div
-        className={`max-w-[80%] rounded-xl px-4 py-2.5 text-sm ${
-          isUser
-            ? 'bg-navy-4 text-text2 rounded-tr-none'
-            : 'bg-navy-3 border border-gold/12 text-text1 rounded-tl-none agent-prose'
-        }`}
-      >
-        {isUser ? (
-          <span className="whitespace-pre-wrap">{message.content}</span>
-        ) : (
+      {/* Message content */}
+      <div className="flex-1 min-w-0 pb-1">
+        <div className="text-[10px] font-mono text-text3 mb-1">{agentName}</div>
+        <div className="text-text1 text-sm agent-prose">
           <StreamText text={message.content} showCursor={isLast} />
-        )}
+        </div>
 
         {/* Tool calls */}
         {message.toolCalls && message.toolCalls.length > 0 && (
@@ -43,7 +44,7 @@ export function AgentMessage({ message, isLast, agentColor, agentName }: AgentMe
             {message.toolCalls.map((tc) => (
               <div
                 key={tc.id}
-                className="flex items-center gap-2 text-xs font-mono text-text3 bg-navy-4 rounded px-2 py-1"
+                className="flex items-center gap-2 text-xs font-mono text-text3 bg-base-4 border border-white/[0.06] rounded px-2 py-1"
               >
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
@@ -63,7 +64,7 @@ export function AgentMessage({ message, isLast, agentColor, agentName }: AgentMe
 
         {/* Cost/tokens */}
         {message.tokens && (
-          <div className="mt-1.5 text-[10px] text-text3 font-mono text-right">
+          <div className="mt-1.5 text-[10px] text-text3 font-mono">
             {message.tokens.toLocaleString()} tokens
             {message.costUsd != null && ` · $${message.costUsd.toFixed(5)}`}
           </div>

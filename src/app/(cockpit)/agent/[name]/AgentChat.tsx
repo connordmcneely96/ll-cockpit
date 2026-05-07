@@ -1,12 +1,10 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useAgentStore } from '@/stores/agentStore'
 import { useAgentStream } from '@/hooks/useAgentStream'
 import { AgentMessage } from './AgentMessage'
 import { PermissionGate } from './PermissionGate'
-import { Button } from '@/components/ui/Button'
-import { Badge } from '@/components/ui/Badge'
 import { formatCost } from '@/lib/cost'
 import type { AgentConfig } from '@/types'
 
@@ -16,8 +14,21 @@ interface AgentChatProps {
 
 type Tab = 'chat' | 'files' | 'plan'
 
-// Stable empty array — prevents new reference on every render when session is empty
 const EMPTY_MESSAGES: never[] = []
+
+function StreamingIndicator() {
+  return (
+    <div className="flex items-center gap-1 px-4 py-2">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="inline-block w-1.5 h-1.5 rounded-full bg-blue animate-dot-bounce"
+          style={{ animationDelay: `${i * 0.16}s` }}
+        />
+      ))}
+    </div>
+  )
+}
 
 export function AgentChat({ agent }: AgentChatProps) {
   const [input, setInput] = useState('')
@@ -25,7 +36,6 @@ export function AgentChat({ agent }: AgentChatProps) {
   const [taskId] = useState(() => crypto.randomUUID())
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Use stable fallback to prevent infinite re-render (React error #185)
   const rawMessages = useAgentStore((s) => s.sessions[agent.name])
   const messages = rawMessages ?? EMPTY_MESSAGES
 
@@ -35,7 +45,6 @@ export function AgentChat({ agent }: AgentChatProps) {
 
   const { sendMessage } = useAgentStream(agent.name)
 
-  // Auto-scroll to bottom on new messages
   const messageCount = messages.length
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -56,12 +65,15 @@ export function AgentChat({ agent }: AgentChatProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-base">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gold/12 shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 bg-base-2 border-b border-white/[0.06] shrink-0">
         <div className="flex items-center gap-3">
           <div
-            className="w-2.5 h-2.5 rounded-full"
+            className={[
+              'w-2 h-2 rounded-full shrink-0 transition-all',
+              isStreaming ? 'animate-pulse' : '',
+            ].join(' ')}
             style={{ backgroundColor: agent.color }}
           />
           <div>
@@ -71,20 +83,32 @@ export function AgentChat({ agent }: AgentChatProps) {
             <span className="ml-2 text-text3 font-mono text-xs">{agent.role}</span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          {agent.permissions.can_deploy && <Badge variant="red">DEPLOY</Badge>}
-          {agent.permissions.can_write_files && <Badge variant="gold">FILES</Badge>}
-          {agent.permissions.can_send_email && <Badge variant="cyan">EMAIL</Badge>}
+        <div className="flex items-center gap-2">
+          {agent.permissions.can_deploy && (
+            <span className="px-2 py-0.5 rounded-full bg-red/20 border border-white/[0.08] text-red/80 font-mono text-[10px]">
+              DEPLOY
+            </span>
+          )}
+          {agent.permissions.can_write_files && (
+            <span className="px-2 py-0.5 rounded-full bg-blue/20 border border-white/[0.08] text-blue-bright/80 font-mono text-[10px]">
+              FILES
+            </span>
+          )}
+          {agent.permissions.can_send_email && (
+            <span className="px-2 py-0.5 rounded-full bg-cyan/20 border border-white/[0.08] text-cyan/80 font-mono text-[10px]">
+              EMAIL
+            </span>
+          )}
           {tokens > 0 && (
-            <span className="text-text3 font-mono text-xs">
+            <span className="text-text3 font-mono text-[10px]">
               {tokens.toLocaleString()} tok · {formatCost(cost)}
             </span>
           )}
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-gold/12 shrink-0 px-4">
+      {/* Tab bar */}
+      <div className="flex bg-base-2 border-b border-white/[0.06] shrink-0 px-4">
         {(['chat', 'files', 'plan'] as Tab[]).map((t) => (
           <button
             key={t}
@@ -92,7 +116,7 @@ export function AgentChat({ agent }: AgentChatProps) {
             className={[
               'px-3 py-2 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 -mb-px',
               tab === t
-                ? 'border-gold text-gold'
+                ? 'border-blue text-text1 bg-base'
                 : 'border-transparent text-text3 hover:text-text2',
             ].join(' ')}
           >
@@ -110,7 +134,7 @@ export function AgentChat({ agent }: AgentChatProps) {
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center py-12">
                   <div
-                    className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mb-3"
+                    className="w-12 h-12 rounded-lg flex items-center justify-center text-xl font-bold mb-3"
                     style={{ backgroundColor: `${agent.color}22`, color: agent.color }}
                   >
                     {agent.displayName.slice(0, 2)}
@@ -133,12 +157,13 @@ export function AgentChat({ agent }: AgentChatProps) {
                   />
                 ))
               )}
+              {isStreaming && <StreamingIndicator />}
               <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
-            <div className="p-4 border-t border-gold/12 shrink-0">
-              <div className="flex gap-2 items-end bg-navy-3 border border-gold/12 rounded-xl p-2 focus-within:border-gold/30 transition-colors">
+            <div className="p-4 bg-base-2 border-t border-white/[0.06] shrink-0">
+              <div className="flex gap-2 items-end bg-base-3 border border-white/[0.06] rounded-xl p-2 focus-within:border-blue/30 focus-within:[box-shadow:0_0_0_1px_rgba(59,130,246,0.15)] transition-all">
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -148,14 +173,13 @@ export function AgentChat({ agent }: AgentChatProps) {
                   className="flex-1 bg-transparent text-text1 font-mono text-sm resize-none outline-none placeholder:text-text3 py-1 px-1 max-h-36 overflow-y-auto"
                   style={{ minHeight: '2rem' }}
                 />
-                <Button
-                  size="sm"
+                <button
                   onClick={handleSubmit}
-                  loading={isStreaming}
                   disabled={!input.trim() || isStreaming}
+                  className="bg-blue hover:bg-blue-bright disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg px-3 py-1.5 font-mono text-xs transition-colors shrink-0"
                 >
-                  {isStreaming ? '' : '↑'}
-                </Button>
+                  {isStreaming ? '…' : '↑'}
+                </button>
               </div>
               <p className="text-text3 text-[10px] font-mono mt-1.5 text-right">
                 Enter to send · Shift+Enter for newline
@@ -187,7 +211,6 @@ export function AgentChat({ agent }: AgentChatProps) {
         )}
       </div>
 
-      {/* Permission gate overlay */}
       <PermissionGate taskId={taskId} agentDisplayName={agent.displayName} />
     </div>
   )
