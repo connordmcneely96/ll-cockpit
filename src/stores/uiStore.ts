@@ -7,11 +7,13 @@ interface UiState {
   sidebarCollapsed: boolean
   totalSessionTokens: number
   totalSessionCost: number
+  selectedAgent: string | null
 
   openCommandPalette: () => void
   closeCommandPalette: () => void
   toggleSidebar: () => void
   addGlobalTokens: (tokens: number, cost: number) => void
+  setSelectedAgent: (name: string | null) => void
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -19,15 +21,16 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarCollapsed: false,
   totalSessionTokens: 0,
   totalSessionCost: 0,
+  selectedAgent: null,
 
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
   toggleSidebar: () =>
     set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-
   addGlobalTokens: (tokens, cost) =>
     set((state) => ({
       totalSessionTokens: state.totalSessionTokens + tokens,
       totalSessionCost: state.totalSessionCost + cost,
     })),
+  setSelectedAgent: (name) => set({ selectedAgent: name }),
 }))
