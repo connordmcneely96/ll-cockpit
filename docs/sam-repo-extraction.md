@@ -1,332 +1,366 @@
-# Sam's Repo Extraction — leadership-legacy
+# Sam's Repo Extraction — leadership-legacy (COMPLETE)
 
 > Full value extraction from `SamPrimeaux/leadership-legacy`.
 > Stack: Vite + vanilla React + Cloudflare Worker.
+> Updated: May 7, 2026 — includes full docs/ and sql/ review.
 > Nothing is copied directly — all patterns are adapted for Next.js 15 + TypeScript + Tailwind.
-> Last reviewed: May 7, 2026.
 
 ---
 
-## 1. Worker API Routes (High Value — Add to ll-cockpit)
+## 1. Worker API Routes (Add to ll-cockpit)
 
-Sam's `src/worker/index.js` has these API routes we can adapt directly to Next.js API routes:
+Sam's `src/worker/index.js` has these routes we adapt as Next.js API routes:
 
-### `/api/health` — Enhanced health check
-Current ll-cockpit /api/health is minimal. Sam's version reports:
-- `openaiConfigured` / `anthropicConfigured` (key presence check)
-- `r2Binding` (R2 binding available)
-- `worker: 'online'` + timestamp
-
-Action: Update `/api/health` to report all binding presence checks.
-
-### `/api/ai/providers` — Live AI provider status
-Returns configured state of all AI providers (Anthropic, OpenAI, Gemini, Workers AI)
-based on which secrets are present as env vars. Used to drive the AI Providers dashboard page.
-
-Action: Add `/api/ai/providers` route to ll-cockpit — checks which secrets are deployed.
-
-### `/api/r2/list` — R2 object browser
-Accepts `?prefix=` query param. Returns up to 100 objects with key, size, uploaded, etag.
-Used to wire the R2 section in ExplorerPanel.
-
-Action: Add `/api/r2/list` route — ll-cockpit already has R2 binding as env.R2.
-
-### `/api/r2/text` — R2 file reader
-Accepts `?key=` param. Validates file is text-type by extension. Returns file content as text.
-Used to open R2 files in Monaco editor.
-
-Action: Add `/api/r2/text` route.
-
-### `/api/r2/object/:key` — R2 raw object streaming
-Streams raw binary/text object from R2 with proper content-type headers.
-Used for asset previews (images, PDFs, etc).
-
-Action: Add `/api/r2/object/[...key]` dynamic route.
-
-### `/api/agent/code` — AI code assistance (Adapted)
-Sam uses OpenAI for code edits. We replace with Anthropic.
-POST body: `{ model, filename, language, code, instruction }`
-Returns: `{ ok, model, filename, language, code, usage }`
-This wires the right AgentPanel's Monaco edit capability.
-
-Action: Add `/api/agent/code` route using Anthropic instead of OpenAI.
-
-### `/api/github/status` — GitHub OAuth status
-Returns which GitHub secrets are configured.
-
-Action: Add this route — drives GitHub integration status in ExplorerPanel.
-
-### `/api/oauth/github/start` + `/api/oauth/google/start`
-OAuth redirect initiators for GitHub and Google Drive.
-GitHub scope: `repo read:user user:email`
-Google scope: openid + email + profile + drive.readonly + gmail.readonly + gmail.compose
-
-Action: Add these routes when wiring GitHub/Drive OAuth flows.
+| Route | Description | Priority |
+|---|---|---|
+| `GET /api/health` | Enhanced — reports all binding presence (R2, D1, KV, AI, Anthropic) + timestamp | P1 |
+| `GET /api/ai/providers` | Live status of all AI provider secrets. Returns configured/missing per provider. | P1 |
+| `GET /api/r2/list?prefix=` | List R2 objects (key, size, uploaded, etag). Up to 100 per call. | P1 |
+| `GET /api/r2/text?key=` | Read text/code file from R2. Validates extension is text type before returning. | P1 |
+| `GET /api/r2/object/[...key]` | Stream raw R2 object with proper content-type and cache headers. | P2 |
+| `GET /api/r2/status` | R2 bucket status + README preview. | P2 |
+| `POST /api/agent/code` | Anthropic-powered code assistance (replaces Sam's OpenAI version). Body: filename, language, code, instruction. Returns complete rewritten file. | P1 |
+| `GET /api/github/status` | Returns which GitHub OAuth/App secrets are configured. | P2 |
+| `GET /api/oauth/github/start` | OAuth redirect to GitHub. Scope: repo read:user user:email. | P3 |
+| `GET /api/oauth/google/start` | OAuth redirect to Google. Scopes: openid + email + profile + drive.readonly + gmail.readonly + gmail.compose. | P3 |
 
 ---
 
-## 2. D1 Schema (High Value — New Migrations)
+## 2. D1 Schema (New Migrations for ll-cockpit)
 
-### `002_dashboard_ai_and_cms_runtime.sql` → D1 Migration
-
-Three new tables for ll-cockpit:
-
+### Migration 0004 — AI Provider Registry
 ```sql
--- AI provider registry
-CREATE TABLE IF NOT EXISTS cms_ai_providers (
-  id TEXT PRIMARY KEY,
-  provider_key TEXT NOT NULL UNIQUE,
-  display_name TEXT NOT NULL,
-  secret_name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'needs_secret',
-  use_cases_json TEXT NOT NULL DEFAULT '[]',
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+cms_ai_providers (id, provider_key, display_name, secret_name, status, use_cases_json, metadata_json, created_at)
+cms_ai_models (id, provider_key, model_key, display_name, lane, is_enabled, is_blocked, input_price_per_mtok, output_price_per_mtok)
+cms_ai_routing_policy (id, policy_key, default_text_model, cheap_text_model, senior_text_model, review_provider, blocked_models_json)
+```
+Seed: Anthropic (sonnet=default_workhorse, haiku=cheap_fast), OpenAI lanes, blocked models policy.
+Routing: `cheap=claude-haiku`, `default=claude-sonnet-4-5`, `senior=claude-opus-4`, `review=anthropic`.
 
--- AI model registry
-CREATE TABLE IF NOT EXISTS cms_ai_models (
-  id TEXT PRIMARY KEY,
-  provider_key TEXT NOT NULL,
-  model_key TEXT NOT NULL,
-  display_name TEXT NOT NULL,
-  lane TEXT NOT NULL,       -- cheap_fast_router, default_workhorse, senior_reasoning, blocked
-  is_enabled INTEGER NOT NULL DEFAULT 1,
-  is_blocked INTEGER NOT NULL DEFAULT 0,
-  input_price_per_mtok REAL,
-  output_price_per_mtok REAL,
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(provider_key, model_key)
-);
+### Migration 0005 — R2 Asset Registry
+```sql
+cms_r2_buckets (id, binding_name, bucket_name, public_dev_url, s3_endpoint, status, metadata_json)
+cms_r2_objects (id, bucket_binding, object_key, object_type, content_type, size_bytes, public_url, etag, usage_context)
+```
+Enables D1 catalog of all R2 objects for fast browsing without calling R2 list every time.
 
--- AI routing policy
-CREATE TABLE IF NOT EXISTS cms_ai_routing_policy (
-  id TEXT PRIMARY KEY,
-  policy_key TEXT NOT NULL UNIQUE,
-  default_text_model TEXT,
-  cheap_text_model TEXT,
-  senior_text_model TEXT,
-  default_image_model TEXT,
-  standard_image_model TEXT,
-  review_provider TEXT,     -- 'anthropic' for code review, 'openai' for generation
-  blocked_models_json TEXT NOT NULL DEFAULT '[]',
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+### Migration 0006 — Analytics
+```sql
+analytics_events (id, workspace_id, tenant_id, event_name, page_path, session_id, metadata_json, created_at)
+analytics_sessions (id, workspace_id, visitor_id, session_id, first_page, last_page, referrer, started_at)
+ai_completions (id, provider, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success)
+ai_routing_decisions (id, workspace_id, task_type, selected_model, provider, routing_strategy, cost_usd, success)
 ```
 
-Seed data includes: Anthropic (claude-sonnet, claude-haiku) + OpenAI lanes + blocked models policy.
-Routing policy: `cheap_text=gpt-5.4-nano`, `default=claude-sonnet-4-5`, `senior=claude-opus-4`, `review_provider=anthropic`.
-
-### `003_r2_asset_registry.sql` → D1 Migration
-
-Two new tables:
+### Migration 0007 — Agent Tables
 ```sql
--- R2 bucket registry
-CREATE TABLE IF NOT EXISTS cms_r2_buckets (
-  id TEXT PRIMARY KEY,
-  binding_name TEXT NOT NULL UNIQUE,  -- 'R2' in ll-cockpit
-  bucket_name TEXT NOT NULL,           -- 'll-cockpit-r2'
-  public_dev_url TEXT,
-  s3_endpoint TEXT,
-  status TEXT NOT NULL DEFAULT 'active',
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- R2 object catalog (metadata index)
-CREATE TABLE IF NOT EXISTS cms_r2_objects (
-  id TEXT PRIMARY KEY,
-  bucket_binding TEXT NOT NULL,
-  object_key TEXT NOT NULL,
-  object_type TEXT NOT NULL DEFAULT 'asset',
-  content_type TEXT,
-  size_bytes INTEGER,
-  public_url TEXT,
-  etag TEXT,
-  usage_context TEXT,
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(bucket_binding, object_key)
-);
+content_queue (id, agent, platform, content, visual_url, publish_at, status, created_at)
+subscribers (id, email, name, status, subscribed_at)
+revenue (id, stripe_event_id, project_id, type, amount_usd, status, created_at)
+pending_approvals (id, agent, action_type, payload, telegram_message_id, status, created_at, resolved_at)
 ```
 
-This enables the IDE to index and catalog all R2 objects in D1 for fast browsing.
+### Migration 0008 — Research Pipeline
+```sql
+research_sources (id, source_type, source_url, source_name, active, last_checked, added_at)
+research_queue (id, source_id, external_id, title, url, status, raw_r2_key, summary_json, vector_id, collected_at, processed_at)
+research_digests (id, digest_date, item_ids, digest_html, delivered_at)
+research_project_links (research_id, project_id, relevance_score)
+```
 
 ---
 
-## 3. Supabase Schema (High Value — Reference for Analytics + RAG)
+## 3. Supabase Schema — Full PaaS Telemetry Layer
 
-Sam's `010_full_cms_analytics_rag.sql` (23KB) defines:
+Sam's `sql/supabase/010_full_cms_analytics_rag.sql` (23KB) defines the full multi-tenant analytics + RAG + agent telemetry system. This is the backbone of the PaaS observability layer.
 
-### Analytics tables (adapt to ll-cockpit)
-- `analytics_events` — page views, sessions, referrers, user agents
-- `analytics_sessions` — session tracking
-- `analytics_page_performance` — LCP, FCP, CLS metrics
-- `analytics_goal_completions` — conversion tracking
+### Multi-Tenant Foundation
+```sql
+ll_tenants (id, slug, name, status, metadata, created_at)          — one row per client
+ll_workspaces (id, tenant_id, slug, name, site_url, timezone)       — one per project/brand
+```
+Every other table has `tenant_id` + `workspace_id` columns for row-level isolation. This is the exact multi-tenant pattern NEXUS uses (same design, already proven).
 
-### RAG tables (adapt to ATLAS_RAG Vectorize)
-- `rag_documents` — document registry
-- `rag_chunks` — text chunks with embeddings
-- `rag_queries` — query history + scores
-- `rag_evals` — evaluation runs
+### RAG / Knowledge Tables
+```sql
+ll_documents (id, tenant_id, source, content, embedding vector(1024), embed_model, metadata)
+ll_semantic_search_log (id, tenant_id, query_hash, match_threshold, top_similarity, latency_ms, success)
+ll_knowledge_edges (id, entity_a, relation, entity_b, source_type, confidence)  — knowledge graph
+```
+Note: Sam uses `vector(1024)` with `@cf/baai/bge-large-en-v1.5`. Our current setup uses `vector(768)` with `@cf/baai/bge-base-en-v1.5`. The larger model produces better embeddings. Consider upgrading Vectorize indexes.
 
-### AI telemetry tables
-- `ai_completions` — every AI call logged (provider, model, tokens, cost, latency)
-- `ai_routing_decisions` — which model was selected and why
-- `ai_evals_results` — eval scores by provider/model
+### Website Analytics
+```sql
+ll_site_sessions (id, tenant_id, session_id, first_page, referrer, country, started_at)
+ll_site_events (id, tenant_id, event_name, page_path, utm_source, utm_campaign, lead_id)
+ll_lead_events (id, tenant_id, lead_id, event_name, pipeline_status, project_type, budget_range)
+```
 
-These map directly to ll-cockpit's `agent_perf` and `tool_calls` tables. Sam's schema is more mature.
+### AI Routing with Thompson Sampling
+```sql
+ll_model_cost_snapshots (id, provider, model_key, input_rate_per_mtok, output_rate_per_mtok, effective_at)
+ll_routing_arms (id, tenant_id, provider, model_key, task_type, alpha, beta, total_runs, successes, avg_cost_usd, avg_quality_score)
+ll_routing_decisions (id, tenant_id, task_type, selected_model, routing_strategy, routing_arm_id, override_reason, fallback_used, actual_cost_usd, success, human_score, latency_ms)
+```
+The `ll_routing_arms` table implements Thompson Sampling: `alpha`/`beta` are Beta distribution parameters updated per outcome. `alpha += 1` on success, `beta += 1` on failure. The model with the highest sampled value wins. This is the production routing strategy for NEXUS multi-provider.
 
-### Functions (`011_full_cms_functions.sql`)
-- `get_analytics_summary(days)` — aggregated page view summary
-- `get_top_pages(limit, days)` — top performing pages
-- `get_ai_cost_summary(days)` — cost breakdown by provider/model
-- `get_model_performance_summary()` — quality + cost per model
+### Full Agent Telemetry
+```sql
+ll_prompt_runs (id, tenant_id, agent_id, prompt_profile_key, system_prompt_hash, total_prompt_chars, included_prompts, context_sources)
+ll_stream_events (id, tenant_id, request_id, event_type, selected_model, provider, input_tokens, output_tokens, cost_usd, chunk_count, duration_ms, first_token_ms, success)
+ll_tool_call_events (id, tenant_id, tool_name, tool_category, tool_source, call_index, cost_usd, duration_ms, success, input_json, output_json)
+ll_error_events (id, tenant_id, source, severity, error_type, error_message, retryable, resolved, resolution_notes)
+```
+This is production-grade observability. Every stream event, tool call, and error is logged with full context. SENTINEL feeds this.
 
-Action: Use these as reference when building SENTINEL's analytics dashboard and ORACLE's cost reporting.
+### Evals System
+```sql
+ll_eval_suites (id, suite_key, display_name, task_type, prompt, acceptance_criteria)
+ll_eval_runs (id, suite_id, tenant_id, agent_tool, provider, model_key, status, success, input_tokens, cost_usd, build_passed, tests_passed, deploy_passed, human_score_architecture, human_score_quality, human_score_speed, human_score_cost)
+```
+`ll_eval_runs` has human scoring across 4 dimensions (architecture, quality, speed, cost) — 1-5 scale. This feeds SENTINEL's adaptive rubric.
+
+### Design Studio / R2 Analytics
+```sql
+ll_r2_object_events (id, tenant_id, bucket_name, object_key, event_name, size_bytes)
+ll_designstudio_runs (id, workflow_run_id, tenant_id, status, cost_usd, duration_ms)
+ll_designstudio_asset_metrics (id, workflow_run_id, asset_type, r2_key, size_bytes)
+```
+
+### Codebase Indexing (ATLAS RAG)
+```sql
+ll_codebase_snapshots (id, snapshot_id, workspace_id, commit_sha, file_count, chunk_count, r2_prefix)
+ll_codebase_files (id, snapshot_id, file_path, language, category, is_priority, line_count)
+ll_codebase_chunks (id, snapshot_id, file_path, chunk_type, content, embedding vector(1024), symbol_name, language)
+ll_codebase_symbols (id, snapshot_id, file_path, symbol_type, symbol_name, http_method, line_number, signature)
+```
+`chunk_type` enum: code, comment, route, function, class, config, markdown, other
+`symbol_type` enum: route, function, class, export, constant, import, other
+
+This is the exact schema for ATLAS's code-aware RAG. FORGE can query codebase_symbols to find all routes, functions, and exports before generating new code.
+
+### Pre-built Views
+```sql
+v_ll_site_overview_30d — page_views, cta_clicks, lead_submits, sessions by workspace
+v_ll_page_performance_30d — top pages by views, clicks, leads
+v_ll_stream_run_summary — per-request aggregated stream telemetry
+v_ll_recent_errors — last 100 error events
+```
+All 24 tables have Row Level Security enabled.
 
 ---
 
-## 4. UI Patterns (Adapt to Cockpit)
+## 4. RUBRIC.md — PaaS Readiness Scoring System
+
+This is directly applicable to NEXUS PaaS client onboarding. Sam defined a 0-5 rubric across 7 categories:
+
+| Category | Target Score | Meaning |
+|---|---|---|
+| Integration Setup | 4 | Integration works through dashboard/API with safe errors |
+| Secret Safety | 4 | Secret usage audited, never returned to browser |
+| Dashboard Usability | 4 | Clear, fast, and role-aware |
+| AI Tooling | 4 | Provider routing, cost logs, and fallbacks work |
+| Tool Execution Safety | 4 | Tools have risk levels, approval gates, and audit logs |
+| Testing | 4 | Core dashboard/API workflows tested |
+| Connor Readiness | 3 | Can run, test, and deploy with a guide |
+
+Production decision: block deploy if any category is below target, any secrets exposed, any destructive tool without approval, or build/Playwright/health endpoints fail.
+
+Action: Port this rubric as the SENTINEL scoring matrix for PaaS client readiness gating.
+
+---
+
+## 5. KV Namespace Strategy (Multi-Namespace Pattern)
+
+Sam uses 5 separate KV namespaces instead of one general KV:
+```
+LL_SESSIONS     — user session state
+LL_RATE_LIMITS  — per-user/per-route rate limit counters
+LL_CACHE        — response caching
+LL_OAUTH_STATE  — temporary OAuth state tokens (short TTL)
+LL_FLAGS        — feature flags
+```
+ll-cockpit currently uses one general KV. For PaaS: separate into at least SESSIONS + RATE_LIMITS + OAUTH_STATE.
+
+---
+
+## 6. Durable Objects Plan
+
+Sam planned DOs for realtime sessions:
+```
+DashboardSession    — live CMS editing state
+AgentSession        — agent run + stream state
+CMSCollaborationSession — multi-user document editing
+```
+For ll-cockpit: `AgentSession` DO for terminal PTY state + long-running agent builds. Already planned in `nexus_wrangler_master.toml` Section B.
+
+---
+
+## 7. Workspace Registration Pattern (PaaS Core)
+
+From `docs/AGENTSAM_WORKSPACE_REGISTRATION.md` and Sam's D1 schema:
+
+Every tenant gets a workspace registration record:
+```sql
+agentsam_workspace (id, workspace_slug, name, r2_bucket, r2_prefix, github_repo, default_model_id)
+agentsam_scripts (id, workspace_id, name, path, purpose, runner, safe_to_run, owner_only)
+```
+
+Scripts per workspace are tagged `safe_to_run=1` (read/build/test) or `safe_to_run=0` (deploy/mutate). This is the exact pattern for NEXUS tenant tool registry.
+
+Action: When Sprint 10 (PaaS) runs, create `nexus_workspaces` and `nexus_workspace_scripts` tables following this pattern.
+
+---
+
+## 8. End-to-End Integration Playbook (10 Phases)
+
+Sam's `docs/END_TO_END_INTEGRATION_PLAYBOOK.md` defines the exact onboarding sequence for every new tenant:
+
+```
+Phase 1:  Clean Foundation    — npm install, audit, build, test, deploy
+Phase 2:  Cloudflare Resources — Worker, R2, D1, KV, DOs, Workers AI
+Phase 3:  Supabase            — apply SQL, verify tables
+Phase 4:  AI Providers        — add secrets, verify /api/ai/providers
+Phase 5:  Email (Resend)      — add key, build contact/lead/admin routes
+Phase 6:  Google              — OAuth, Drive import, Gmail draft
+Phase 7:  GitHub              — OAuth or App, repo list, file read, PR
+Phase 8:  Tool Registry       — tools table, risk levels, approval gates, logs
+Phase 9:  Monitoring          — page views, agent runs, costs, errors, deploys
+Phase 10: Handoff             — Connor demonstrates: run, build, test, deploy, inspect, diagnose
+```
+
+This 10-phase playbook IS the NEXUS PaaS onboarding flow. Every new client goes through all 10 phases.
+
+---
+
+## 9. Thompson Sampling AI Routing (Production Pattern)
+
+From `docs/PROVIDER_ROUTING_PLAN.md`:
+
+Routing strategy: deterministic guardrails → then Thompson Sampling inside safe model pool → then log all outcomes.
+
+Thompson Sampling mechanics:
+- Each model/task_type combination is a `routing_arm` with `alpha` (successes + 1) and `beta` (failures + 1)
+- On each request: sample a Beta(alpha, beta) value for each eligible arm
+- Select arm with highest sampled value
+- After completion: increment alpha (success) or beta (failure)
+- Arms naturally self-optimize — better models get more traffic over time
+
+This is superior to our current deterministic routing. Implement in Sprint 10 alongside `ll_routing_arms` Supabase table.
+
+---
+
+## 10. Integration Surface (Full PaaS List)
+
+From `docs/CONNECTORS_SETUP_GUIDE.md` — every connector a NEXUS PaaS tenant needs:
+
+| Integration | Purpose | Secret |
+|---|---|---|
+| Anthropic | Primary LLM (default + senior lanes) | ANTHROPIC_API_KEY |
+| OpenAI | Image generation, eval comparison | OPENAI_API_KEY |
+| Gemini | Long-context, multimodal, fallback | GEMINI_API_KEY |
+| Workers AI | Embeddings, utility inference (free) | Binding: AI |
+| Resend | Email notifications, lead confirmations | RESEND_API_KEY |
+| Gmail (OAuth) | Read threads, draft replies, send followups | GOOGLE_CLIENT_ID/SECRET |
+| Google Drive (OAuth) | RAG ingestion, file sync, asset imports | Same OAuth |
+| GitHub (OAuth or App) | Repo browser, file read, commit, PR | GITHUB_CLIENT_ID/SECRET |
+| Supabase | Analytics, RAG, evals, telemetry | SUPABASE_URL + SERVICE_KEY |
+| Cloudflare D1 | CMS runtime, agent state, tool registry | Binding: DB |
+| Cloudflare R2 | Assets, media, code snapshots, exports | Binding: R2 |
+| Cloudflare KV | Sessions, rate limits, OAuth state, flags | Binding: KV |
+| Cloudflare DO | Live sessions, terminal PTY state | Binding: AGENT_SESSION |
+| Spline | 3D hero visuals, interactive scenes | Embed URL in CMS |
+| OpenSCAD | CAD file generation, STL exports | Server-side only |
+| Local Llama/Ollama | Cheap local draft/coding fallback | LOCAL_LLM_BASE_URL |
+
+---
+
+## 11. CAD + OpenSCAD Integration
+
+Sam documented OpenSCAD as a server-side tool (not browser) for:
+- Parametric CAD generation from text description
+- Scripted part generation
+- STL generation → R2 storage → download link
+- CAD-to-video asset pipeline (feeds REEL)
+- Technical product demos
+
+R2 prefixes: `assets/models/`, `snapshots/cad/`, `exports/cad/`
+Worker routes: `POST /api/cad/jobs`, `GET /api/cad/jobs/:id`, `GET /api/cad/jobs/:id/download`
+
+Action: ATLAS agent's OpenSCAD integration follows this pattern. Engineering calcs → OpenSCAD script → STL → R2 → client download.
+
+---
+
+## 12. UI Patterns (Adapt to Cockpit)
 
 ### `useResizablePanels` hook
-Drag-resizable panel widths/heights stored in localStorage.
 - `explorerWidth` default 250px (min 190, max 440)
 - `agentWidth` default 340px (min 280, max 620)
 - `terminalHeight` default 250px (min 150, max 540)
-- Drag dividers: `beginDrag(type, mouseEvent)` pattern
+- `beginDrag(type, mouseEvent)` — adds mousemove/mouseup listeners, removes on mouseup
+- All widths persist to localStorage under `ll-explorer-width`, `ll-agent-width`, `ll-terminal-height`
 
-Action: Port to TypeScript for ll-cockpit layout.
+### Monaco Editor file tree
+- `getLanguageFromKey(key)` — maps .tsx/.ts/.js/.jsx/.json/.css/.html/.md/.sql/.yml to Monaco language
+- File tree backed by R2 list (folder.children array)
+- `updateFile(content)` — called by agent panel to apply AI code edit
+- Tabs: active file tracking, filename display, language badge, close button
 
 ### Terminal command presets strip
-A row of clickable preset commands above the terminal.
-Click → copies to clipboard + echoes in xterm.
-Sam's presets: `npm run dev`, `npm run build`, `wrangler deploy`, `git status`, `git add -A`, `git commit -m "..."`, `git push`
+Clickable preset commands above xterm. Click → copies to clipboard + echoes in terminal:
+`npm run dev`, `npm run build`, `wrangler deploy`, `git status`, `git add -A`, `git commit -m "..."`, `git push`
 
-Action: Add command strip to our terminal dock.
+### Agent panel “apply to editor” pattern
+Agent response includes code block → “Apply to editor” button → calls `updateFile(code)` → Monaco updates live.
 
-### Monaco Editor file tree pattern
-- Language detection by file extension (`getLanguageFromKey`)
-- File tree backed by R2 objects (list R2 → render as tree)
-- Tab system with active file tracking
-- `updateFile(content)` pattern for agent edit → apply to editor
-- Minimap enabled, font size 13, line height 21, tab size 2
-
-Action: Use as reference to wire our `/ide` page fully.
-
-### ExplorerPanel R2 section pattern
-- `loadR2Objects(prefix)` → fetches `/api/r2/list?prefix=`
-- `openR2Object(key)` → fetches `/api/r2/text?key=` → opens in Monaco
-- Refresh button + Upload button + prefix filter buttons (Root, cms/, assets/, snapshots/)
-- Shows up to 24 objects in the sidebar list
-
-### Agent panel "apply to editor" pattern
-```jsx
-// Agent response includes a code block
-// "Apply to editor" button calls updateFile(code)
-// This syncs AI output directly into Monaco
-```
-Action: Wire AgentPanel's AI responses to Monaco editor in IDE view.
+### ExplorerPanel R2 section
+- Refresh + Upload buttons
+- Prefix filter buttons (Root, cms/, assets/, snapshots/)
+- Shows up to 24 objects in sidebar list
+- Click object → calls `/api/r2/text?key=` → loads in Monaco
 
 ---
 
-## 5. Dashboard Pages to Add to Cockpit
+## 13. Dashboard Pages to Add
 
-| Sam's page | ll-cockpit equivalent | Priority |
+| Sam's page | ll-cockpit route | Priority |
 |---|---|---|
-| `DashboardHome.jsx` | Already have (stat cards + agent grid) | Done |
-| `AIProviders.jsx` | New: `/ai-providers` — shows provider status, model registry, routing policy | High |
-| `R2Storage.jsx` | New: `/storage` — full R2 object browser with prefix drill-down | High |
-| `Analytics.jsx` | New: `/analytics` — session/page/cost metrics from D1 + Supabase | Medium |
-| `Leads.jsx` | New: `/leads` — SCOUT lead pipeline view | Medium |
-| `MediaLibrary.jsx` | New: `/media` — R2 image/asset gallery | Low |
-| `CMSPages.jsx` | New: `/cms` — public site page manager | Low |
-| `Publishing.jsx` | Part of HERALD agent toolchain | Low |
-| `DevCockpit.jsx` | Already covered by IDE + Pipeline views | Skip |
-| `Settings.jsx` | Already have `/settings` | Extend |
+| AIProviders.jsx | `/ai-providers` | P1 |
+| R2Storage.jsx | `/storage` | P1 |
+| Analytics.jsx | `/analytics` | P2 |
+| Leads.jsx | `/leads` | P2 |
+| MediaLibrary.jsx | `/media` | P3 |
+| CMSPages.jsx | `/cms` | P3 |
 
 ---
 
-## 6. Services/Positioning (Reference Only — No Code Change)
+## 14. Safety Rules (Production Non-Negotiables)
 
-Sam's `nav.config.js` defines the service lines for Leadership Legacy Digital:
-
-```
-- AI Engineering
-- RAG Systems
-- Full-Stack Apps
-- CAD Automation
-- CAD-to-Video
-- Business Automation
-- Consulting
-```
-
-These should map to NEXUS agent capabilities and be reflected in the HERALD content scheduler
-and INTAKE qualification questions.
-
----
-
-## 7. AI Provider Architecture (Critical — Adapt for NEXUS)
-
-Sam's routing policy design is the right model for NEXUS multi-provider routing:
+From `docs/CONNECTORS_SETUP_GUIDE.md` Production Safety Rules — add to NEXUS working rules:
 
 ```
-Lane              Model               Use case
-─────────────────────────────────────────────────────
-cheap_fast_router  claude-haiku        Classification, routing, simple Q&A
-default_workhorse  claude-sonnet-4-5   Standard agent tasks (current default)
-senior_reasoning   claude-opus-4       Complex reasoning, architecture decisions
-review_provider    anthropic           Code review (SENTINEL), QA
-budget_image       Workers AI Flux     Internal image generation
-standard_image     Veo 3 (free)        Client-facing video/visuals
-blocked            (any model policy)  Blocked by project decision
+❌ Never commit secrets
+❌ Never expose Supabase service-role keys to the browser
+❌ Never store OAuth refresh tokens in localStorage
+❌ Never let untrusted CAD/OpenSCAD execute without sandboxing
+❌ Never route expensive models without cost logging
+❌ Never let image generation run without user/project quotas
+❌ Never deploy dashboard auth as only a client-side password in production
 ```
-
-This directly informs `nexus_model_routing_seed.sql` — our routing table should mirror this lane structure.
-
----
-
-## 8. OAuth Integration Pattern (For Future Sprint)
-
-Sam has the exact redirect flow pattern for:
-- **GitHub OAuth**: `client_id` + `redirect_uri` + `scope: repo read:user user:email`
-- **Google OAuth**: Scopes include drive.readonly + gmail.readonly + gmail.compose
-
-For ll-cockpit, these routes become:
-- `GET /api/oauth/github/start` → redirect to GitHub
-- `GET /api/oauth/github/callback` → exchange code for token, store in KV
-- `GET /api/oauth/google/start` → redirect to Google
-- `GET /api/oauth/google/callback` → exchange code, store in KV
-
-Tokens stored in Cloudflare KV under `oauth:github:{userId}` and `oauth:google:{userId}`.
-
----
-
-## 9. cleanOpenAIKey / Key Validation Pattern
-
-Sam has a robust API key cleaning function that handles common mistakes:
-- Keys accidentally including `OPENAI_API_KEY=` prefix
-- Keys wrapped in quotes
-- Trailing whitespace
-
-Adapt for ll-cockpit's `ANTHROPIC_API_KEY` validation in `/api/health`.
 
 ---
 
 ## Build Sequencing (Recommended Order)
 
-Based on this extraction, here is what to build next in priority order:
-
-1. **Resizable panels** — `useResizablePanels` TypeScript port into CockpitLayout
-2. **R2 API routes** — `/api/r2/list`, `/api/r2/text`, `/api/r2/object/[...key]`
-3. **Wire Monaco IDE** — file tree from R2, tabs, language detection, agent edit apply
-4. **AI Providers page** — `/ai-providers` reading from D1 + `/api/ai/providers`
-5. **D1 migrations** — `cms_ai_providers`, `cms_ai_models`, `cms_ai_routing_policy`, `cms_r2_buckets`, `cms_r2_objects`
-6. **R2 Storage page** — `/storage` full browser
-7. **Analytics page** — `/analytics` from D1 agent_perf + Supabase
-8. **OAuth flows** — GitHub + Google Drive
-9. **Command strip** — terminal preset commands
-10. **Agent-to-editor bridge** — AgentPanel AI output applies directly to Monaco
+1. Resizable panels — `useResizablePanels` TypeScript port
+2. R2 API routes — `/api/r2/list`, `/api/r2/text`, `/api/r2/object/[...key]`, `/api/agent/code`
+3. Wire Monaco IDE — file tree from R2, tabs, language detection, agent edit apply
+4. D1 migrations 0004-0008
+5. AI Providers page — reads from D1 + `/api/ai/providers`
+6. R2 Storage page — full browser
+7. Analytics page — from D1 + Supabase
+8. Supabase telemetry tables — ll_routing_arms, ll_routing_decisions, ll_stream_events
+9. Thompson Sampling routing — wire to cms_ai_routing_policy
+10. OAuth flows — GitHub + Google Drive
+11. Workspace registration pattern — Sprint 10 PaaS
+12. Rubric readiness gate — block PaaS client deploy until all 7 categories score ≥ 4
