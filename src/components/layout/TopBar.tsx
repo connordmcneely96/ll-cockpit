@@ -1,32 +1,50 @@
 'use client'
 
+import { usePathname } from 'next/navigation'
 import { useUiStore } from '@/stores/uiStore'
 import { CostMeter } from '@/components/ui/CostMeter'
 
-interface TopBarProps {
-  title?: string
+const ROUTE_LABELS: Record<string, string> = {
+  '/': 'Dashboard',
+  '/ide': 'IDE',
+  '/terminal': 'Terminal',
+  '/orchestrator': 'Orchestrator',
+  '/pipeline': 'Pipeline',
+  '/settings': 'Settings',
 }
 
-export function TopBar({ title = 'LL Cockpit' }: TopBarProps) {
+function getLabel(pathname: string): string {
+  if (ROUTE_LABELS[pathname]) return ROUTE_LABELS[pathname]
+  if (pathname.startsWith('/agent/')) {
+    const name = pathname.split('/agent/')[1]
+    return name ? name.toUpperCase() : 'Agent'
+  }
+  return pathname.split('/').filter(Boolean).pop()?.toUpperCase() ?? 'Cockpit'
+}
+
+export function TopBar() {
   const { openCommandPalette } = useUiStore()
+  const pathname = usePathname()
+  const pageLabel = getLabel(pathname)
 
   return (
-    <header className="h-12 bg-navy-2 border-b border-gold/12 flex items-center justify-between px-4 shrink-0">
-      {/* Left: page title */}
-      <h1 className="text-text2 font-condensed font-semibold text-sm uppercase tracking-wider">
-        {title}
-      </h1>
+    <header className="h-12 bg-base-2 border-b border-white/[0.06] flex items-center justify-between px-4 shrink-0">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1.5 font-mono text-[11px]">
+        <span className="text-text3">LL COCKPIT</span>
+        <span className="text-text3 opacity-50">›</span>
+        <span className="text-text2">{pageLabel}</span>
+      </div>
 
-      {/* Right: cost meter + cmd palette trigger */}
+      {/* Right controls */}
       <div className="flex items-center gap-4">
         <CostMeter />
         <button
           onClick={openCommandPalette}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-navy-4 border border-gold/12 text-text3 text-xs font-mono hover:text-text1 hover:border-gold/30 transition-colors"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-base-3 border border-white/[0.08] text-text2 text-xs font-mono hover:text-text1 hover:border-white/[0.16] transition-colors"
           title="Open command palette"
         >
-          <span>⌘</span>
-          <span>K</span>
+          <span>⌘K</span>
         </button>
       </div>
     </header>
