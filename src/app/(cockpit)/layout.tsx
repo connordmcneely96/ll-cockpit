@@ -1,31 +1,23 @@
-'use client'
 
-import { useState } from 'react'
-import { ActivityBar } from '@/components/layout/ActivityBar'
-import { SidePanel } from '@/components/layout/SidePanel'
+import { ExplorerPanel } from '@/components/layout/ExplorerPanel'
+import { AgentPanel } from '@/components/layout/AgentPanel'
 import { StatusBar } from '@/components/layout/StatusBar'
 import { TopBar } from '@/components/layout/TopBar'
 import { CommandPalette } from '@/components/layout/CommandPalette'
-import type { Activity } from '@/components/layout/ActivityBar'
 import type { ReactNode } from 'react'
 
 export default function CockpitLayout({ children }: { children: ReactNode }) {
-  const [activeActivity, setActiveActivity] = useState<Activity>('agents')
-
   return (
     <div className="flex flex-col h-screen bg-base overflow-hidden">
+      <TopBar />
       <div className="flex flex-1 min-h-0">
-        <ActivityBar
-          activeActivity={activeActivity}
-          onActivityChange={setActiveActivity}
-        />
-        <SidePanel activeActivity={activeActivity} />
-        <div className="flex flex-col flex-1 min-w-0">
-          <TopBar />
+        <ExplorerPanel />
+        <div className="flex flex-col flex-1 min-w-0 border-x border-white/[0.06]">
           <main className="flex-1 overflow-auto">
             {children}
           </main>
         </div>
+        <AgentPanel />
       </div>
       <StatusBar />
       <CommandPalette />

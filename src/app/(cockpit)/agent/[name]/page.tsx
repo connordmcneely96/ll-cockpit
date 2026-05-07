@@ -1,20 +1,19 @@
+'use client'
 
-import { notFound } from 'next/navigation'
-import { getAgent } from '@/lib/agents'
-import { AgentChat } from './AgentChat'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useUiStore } from '@/stores/uiStore'
 
-interface AgentPageProps {
-  params: Promise<{ name: string }>
-}
+export default function AgentPage({ params }: { params: Promise<{ name: string }> }) {
+  const router = useRouter()
+  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent)
 
-export default async function AgentPage({ params }: AgentPageProps) {
-  const { name } = await params
-  const agent = getAgent(name)
-  if (!agent) notFound()
+  useEffect(() => {
+    params.then(({ name }) => {
+      setSelectedAgent(name)
+      router.replace('/')
+    })
+  }, [params, setSelectedAgent, router])
 
-  return (
-    <div className="h-full">
-      <AgentChat agent={agent} />
-    </div>
-  )
+  return null
 }
