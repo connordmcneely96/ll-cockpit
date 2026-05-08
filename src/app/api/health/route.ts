@@ -25,6 +25,16 @@ export async function GET() {
     allHealthy = false;
   }
 
+  // R2 check
+  try {
+    const { env } = await getCloudflareContext();
+    await env.R2.list({ limit: 1 });
+    checks.r2 = 'ok';
+  } catch {
+    checks.r2 = 'error';
+    allHealthy = false;
+  }
+
   // Supabase env check
   try {
     const url = process.env.SUPABASE_URL;
@@ -38,6 +48,19 @@ export async function GET() {
   } catch {
     checks.supabase = 'error';
     allHealthy = false;
+  }
+
+  // Anthropic check
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  checks.anthropic = anthropicKey ? 'ok' : 'missing';
+  if (!anthropicKey) allHealthy = false;
+
+  // Workers AI binding check
+  try {
+    const { env } = await getCloudflareContext();
+    checks.workers_ai = env.AI ? 'ok' : 'missing';
+  } catch {
+    checks.workers_ai = 'error';
   }
 
   return NextResponse.json(
