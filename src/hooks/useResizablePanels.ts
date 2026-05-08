@@ -27,8 +27,8 @@ function readStorage(key: string, fallback: number): number {
 export function useResizablePanels(): {
   explorerWidth: number
   agentWidth: number
-  startDragExplorer: (e: React.MouseEvent) => void
-  startDragAgent: (e: React.MouseEvent) => void
+  beginDragExplorer: (e: React.MouseEvent) => void
+  beginDragAgent: (e: React.MouseEvent) => void
 } {
   const [explorerWidth, setExplorerWidth] = useState(EXPLORER_DEFAULT)
   const [agentWidth, setAgentWidth] = useState(AGENT_DEFAULT)
@@ -41,10 +41,10 @@ export function useResizablePanels(): {
     setAgentWidth(clamp(readStorage('ll-agent-width', AGENT_DEFAULT), AGENT_MIN, AGENT_MAX))
   }, [])
 
-  const startDragExplorer = useCallback((e: React.MouseEvent) => {
+  const beginDragExplorer = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     draggingExplorer.current = true
-    document.body.style.userSelect = 'none'
+    document.body.classList.add('ia-resizing')
 
     function onMouseMove(ev: MouseEvent) {
       if (!draggingExplorer.current) return
@@ -53,7 +53,7 @@ export function useResizablePanels(): {
 
     function onMouseUp(ev: MouseEvent) {
       draggingExplorer.current = false
-      document.body.style.userSelect = ''
+      document.body.classList.remove('ia-resizing')
       const final = clamp(ev.clientX, EXPLORER_MIN, EXPLORER_MAX)
       setExplorerWidth(final)
       localStorage.setItem('ll-explorer-width', String(final))
@@ -65,10 +65,10 @@ export function useResizablePanels(): {
     window.addEventListener('mouseup', onMouseUp)
   }, [])
 
-  const startDragAgent = useCallback((e: React.MouseEvent) => {
+  const beginDragAgent = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     draggingAgent.current = true
-    document.body.style.userSelect = 'none'
+    document.body.classList.add('ia-resizing')
 
     function onMouseMove(ev: MouseEvent) {
       if (!draggingAgent.current) return
@@ -77,7 +77,7 @@ export function useResizablePanels(): {
 
     function onMouseUp(ev: MouseEvent) {
       draggingAgent.current = false
-      document.body.style.userSelect = ''
+      document.body.classList.remove('ia-resizing')
       const final = clamp(window.innerWidth - ev.clientX, AGENT_MIN, AGENT_MAX)
       setAgentWidth(final)
       localStorage.setItem('ll-agent-width', String(final))
@@ -89,5 +89,5 @@ export function useResizablePanels(): {
     window.addEventListener('mouseup', onMouseUp)
   }, [])
 
-  return { explorerWidth, agentWidth, startDragExplorer, startDragAgent }
+  return { explorerWidth, agentWidth, beginDragExplorer, beginDragAgent }
 }

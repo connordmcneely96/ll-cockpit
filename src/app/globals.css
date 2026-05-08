@@ -56,6 +56,7 @@ body {
 
 body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  background: radial-gradient(ellipse at top left, rgba(59,130,246,0.05) 0%, #0a0b0f 50%);
 }
 
 /* ─── Scrollbar ───────────────────────────────────────────────────────────── */
@@ -133,4 +134,57 @@ body {
   padding-left: 1rem;
   color: var(--text2);
   margin: 0.75rem 0;
+}
+
+/* ── Glassmorphic utilities ── */
+.glass-panel {
+  background: rgba(13, 15, 26, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-card {
+  background: rgba(22, 25, 40, 0.50);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glow-blue {
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.3), 0 0 24px rgba(59, 130, 246, 0.1);
+}
+
+.glow-blue-sm {
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+}
+
+.border-glow {
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+/* ia-resizing class — prevents text selection during drag */
+body.ia-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* Subtle animated gradient border on active elements */
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(59, 130, 246, 0.2); }
+  50% { border-color: rgba(59, 130, 246, 0.5); }
+}
+
+.border-pulse-active {
+  animation: border-pulse 2s ease-in-out infinite;
+}
+
+/* Panel section label */
+.panel-section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(148, 163, 184, 0.4);
+  padding: 6px 12px 4px;
 }
