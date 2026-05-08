@@ -2,20 +2,89 @@ export interface ThemeConfig {
   id: string
   name: string
   description: string
-  category: 'clean' | 'vivid' | 'warm' | 'cool' | 'dark'
+  category: 'clean' | 'vivid' | 'warm' | 'cool' | 'dark' | 'teal'
   preview: {
-    body: string
-    panel: string
-    primary: string
-    secondary: string
-    text: string
-    g1: string
-    g2: string
+    body: string; panel: string; primary: string
+    secondary: string; text: string; g1: string; g2: string
   }
   vars: Record<string, string>
 }
 
 export const THEMES: ThemeConfig[] = [
+  /* ── DARK TEAL (default — matches Sam's production app) ── */
+  {
+    id: 'teal',
+    name: 'Teal Pro',
+    description: 'Dark teal · production grade',
+    category: 'teal',
+    preview: { body: '#070e0b', panel: 'rgba(10,20,16,0.95)', primary: '#00c9a7', secondary: '#0ea5e9', text: '#e0f2ee', g1: 'rgba(0,201,167,0.10)', g2: 'rgba(14,165,233,0.06)' },
+    vars: {
+      '--t-body': '#070e0b',
+      '--t-g1': 'rgba(0,201,167,0.10)', '--t-g2': 'rgba(14,165,233,0.06)',
+      '--t-p': '#00c9a7', '--t-p-dim': '#00a389', '--t-p-bright': '#33d4ba',
+      '--t-p-glow': 'rgba(0,201,167,0.28)', '--t-p-glass': 'rgba(0,201,167,0.10)',
+      '--t-s': '#0ea5e9', '--t-gold': '#f59e0b',
+      '--t-tx1': '#e0f2ee', '--t-tx2': '#7ab5a8', '--t-tx3': '#3d6b62',
+      '--t-bdr': 'rgba(0,201,167,0.12)', '--t-bdr-s': 'rgba(0,201,167,0.22)',
+      '--t-sb-bg': '#041008', '--t-sb-tx': '#5fe3c8',
+      '--t-blur': '22px',
+    },
+  },
+  {
+    id: 'ocean',
+    name: 'Ocean',
+    description: 'Deep navy · electric blue',
+    category: 'dark',
+    preview: { body: '#060b14', panel: 'rgba(8,15,28,0.95)', primary: '#3b82f6', secondary: '#06b6d4', text: '#e2e8f0', g1: 'rgba(59,130,246,0.10)', g2: 'rgba(6,182,212,0.06)' },
+    vars: {
+      '--t-body': '#060b14',
+      '--t-g1': 'rgba(59,130,246,0.10)', '--t-g2': 'rgba(6,182,212,0.06)',
+      '--t-p': '#3b82f6', '--t-p-dim': '#1d4ed8', '--t-p-bright': '#60a5fa',
+      '--t-p-glow': 'rgba(59,130,246,0.26)', '--t-p-glass': 'rgba(59,130,246,0.10)',
+      '--t-s': '#06b6d4', '--t-gold': '#f59e0b',
+      '--t-tx1': '#e2e8f0', '--t-tx2': '#64748b', '--t-tx3': '#334155',
+      '--t-bdr': 'rgba(59,130,246,0.12)', '--t-bdr-s': 'rgba(59,130,246,0.22)',
+      '--t-sb-bg': '#0f1e3d', '--t-sb-tx': '#93c5fd',
+      '--t-blur': '24px',
+    },
+  },
+  {
+    id: 'noir',
+    name: 'Noir',
+    description: 'Carbon black · steel glass',
+    category: 'dark',
+    preview: { body: '#080808', panel: 'rgba(14,14,18,0.92)', primary: '#e2e8f0', secondary: '#818cf8', text: '#f8fafc', g1: 'rgba(129,140,248,0.08)', g2: 'rgba(99,102,241,0.04)' },
+    vars: {
+      '--t-body': '#080808',
+      '--t-g1': 'rgba(129,140,248,0.07)', '--t-g2': 'rgba(99,102,241,0.04)',
+      '--t-p': '#818cf8', '--t-p-dim': '#6366f1', '--t-p-bright': '#a5b4fc',
+      '--t-p-glow': 'rgba(129,140,248,0.22)', '--t-p-glass': 'rgba(129,140,248,0.08)',
+      '--t-s': '#06b6d4', '--t-gold': '#fbbf24',
+      '--t-tx1': '#f8fafc', '--t-tx2': '#94a3b8', '--t-tx3': '#475569',
+      '--t-bdr': 'rgba(255,255,255,0.07)', '--t-bdr-s': 'rgba(255,255,255,0.14)',
+      '--t-sb-bg': '#0f0f14', '--t-sb-tx': '#c7d2fe',
+      '--t-blur': '28px',
+    },
+  },
+  {
+    id: 'synthwave',
+    name: 'Synthwave',
+    description: '80s neon · fuchsia pulse',
+    category: 'dark',
+    preview: { body: '#0a0010', panel: 'rgba(18,0,32,0.92)', primary: '#e879f9', secondary: '#818cf8', text: '#fdf4ff', g1: 'rgba(232,121,249,0.12)', g2: 'rgba(129,140,248,0.07)' },
+    vars: {
+      '--t-body': '#0a0010',
+      '--t-g1': 'rgba(232,121,249,0.12)', '--t-g2': 'rgba(129,140,248,0.07)',
+      '--t-p': '#e879f9', '--t-p-dim': '#a21caf', '--t-p-bright': '#f0abfc',
+      '--t-p-glow': 'rgba(232,121,249,0.28)', '--t-p-glass': 'rgba(232,121,249,0.10)',
+      '--t-s': '#818cf8', '--t-gold': '#fbbf24',
+      '--t-tx1': '#fdf4ff', '--t-tx2': '#c084fc', '--t-tx3': '#7e22ce',
+      '--t-bdr': 'rgba(232,121,249,0.14)', '--t-bdr-s': 'rgba(232,121,249,0.26)',
+      '--t-sb-bg': '#3b0764', '--t-sb-tx': '#f0abfc',
+      '--t-blur': '24px',
+    },
+  },
+  /* ── LIGHT THEMES ── */
   {
     id: 'pearl',
     name: 'Pearl',
@@ -24,8 +93,7 @@ export const THEMES: ThemeConfig[] = [
     preview: { body: '#f8faff', panel: 'rgba(255,255,255,0.82)', primary: '#3b82f6', secondary: '#06b6d4', text: '#0f172a', g1: 'rgba(59,130,246,0.12)', g2: 'rgba(6,182,212,0.08)' },
     vars: {
       '--t-body': '#f8faff',
-      '--t-g1': 'rgba(59,130,246,0.12)',
-      '--t-g2': 'rgba(6,182,212,0.07)',
+      '--t-g1': 'rgba(59,130,246,0.12)', '--t-g2': 'rgba(6,182,212,0.07)',
       '--t-p': '#3b82f6', '--t-p-dim': '#1d4ed8', '--t-p-bright': '#60a5fa',
       '--t-p-glow': 'rgba(59,130,246,0.22)', '--t-p-glass': 'rgba(59,130,246,0.08)',
       '--t-s': '#06b6d4', '--t-gold': '#f59e0b',
@@ -43,8 +111,7 @@ export const THEMES: ThemeConfig[] = [
     preview: { body: '#faf5ff', panel: 'rgba(255,255,255,0.80)', primary: '#8b5cf6', secondary: '#ec4899', text: '#1e1b4b', g1: 'rgba(139,92,246,0.12)', g2: 'rgba(236,72,153,0.08)' },
     vars: {
       '--t-body': '#faf5ff',
-      '--t-g1': 'rgba(139,92,246,0.13)',
-      '--t-g2': 'rgba(236,72,153,0.08)',
+      '--t-g1': 'rgba(139,92,246,0.13)', '--t-g2': 'rgba(236,72,153,0.08)',
       '--t-p': '#8b5cf6', '--t-p-dim': '#6d28d9', '--t-p-bright': '#a78bfa',
       '--t-p-glow': 'rgba(139,92,246,0.24)', '--t-p-glass': 'rgba(139,92,246,0.08)',
       '--t-s': '#ec4899', '--t-gold': '#f59e0b',
@@ -62,8 +129,7 @@ export const THEMES: ThemeConfig[] = [
     preview: { body: '#fff8f2', panel: 'rgba(255,255,255,0.82)', primary: '#f97316', secondary: '#ef4444', text: '#431407', g1: 'rgba(249,115,22,0.12)', g2: 'rgba(239,68,68,0.08)' },
     vars: {
       '--t-body': '#fff8f2',
-      '--t-g1': 'rgba(249,115,22,0.13)',
-      '--t-g2': 'rgba(239,68,68,0.08)',
+      '--t-g1': 'rgba(249,115,22,0.13)', '--t-g2': 'rgba(239,68,68,0.08)',
       '--t-p': '#f97316', '--t-p-dim': '#c2410c', '--t-p-bright': '#fb923c',
       '--t-p-glow': 'rgba(249,115,22,0.24)', '--t-p-glass': 'rgba(249,115,22,0.08)',
       '--t-s': '#ef4444', '--t-gold': '#f59e0b',
@@ -81,8 +147,7 @@ export const THEMES: ThemeConfig[] = [
     preview: { body: '#fff0f5', panel: 'rgba(255,255,255,0.80)', primary: '#f43f5e', secondary: '#fb7185', text: '#4c0519', g1: 'rgba(244,63,94,0.12)', g2: 'rgba(251,113,133,0.08)' },
     vars: {
       '--t-body': '#fff0f5',
-      '--t-g1': 'rgba(244,63,94,0.13)',
-      '--t-g2': 'rgba(251,113,133,0.08)',
+      '--t-g1': 'rgba(244,63,94,0.13)', '--t-g2': 'rgba(251,113,133,0.08)',
       '--t-p': '#f43f5e', '--t-p-dim': '#be123c', '--t-p-bright': '#fb7185',
       '--t-p-glow': 'rgba(244,63,94,0.24)', '--t-p-glass': 'rgba(244,63,94,0.08)',
       '--t-s': '#c084fc', '--t-gold': '#f59e0b',
@@ -100,8 +165,7 @@ export const THEMES: ThemeConfig[] = [
     preview: { body: '#f2fdf7', panel: 'rgba(255,255,255,0.80)', primary: '#10b981', secondary: '#06b6d4', text: '#022c22', g1: 'rgba(16,185,129,0.12)', g2: 'rgba(6,182,212,0.07)' },
     vars: {
       '--t-body': '#f2fdf7',
-      '--t-g1': 'rgba(16,185,129,0.13)',
-      '--t-g2': 'rgba(6,182,212,0.07)',
+      '--t-g1': 'rgba(16,185,129,0.13)', '--t-g2': 'rgba(6,182,212,0.07)',
       '--t-p': '#10b981', '--t-p-dim': '#059669', '--t-p-bright': '#34d399',
       '--t-p-glow': 'rgba(16,185,129,0.24)', '--t-p-glass': 'rgba(16,185,129,0.08)',
       '--t-s': '#06b6d4', '--t-gold': '#f59e0b',
@@ -119,8 +183,7 @@ export const THEMES: ThemeConfig[] = [
     preview: { body: '#f0f9ff', panel: 'rgba(255,255,255,0.80)', primary: '#38bdf8', secondary: '#818cf8', text: '#082f49', g1: 'rgba(56,189,248,0.12)', g2: 'rgba(129,140,248,0.07)' },
     vars: {
       '--t-body': '#f0f9ff',
-      '--t-g1': 'rgba(56,189,248,0.13)',
-      '--t-g2': 'rgba(129,140,248,0.07)',
+      '--t-g1': 'rgba(56,189,248,0.13)', '--t-g2': 'rgba(129,140,248,0.07)',
       '--t-p': '#38bdf8', '--t-p-dim': '#0284c7', '--t-p-bright': '#7dd3fc',
       '--t-p-glow': 'rgba(56,189,248,0.24)', '--t-p-glass': 'rgba(56,189,248,0.08)',
       '--t-s': '#818cf8', '--t-gold': '#f59e0b',
@@ -130,83 +193,7 @@ export const THEMES: ThemeConfig[] = [
       '--t-blur': '26px',
     },
   },
-  {
-    id: 'solar',
-    name: 'Solar',
-    description: 'Warm ivory · liquid gold',
-    category: 'warm',
-    preview: { body: '#fffbeb', panel: 'rgba(255,255,255,0.82)', primary: '#f59e0b', secondary: '#fb923c', text: '#451a03', g1: 'rgba(245,158,11,0.12)', g2: 'rgba(251,146,60,0.08)' },
-    vars: {
-      '--t-body': '#fffbeb',
-      '--t-g1': 'rgba(245,158,11,0.13)',
-      '--t-g2': 'rgba(251,146,60,0.08)',
-      '--t-p': '#f59e0b', '--t-p-dim': '#b45309', '--t-p-bright': '#fcd34d',
-      '--t-p-glow': 'rgba(245,158,11,0.26)', '--t-p-glass': 'rgba(245,158,11,0.09)',
-      '--t-s': '#fb923c', '--t-gold': '#f59e0b',
-      '--t-tx1': '#451a03', '--t-tx2': '#78350f', '--t-tx3': '#92400e',
-      '--t-bdr': 'rgba(180,83,9,0.08)', '--t-bdr-s': 'rgba(180,83,9,0.16)',
-      '--t-sb-bg': '#78350f', '--t-sb-tx': '#fde68a',
-      '--t-blur': '22px',
-    },
-  },
-  {
-    id: 'sakura',
-    name: 'Sakura',
-    description: 'Petal mist · fuchsia glow',
-    category: 'vivid',
-    preview: { body: '#fff0f8', panel: 'rgba(255,255,255,0.80)', primary: '#e879f9', secondary: '#f43f5e', text: '#4a044e', g1: 'rgba(232,121,249,0.12)', g2: 'rgba(244,63,94,0.08)' },
-    vars: {
-      '--t-body': '#fff0f8',
-      '--t-g1': 'rgba(232,121,249,0.13)',
-      '--t-g2': 'rgba(244,63,94,0.08)',
-      '--t-p': '#e879f9', '--t-p-dim': '#a21caf', '--t-p-bright': '#f0abfc',
-      '--t-p-glow': 'rgba(232,121,249,0.26)', '--t-p-glass': 'rgba(232,121,249,0.09)',
-      '--t-s': '#f43f5e', '--t-gold': '#f59e0b',
-      '--t-tx1': '#4a044e', '--t-tx2': '#701a75', '--t-tx3': '#86198f',
-      '--t-bdr': 'rgba(162,28,175,0.08)', '--t-bdr-s': 'rgba(162,28,175,0.18)',
-      '--t-sb-bg': '#4a044e', '--t-sb-tx': '#f5d0fe',
-      '--t-blur': '24px',
-    },
-  },
-  {
-    id: 'slate',
-    name: 'Slate',
-    description: 'Clean white · indigo precision',
-    category: 'clean',
-    preview: { body: '#f8fafc', panel: 'rgba(255,255,255,0.86)', primary: '#6366f1', secondary: '#8b5cf6', text: '#0f172a', g1: 'rgba(99,102,241,0.10)', g2: 'rgba(139,92,246,0.07)' },
-    vars: {
-      '--t-body': '#f8fafc',
-      '--t-g1': 'rgba(99,102,241,0.10)',
-      '--t-g2': 'rgba(139,92,246,0.07)',
-      '--t-p': '#6366f1', '--t-p-dim': '#4f46e5', '--t-p-bright': '#818cf8',
-      '--t-p-glow': 'rgba(99,102,241,0.22)', '--t-p-glass': 'rgba(99,102,241,0.07)',
-      '--t-s': '#8b5cf6', '--t-gold': '#f59e0b',
-      '--t-tx1': '#0f172a', '--t-tx2': '#334155', '--t-tx3': '#64748b',
-      '--t-bdr': 'rgba(0,0,0,0.07)', '--t-bdr-s': 'rgba(0,0,0,0.14)',
-      '--t-sb-bg': '#1e1b4b', '--t-sb-tx': '#c7d2fe',
-      '--t-blur': '20px',
-    },
-  },
-  {
-    id: 'noir',
-    name: 'Noir',
-    description: 'Carbon black · steel glass',
-    category: 'dark',
-    preview: { body: '#080808', panel: 'rgba(20,20,24,0.85)', primary: '#e2e8f0', secondary: '#818cf8', text: '#f8fafc', g1: 'rgba(129,140,248,0.08)', g2: 'rgba(99,102,241,0.05)' },
-    vars: {
-      '--t-body': '#080808',
-      '--t-g1': 'rgba(129,140,248,0.07)',
-      '--t-g2': 'rgba(99,102,241,0.04)',
-      '--t-p': '#e2e8f0', '--t-p-dim': '#94a3b8', '--t-p-bright': '#f8fafc',
-      '--t-p-glow': 'rgba(226,232,240,0.14)', '--t-p-glass': 'rgba(226,232,240,0.05)',
-      '--t-s': '#818cf8', '--t-gold': '#fbbf24',
-      '--t-tx1': '#f8fafc', '--t-tx2': '#cbd5e1', '--t-tx3': '#475569',
-      '--t-bdr': 'rgba(255,255,255,0.08)', '--t-bdr-s': 'rgba(255,255,255,0.16)',
-      '--t-sb-bg': '#0f0f14', '--t-sb-tx': '#cbd5e1',
-      '--t-blur': '28px',
-    },
-  },
 ]
 
-export const DEFAULT_THEME_ID = 'pearl'
+export const DEFAULT_THEME_ID = 'teal'
 export const getTheme = (id: string) => THEMES.find(t => t.id === id) ?? THEMES[0]
