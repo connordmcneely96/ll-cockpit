@@ -3,377 +3,704 @@
 import { useState } from 'react'
 import { THEMES, type ThemeConfig } from '@/lib/themes'
 import { useThemeStore } from '@/stores/themeStore'
+import { useDesignStore } from '@/stores/designStore'
+import type { GradientLayer, GradientStop, ShadowLayer } from '@/lib/design-tokens'
+import { hexAlpha, buildGradientCSS } from '@/lib/design-tokens'
 import {
   Check, Palette, Layers, Settings, Bot, Wrench, GitBranch,
-  HardDrive, Shield, BookOpen, Bell, Globe, RefreshCw, Sliders, ChevronRight,
+  HardDrive, Shield, BookOpen, Bell, Globe, RefreshCw, ChevronRight,
+  Plus, Trash2, Eye, EyeOff, RotateCcw, Copy, Download,
 } from 'lucide-react'
 
 // ── Sidebar nav ──
 const SECTIONS = [
-  { id: 'themes', label: 'Themes', icon: Palette },
-  { id: 'glass', label: 'Glass Effects', icon: Layers },
-  { id: 'ai-models', label: 'AI Models', icon: Bot },
-  { id: 'mcp', label: 'Tools & MCP', icon: Wrench },
-  { id: 'github', label: 'GitHub', icon: GitBranch },
-  { id: 'storage', label: 'Storage', icon: HardDrive },
-  { id: 'general', label: 'General', icon: Settings },
-  { id: 'network', label: 'Network', icon: Globe },
-  { id: 'security', label: 'Security', icon: Shield },
-  { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'docs', label: 'Docs', icon: BookOpen },
+  { id: 'themes',     label: 'Themes',          icon: Palette,    group: 'design' },
+  { id: 'background', label: 'Background',       icon: Layers,     group: 'design' },
+  { id: 'colors',     label: 'Color Palette',    icon: Palette,    group: 'design' },
+  { id: 'surfaces',   label: 'Surfaces',         icon: Layers,     group: 'design' },
+  { id: 'glass',      label: 'Glass & Blur',     icon: Eye,        group: 'design' },
+  { id: 'borders',    label: 'Borders & Radius', icon: Settings,   group: 'design' },
+  { id: 'shadows',    label: 'Shadows',          icon: Layers,     group: 'design' },
+  { id: 'glow',       label: 'Glow & Ambient',   icon: Eye,        group: 'design' },
+  { id: 'typography', label: 'Typography',       icon: Settings,   group: 'design' },
+  { id: 'motion',     label: 'Motion',           icon: Settings,   group: 'design' },
+  { id: 'export',     label: 'Export Theme',     icon: Download,   group: 'design' },
+  { id: 'ai-models',  label: 'AI Models',        icon: Bot,        group: 'system' },
+  { id: 'mcp',        label: 'Tools & MCP',      icon: Wrench,     group: 'system' },
+  { id: 'github',     label: 'GitHub',           icon: GitBranch,  group: 'system' },
+  { id: 'storage',    label: 'Storage',          icon: HardDrive,  group: 'system' },
+  { id: 'security',   label: 'Security',         icon: Shield,     group: 'system' },
+  { id: 'general',    label: 'General',          icon: Settings,   group: 'system' },
 ]
 
 const AI_MODELS = [
   { provider: 'ANTHROPIC', models: [
-    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', caps: ['Tools'], size: 'small' },
-    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', caps: ['Tools'], size: 'medium' },
-    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', caps: ['Tools'], size: 'large' },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', caps: ['Tools'], size: 'small', active: false },
+    { id: 'claude-sonnet-4-6',         name: 'Claude Sonnet 4.6', caps: ['Tools'], size: 'medium', active: true },
+    { id: 'claude-opus-4-6',           name: 'Claude Opus 4.6', caps: ['Tools'], size: 'large', active: false },
   ]},
   { provider: 'OPENAI', models: [
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', caps: ['Tools', 'Vision'], size: 'small' },
-    { id: 'gpt-4o', name: 'GPT-4o', caps: ['Tools', 'Vision'], size: 'medium' },
-    { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', caps: ['Tools'], size: 'small' },
-    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', caps: ['Tools', 'Vision'], size: 'medium' },
-    { id: 'gpt-5.4', name: 'GPT-5.4', caps: ['Tools', 'Vision'], size: 'large' },
+    { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', caps: ['Tools'], size: 'small', active: false },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', caps: ['Tools', 'Vision'], size: 'medium', active: false },
+    { id: 'gpt-5.4',      name: 'GPT-5.4',      caps: ['Tools', 'Vision'], size: 'large', active: false },
   ]},
   { provider: 'GEMINI', models: [
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', caps: ['Tools', 'Vision'], size: 'small' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', caps: ['Tools', 'Vision'], size: 'large' },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', caps: ['Tools', 'Vision'], size: 'small', active: false },
+    { id: 'gemini-2.5-pro',   name: 'Gemini 2.5 Pro',   caps: ['Tools', 'Vision'], size: 'large', active: false },
+  ]},
+  { provider: 'WORKERS AI', models: [
+    { id: '@cf/meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', caps: ['Tools'], size: 'small', active: false },
+    { id: '@cf/baai/bge-large-en-v1.5',     name: 'BGE Large Embeddings', caps: ['Embed'], size: 'small', active: false },
   ]},
 ]
 
-// ── Theme card preview ──
-function ThemePreview({ theme }: { theme: ThemeConfig }) {
-  const { body, panel, primary, secondary, text } = theme.preview
-  const isDark = ['dark', 'teal'].includes(theme.category)
-  const glassPanel = isDark ? 'rgba(255,255,255,0.06)' : panel
+// ── Reusable primitives ──
+function Label({ children }: { children: React.ReactNode }) {
+  return <span className="font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>{children}</span>
+}
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className="rounded-lg overflow-hidden relative" style={{ height: 72, background: body }}>
-      <div className="absolute inset-0" style={{
-        background: `radial-gradient(ellipse at 20% 20%, ${theme.preview.g1} 0%, transparent 60%), radial-gradient(ellipse at 80% 80%, ${theme.preview.g2} 0%, transparent 60%)`,
-      }} />
-      <div className="relative flex h-full">
-        <div style={{ width: 8, background: glassPanel, borderRight: `1px solid ${primary}20` }} />
-        <div className="flex flex-col gap-0.5 p-1" style={{ width: 22, background: glassPanel }}>
-          {[70, 50, 60, 45].map((w, i) => (
-            <div key={i} className="rounded-sm" style={{ height: 3, width: `${w}%`, background: i === 0 ? `${primary}aa` : `${text}20` }} />
-          ))}
-        </div>
-        <div className="flex-1 flex flex-col" style={{ background: 'transparent' }}>
-          <div className="flex" style={{ height: 12, background: glassPanel, borderBottom: `1.5px solid ${primary}` }}>
-            <div className="flex items-center px-1" style={{ background: `${primary}15` }}>
-              <div className="rounded-sm" style={{ width: 18, height: 2, background: `${text}40` }} />
-            </div>
-          </div>
-          <div className="flex-1 p-1 space-y-0.5">
-            {[75, 55, 85, 40, 65].map((w, i) => (
-              <div key={i} className="rounded-sm" style={{
-                height: 2.5, width: `${w}%`,
-                background: i === 3 ? `${primary}70` : i === 1 ? `${secondary}50` : `${text}18`,
-              }} />
-            ))}
-          </div>
-        </div>
-        <div style={{ width: 24, background: glassPanel, borderLeft: `1px solid ${primary}15` }} />
-      </div>
-      <div className="absolute bottom-0 left-0 right-0" style={{ height: 4, background: theme.vars['--t-sb-bg'] ?? '#0a1114' }} />
+    <div className="mb-5">
+      <h2 className="font-condensed font-bold uppercase tracking-wider text-base" style={{ color: 'var(--t-tx1)' }}>{title}</h2>
+      <p className="font-mono text-[10px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>{subtitle}</p>
     </div>
   )
 }
 
-function ThemeCard({ theme, isActive, onHover, onLeave, onSelect }: {
-  theme: ThemeConfig; isActive: boolean
-  onHover: () => void; onLeave: () => void; onSelect: () => void
-}) {
-  const categoryColor: Record<string, string> = {
-    teal: '#00c9a7', dark: '#818cf8', clean: '#94a3b8', vivid: '#f472b6', warm: '#fb923c', cool: '#38bdf8',
-  }
-  const cc = categoryColor[theme.category] ?? '#94a3b8'
-
+function Row({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <button onClick={onSelect} onMouseEnter={onHover} onMouseLeave={onLeave}
-      className="text-left rounded-xl overflow-hidden transition-all duration-200"
-      style={{
-        background: isActive ? `${theme.preview.primary}12` : 'var(--t-p-glass)',
-        border: isActive ? `1.5px solid ${theme.preview.primary}` : '1px solid var(--t-bdr)',
-        boxShadow: isActive ? `0 0 0 3px ${theme.preview.primary}18, 0 4px 16px ${theme.preview.primary}18` : 'var(--t-shadow)',
-        transform: isActive ? 'scale(1.02) translateY(-1px)' : 'scale(1)',
-      }}
+    <div className={`flex items-center gap-3 ${className}`}>{children}</div>
+  )
+}
+
+function Divider() {
+  return <div className="h-px my-4" style={{ background: 'var(--t-bdr)' }} />
+}
+
+function Pill({ label, style = {} }: { label: string; style?: React.CSSProperties }) {
+  return (
+    <span className="font-mono text-[8px] px-2 py-0.5 rounded-full" style={{
+      background: 'var(--t-p-glass)', color: 'var(--t-p)',
+      border: '1px solid var(--t-bdr)', ...style,
+    }}>{label}</span>
+  )
+}
+
+function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button onClick={() => onChange(!value)}
+      className="relative w-9 h-5 rounded-full transition-all shrink-0"
+      style={{ background: value ? 'var(--t-p)' : 'var(--t-bdr-s)', boxShadow: value ? '0 0 8px var(--t-p-glow)' : 'none' }}
     >
-      <div className="p-2"><ThemePreview theme={theme} /></div>
-      <div className="px-3 pb-2.5">
-        <div className="flex items-center justify-between">
-          <span className="font-mono font-semibold text-[11px]" style={{ color: isActive ? theme.preview.primary : 'var(--t-tx1)' }}>
-            {theme.name}
-          </span>
-          <div className="flex items-center gap-1">
-            <span className="font-mono text-[8px] px-1.5 py-0.5 rounded-full"
-              style={{ background: `${cc}18`, color: cc, border: `1px solid ${cc}30` }}>
-              {theme.category}
-            </span>
-            {isActive && <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center"
-              style={{ background: theme.preview.primary, boxShadow: `0 0 8px ${theme.preview.primary}` }}>
-              <Check size={8} strokeWidth={3} color="#fff" />
-            </span>}
-          </div>
-        </div>
-        <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>{theme.description}</p>
-      </div>
+      <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+        style={{ left: value ? '1.1rem' : '0.1rem', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
     </button>
   )
 }
 
-function GlassSlider({ label, hint, value, min, max, step = 1, format, onChange, accent }: {
-  label: string; hint: string; value: number; min: number; max: number
-  step?: number; format: (v: number) => string; onChange: (v: number) => void; accent: string
+function Slider({ value, min, max, step = 1, onChange, unit = '', width = 'flex-1' }: {
+  value: number; min: number; max: number; step?: number
+  onChange: (v: number) => void; unit?: string; width?: string
 }) {
   const pct = ((value - min) / (max - min)) * 100
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <div>
-          <span className="font-mono text-[11px]" style={{ color: 'var(--t-tx1)' }}>{label}</span>
-          <span className="font-mono text-[9px] ml-2" style={{ color: 'var(--t-tx3)' }}>{hint}</span>
-        </div>
-        <span className="font-mono text-[10px] px-2 py-0.5 rounded-lg"
-          style={{ background: 'var(--t-p-glass)', color: accent, border: `1px solid ${accent}30` }}>
-          {format(value)}
-        </span>
-      </div>
-      <div className="relative h-1.5 rounded-full" style={{ background: 'var(--t-bdr-s)' }}>
-        <div className="absolute left-0 top-0 h-full rounded-full"
-          style={{ width: `${pct}%`, background: `linear-gradient(to right, ${accent}80, ${accent})` }} />
+    <div className={`relative flex items-center gap-2 ${width}`}>
+      <div className="flex-1 relative h-1.5 rounded-full" style={{ background: 'var(--t-bdr-s)' }}>
+        <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(to right, var(--t-p-dim), var(--t-p))' }} />
         <div className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full pointer-events-none"
-          style={{ left: `calc(${pct}% - 7px)`, background: '#fff', border: `2px solid ${accent}`, boxShadow: `0 0 6px ${accent}60` }} />
+          style={{ left: `calc(${pct}% - 7px)`, background: '#fff', border: '2px solid var(--t-p)', boxShadow: '0 0 6px var(--t-p-glow)' }} />
         <input type="range" min={min} max={max} step={step} value={value}
           onChange={e => onChange(Number(e.target.value))}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
       </div>
+      <span className="font-mono text-[10px] w-12 text-right shrink-0" style={{ color: 'var(--t-tx2)' }}>{value}{unit}</span>
+    </div>
+  )
+}
+
+function ColorPicker({ value, alpha, onChange, onAlpha }: {
+  value: string; alpha?: number
+  onChange: (hex: string) => void; onAlpha?: (a: number) => void
+}) {
+  const pct = alpha !== undefined ? Math.round(alpha * 100) : null
+  return (
+    <div className="flex items-center gap-2">
+      {/* Swatch */}
+      <div className="relative w-8 h-8 rounded-xl overflow-hidden shrink-0 cursor-pointer"
+        style={{ background: value, border: '1px solid var(--t-bdr)', boxShadow: 'var(--t-shadow)' }}>
+        <input type="color" value={value} onChange={e => onChange(e.target.value)}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+      </div>
+      {/* Hex */}
+      <input value={value.toUpperCase()} onChange={e => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) onChange(e.target.value) }}
+        className="w-24 font-mono text-[11px] px-2 py-1.5 rounded-xl outline-none"
+        style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)', color: 'var(--t-tx1)' }} />
+      {/* Alpha */}
+      {pct !== null && onAlpha && (
+        <div className="flex items-center gap-1.5 flex-1">
+          <div className="flex-1 relative h-1.5 rounded-full" style={{ background: 'var(--t-bdr-s)' }}>
+            <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${pct}%`, background: value }} />
+            <input type="range" min={0} max={100} value={pct}
+              onChange={e => onAlpha(Number(e.target.value) / 100)}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+          </div>
+          <span className="font-mono text-[10px] w-9 shrink-0" style={{ color: 'var(--t-tx3)' }}>{pct}%</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GradientLayerEditor({ layer, layerIdx }: { layer: GradientLayer; layerIdx: number }) {
+  const { setGradientLayer, setGradientStop, addGradientStop, removeGradientStop, removeGradientLayer } = useDesignStore()
+  const id = layer.id
+
+  return (
+    <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid var(--t-bdr)', background: 'var(--t-p-glass)' }}>
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid var(--t-bdr)' }}>
+        <Toggle value={layer.enabled} onChange={v => setGradientLayer(id, { enabled: v })} />
+        <span className="font-mono text-[11px] flex-1" style={{ color: 'var(--t-tx1)' }}>Layer {layerIdx + 1}</span>
+        <select value={layer.type}
+          onChange={e => setGradientLayer(id, { type: e.target.value as GradientLayer['type'] })}
+          className="font-mono text-[10px] px-2 py-1 rounded-lg outline-none"
+          style={{ background: 'var(--t-panel)', border: '1px solid var(--t-bdr)', color: 'var(--t-tx2)' }}>
+          <option value="radial">Radial</option>
+          <option value="linear">Linear</option>
+          <option value="conic">Conic</option>
+        </select>
+        <button onClick={() => removeGradientLayer(id)} className="w-6 h-6 flex items-center justify-center rounded-lg transition-all hover:opacity-70">
+          <Trash2 size={11} style={{ color: 'var(--t-tx3)' }} />
+        </button>
+      </div>
+
+      {layer.enabled && (
+        <div className="p-3 space-y-2.5">
+          {/* Position controls */}
+          {(layer.type === 'radial' || layer.type === 'conic') && (
+            <>
+              <Row><Label>X</Label><Slider value={layer.posX} min={0} max={100} onChange={v => setGradientLayer(id, { posX: v })} unit="%" /></Row>
+              <Row><Label>Y</Label><Slider value={layer.posY} min={0} max={100} onChange={v => setGradientLayer(id, { posY: v })} unit="%" /></Row>
+            </>
+          )}
+          {layer.type === 'radial' && (
+            <>
+              <Row><Label>W</Label><Slider value={layer.sizeX} min={5} max={200} onChange={v => setGradientLayer(id, { sizeX: v })} unit="%" /></Row>
+              <Row><Label>H</Label><Slider value={layer.sizeY} min={5} max={200} onChange={v => setGradientLayer(id, { sizeY: v })} unit="%" /></Row>
+            </>
+          )}
+          {(layer.type === 'linear' || layer.type === 'conic') && (
+            <Row><Label>Angle</Label><Slider value={layer.angle} min={0} max={360} onChange={v => setGradientLayer(id, { angle: v })} unit="°" /></Row>
+          )}
+
+          {/* Gradient preview */}
+          <div className="rounded-lg h-5 w-full" style={{
+            background: (() => {
+              const stops = layer.stops.map(s => `${hexAlpha(s.hex, s.alpha)} ${s.position}%`).join(', ')
+              if (layer.type === 'linear') return `linear-gradient(${layer.angle}deg, ${stops})`
+              return `radial-gradient(ellipse at 50% 50%, ${stops})`
+            })(),
+            border: '1px solid var(--t-bdr)',
+          }} />
+
+          {/* Color stops */}
+          <div className="space-y-2">
+            <Label>Color Stops</Label>
+            {layer.stops.map(stop => (
+              <div key={stop.id} className="flex items-center gap-2">
+                <ColorPicker value={stop.hex} alpha={stop.alpha}
+                  onChange={hex => setGradientStop(id, stop.id, { hex })}
+                  onAlpha={a => setGradientStop(id, stop.id, { alpha: a })} />
+                <div className="flex items-center gap-1.5 w-28">
+                  <span className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>pos</span>
+                  <Slider value={stop.position} min={0} max={100} onChange={v => setGradientStop(id, stop.id, { position: v })} unit="%" width="flex-1" />
+                </div>
+                <button onClick={() => removeGradientStop(id, stop.id)} className="w-5 h-5 flex items-center justify-center">
+                  <Trash2 size={10} style={{ color: 'var(--t-tx3)' }} />
+                </button>
+              </div>
+            ))}
+            <button onClick={() => addGradientStop(id)}
+              className="flex items-center gap-1 font-mono text-[10px] px-2 py-1 rounded-lg transition-all"
+              style={{ color: 'var(--t-p)', background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Plus size={10} /> Add stop
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ShadowLayerEditor({ layer }: { layer: ShadowLayer }) {
+  const { setShadowLayer, removeShadowLayer } = useDesignStore()
+  const id = layer.id
+  return (
+    <div className="rounded-xl p-3 mb-2" style={{ border: '1px solid var(--t-bdr)', background: 'var(--t-p-glass)' }}>
+      <div className="flex items-center gap-2 mb-2">
+        <Toggle value={layer.enabled} onChange={v => setShadowLayer(id, { enabled: v })} />
+        <span className="font-mono text-[10px] flex-1" style={{ color: 'var(--t-tx2)' }}>
+          {layer.inset ? 'Inset' : 'Drop'} shadow
+        </span>
+        <Toggle value={layer.inset} onChange={v => setShadowLayer(id, { inset: v })} />
+        <span className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>inset</span>
+        <button onClick={() => removeShadowLayer(id)}><Trash2 size={11} style={{ color: 'var(--t-tx3)' }} /></button>
+      </div>
+      {layer.enabled && (
+        <div className="space-y-1.5">
+          <Row><Label>X</Label><Slider value={layer.x} min={-40} max={40} onChange={v => setShadowLayer(id, { x: v })} unit="px" /></Row>
+          <Row><Label>Y</Label><Slider value={layer.y} min={-40} max={80} onChange={v => setShadowLayer(id, { y: v })} unit="px" /></Row>
+          <Row><Label>Blur</Label><Slider value={layer.blur} min={0} max={100} onChange={v => setShadowLayer(id, { blur: v })} unit="px" /></Row>
+          <Row><Label>Spread</Label><Slider value={layer.spread} min={-20} max={20} onChange={v => setShadowLayer(id, { spread: v })} unit="px" /></Row>
+          <Row><Label>Color</Label><ColorPicker value={layer.hex} alpha={layer.alpha} onChange={hex => setShadowLayer(id, { hex })} onAlpha={a => setShadowLayer(id, { alpha: a })} /></Row>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ThemePreview({ theme }: { theme: ThemeConfig }) {
+  const isDark = ['dark','teal'].includes(theme.category)
+  const glassPanel = isDark ? 'rgba(255,255,255,0.06)' : theme.preview.panel
+  return (
+    <div className="rounded-lg overflow-hidden relative" style={{ height: 68, background: theme.preview.body }}>
+      <div className="absolute inset-0" style={{
+        background: `radial-gradient(ellipse at 20% 20%, ${theme.preview.g1} 0%, transparent 60%), radial-gradient(ellipse at 80% 80%, ${theme.preview.g2} 0%, transparent 60%)`,
+      }} />
+      <div className="relative flex h-full">
+        <div style={{ width: 8, background: glassPanel, borderRight: `1px solid ${theme.preview.primary}20` }} />
+        <div className="flex flex-col gap-0.5 p-1" style={{ width: 22, background: glassPanel }}>
+          {[70, 50, 60, 45].map((w, i) => <div key={i} className="rounded-sm" style={{ height: 3, width: `${w}%`, background: i === 0 ? `${theme.preview.primary}cc` : `${theme.preview.text}20` }} />)}
+        </div>
+        <div className="flex-1 flex flex-col">
+          <div className="flex" style={{ height: 11, background: glassPanel, borderBottom: `2px solid ${theme.preview.primary}` }}>
+            <div className="px-1" style={{ background: `${theme.preview.primary}15` }}><div className="rounded-sm mt-1.5" style={{ width: 18, height: 2, background: `${theme.preview.text}40` }} /></div>
+          </div>
+          <div className="flex-1 p-1 space-y-0.5">
+            {[75,55,85,40,65].map((w, i) => <div key={i} className="rounded-sm" style={{ height: 2.5, width: `${w}%`, background: i === 3 ? `${theme.preview.primary}70` : i === 1 ? `${theme.preview.secondary}50` : `${theme.preview.text}18` }} />)}
+          </div>
+        </div>
+        <div style={{ width: 22, background: glassPanel, borderLeft: `1px solid ${theme.preview.primary}15` }} />
+      </div>
+      <div className="absolute bottom-0 left-0 right-0" style={{ height: 4, background: theme.vars['--t-sb-bg'] ?? '#041008' }} />
     </div>
   )
 }
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState('themes')
-  const {
-    activeThemeId, glassBlur, glassOpacity, borderOpacity, shadowDepth, gradientIntensity, innerHighlight,
-    setTheme, setGlassBlur, setGlassOpacity, setBorderOpacity, setShadowDepth, setGradientIntensity, setInnerHighlight,
-  } = useThemeStore()
-
+  const { activeThemeId, setTheme } = useThemeStore()
+  const d = useDesignStore()
   const activeTheme = THEMES.find(t => t.id === activeThemeId)!
   const accent = activeTheme.preview.primary
 
-  const handleHover = (theme: ThemeConfig) => {
+  // ── Live theme hover preview ──
+  const handleThemeHover = (theme: ThemeConfig) => {
     const root = document.documentElement
     Object.entries(theme.vars).forEach(([k, v]) => root.style.setProperty(k, v))
     root.setAttribute('data-theme', theme.id)
-    root.setAttribute('data-mode', ['dark', 'teal'].includes(theme.category) ? 'dark' : 'light')
+    root.setAttribute('data-mode', ['dark','teal'].includes(theme.category) ? 'dark' : 'light')
   }
-  const handleLeave = () => {
+  const handleThemeLeave = () => {
     const root = document.documentElement
     Object.entries(activeTheme.vars).forEach(([k, v]) => root.style.setProperty(k, v))
     root.setAttribute('data-theme', activeThemeId)
-    root.setAttribute('data-mode', ['dark', 'teal'].includes(activeTheme.category) ? 'dark' : 'light')
+    root.setAttribute('data-mode', ['dark','teal'].includes(activeTheme.category) ? 'dark' : 'light')
   }
 
-  return (
-    <div className="flex h-full">
+  // ── Export ──
+  const exportCSS = () => {
+    const root = document.documentElement
+    const vars = Array.from(root.style).map(k => `  ${k}: ${root.style.getPropertyValue(k)};`).join('\n')
+    navigator.clipboard.writeText(`:root {\n${vars}\n}`)
+  }
+  const exportJSON = () => {
+    const state = useDesignStore.getState()
+    const { set, reset, setGradientLayer, addGradientLayer, removeGradientLayer, setGradientStop, addGradientStop, removeGradientStop, setShadowLayer, addShadowLayer, removeShadowLayer, ...tokens } = state
+    navigator.clipboard.writeText(JSON.stringify(tokens, null, 2))
+  }
 
-      {/* ── Left sidebar nav ── */}
-      <div
-        className="w-52 shrink-0 flex flex-col h-full overflow-y-auto"
-        style={{
-          background: 'var(--t-panel)',
-          backdropFilter: 'blur(var(--t-blur))',
-          borderRight: '1px solid var(--t-bdr)',
-          boxShadow: 'var(--t-shadow)',
-        }}
-      >
+  const FONT_OPTIONS = ['Barlow', 'Inter', 'Space Grotesk', 'DM Sans', 'Outfit', 'Nunito', 'Poppins']
+  const MONO_OPTIONS = ['JetBrains Mono', 'Fira Code', 'Source Code Pro', 'Cascadia Code', 'IBM Plex Mono']
+  const DISPLAY_OPTIONS = ['Barlow Condensed', 'Space Grotesk', 'Outfit', 'DM Sans', 'Inter']
+
+  return (
+    <div className="flex h-full overflow-hidden">
+
+      {/* ── Left sidebar ── */}
+      <div className="w-52 shrink-0 flex flex-col h-full overflow-y-auto" style={{ background: 'var(--t-panel)', backdropFilter: 'blur(var(--t-blur))', borderRight: '1px solid var(--t-bdr)', boxShadow: 'var(--t-shadow)' }}>
         <div className="px-4 py-4 shrink-0">
           <h1 className="font-condensed font-bold uppercase tracking-wider text-base" style={{ color: 'var(--t-tx1)' }}>Settings</h1>
-          <p className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>CMS · Appearance · Integrations</p>
+          <p className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>Design · CMS · Integrations</p>
         </div>
 
-        {/* User */}
         <div className="px-3 mb-3">
-          <div
-            className="flex items-center gap-2.5 p-2.5 rounded-xl"
-            style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}
-          >
-            <div className="w-8 h-8 rounded-full flex items-center justify-center font-mono font-bold text-xs shrink-0"
-              style={{ background: accent, color: '#fff' }}>CM</div>
+          <div className="flex items-center gap-2.5 p-2.5 rounded-xl" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center font-mono font-bold text-xs shrink-0" style={{ background: accent, color: '#fff' }}>CM</div>
             <div className="min-w-0">
               <p className="font-mono text-[11px] font-semibold truncate" style={{ color: 'var(--t-tx1)' }}>Connor McNeely</p>
-              <p className="font-mono text-[9px] truncate" style={{ color: 'var(--t-tx3)' }}>Pro Plan</p>
+              <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>Pro Plan</p>
             </div>
           </div>
         </div>
 
-        {/* Search */}
         <div className="px-3 mb-2">
-          <input
-            placeholder="Filter..."
-            className="w-full px-3 py-1.5 rounded-lg font-mono text-[11px] outline-none"
-            style={{
-              background: 'var(--t-p-glass)',
-              border: '1px solid var(--t-bdr)',
-              color: 'var(--t-tx1)',
-            }}
-          />
+          <input placeholder="Filter..." className="w-full px-3 py-1.5 rounded-xl font-mono text-[11px] outline-none"
+            style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)', color: 'var(--t-tx1)' }} />
         </div>
 
-        {/* Nav items */}
         <nav className="flex-1 px-2 space-y-0.5 pb-4">
-          {SECTIONS.map(({ id, label, icon: Icon }) => {
-            const isActive = activeSection === id
-            return (
-              <button
-                key={id}
-                onClick={() => setActiveSection(id)}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition-all duration-150"
-                style={{
-                  background: isActive ? 'var(--t-p-glass)' : 'transparent',
-                  color: isActive ? 'var(--t-tx1)' : 'var(--t-tx3)',
-                  boxShadow: isActive ? 'var(--t-shadow)' : 'none',
-                  border: isActive ? '1px solid var(--t-bdr)' : '1px solid transparent',
-                }}
-              >
-                <Icon size={14} style={{ color: isActive ? accent : 'var(--t-tx3)', flexShrink: 0 }} />
-                <span className="font-mono text-[11px] flex-1">{label}</span>
-                {isActive && <ChevronRight size={12} style={{ color: 'var(--t-tx3)' }} />}
-              </button>
-            )
-          })}
+          {(['design', 'system'] as const).map(group => (
+            <div key={group}>
+              <p className="font-mono text-[8px] uppercase tracking-widest px-2 py-1.5" style={{ color: 'var(--t-tx3)' }}>
+                {group === 'design' ? 'Appearance' : 'Integrations'}
+              </p>
+              {SECTIONS.filter(s => s.group === group).map(({ id, label, icon: Icon }) => {
+                const isActive = activeSection === id
+                return (
+                  <button key={id} onClick={() => setActiveSection(id)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition-all duration-150"
+                    style={{
+                      background: isActive ? 'var(--t-p-glass)' : 'transparent',
+                      color: isActive ? 'var(--t-tx1)' : 'var(--t-tx3)',
+                      border: isActive ? '1px solid var(--t-bdr)' : '1px solid transparent',
+                      boxShadow: isActive ? 'var(--t-shadow)' : 'none',
+                    }}
+                  >
+                    <Icon size={13} style={{ color: isActive ? accent : 'var(--t-tx3)' }} />
+                    <span className="font-mono text-[11px] flex-1">{label}</span>
+                    {isActive && <ChevronRight size={11} style={{ color: 'var(--t-tx3)' }} />}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </nav>
+
+        <div className="px-3 pb-3">
+          <button onClick={() => d.reset()} className="w-full flex items-center gap-2 px-3 py-2 rounded-xl font-mono text-[10px] transition-all"
+            style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)', color: 'var(--t-tx3)' }}>
+            <RotateCcw size={11} /> Reset to defaults
+          </button>
+        </div>
       </div>
 
       {/* ── Right content ── */}
       <div className="flex-1 overflow-y-auto p-6">
 
-        {/* THEMES section */}
+        {/* THEMES */}
         {activeSection === 'themes' && (
-          <div className="space-y-5">
-            <div>
-              <h2 className="font-condensed font-bold uppercase tracking-wider text-base" style={{ color: 'var(--t-tx1)' }}>Color Themes</h2>
-              <p className="font-mono text-[10px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>Hover any card for live preview · click to apply</p>
+          <div className="space-y-4">
+            <SectionHeader title="Color Themes" subtitle="Hover any card for live preview · click to apply" />
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+              {THEMES.map(theme => {
+                const isActive = theme.id === activeThemeId
+                const cc: Record<string, string> = { teal: '#00c9a7', dark: '#818cf8', clean: '#94a3b8', vivid: '#f472b6', warm: '#fb923c', cool: '#38bdf8' }
+                return (
+                  <button key={theme.id} onClick={() => setTheme(theme.id)}
+                    onMouseEnter={() => handleThemeHover(theme)} onMouseLeave={handleThemeLeave}
+                    className="text-left rounded-2xl overflow-hidden transition-all duration-200"
+                    style={{
+                      background: isActive ? `${theme.preview.primary}12` : 'var(--t-p-glass)',
+                      border: isActive ? `2px solid ${theme.preview.primary}` : '1px solid var(--t-bdr)',
+                      boxShadow: isActive ? `0 0 0 3px ${theme.preview.primary}18, var(--t-shadow)` : 'var(--t-shadow)',
+                      transform: isActive ? 'scale(1.02) translateY(-1px)' : 'scale(1)',
+                    }}
+                  >
+                    <div className="p-2"><ThemePreview theme={theme} /></div>
+                    <div className="px-2.5 pb-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-semibold text-[11px]" style={{ color: isActive ? theme.preview.primary : 'var(--t-tx1)' }}>{theme.name}</span>
+                        {isActive ? <span className="w-4 h-4 rounded-full flex items-center justify-center" style={{ background: theme.preview.primary }}><Check size={9} strokeWidth={3} color="#fff" /></span>
+                          : <span className="font-mono text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: `${cc[theme.category] ?? '#94a3b8'}18`, color: cc[theme.category] ?? '#94a3b8', border: `1px solid ${cc[theme.category] ?? '#94a3b8'}30` }}>{theme.category}</span>}
+                      </div>
+                      <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>{theme.description}</p>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))' }}>
-              {THEMES.map(theme => (
-                <ThemeCard key={theme.id} theme={theme} isActive={theme.id === activeThemeId}
-                  onHover={() => handleHover(theme)} onLeave={handleLeave}
-                  onSelect={() => setTheme(theme.id)} />
+          </div>
+        )}
+
+        {/* BACKGROUND */}
+        {activeSection === 'background' && (
+          <div className="space-y-4">
+            <SectionHeader title="Background" subtitle="Base color · gradient layers · noise texture" />
+
+            <div className="rounded-xl p-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Label>Base Color</Label>
+              <div className="mt-2">
+                <ColorPicker value={d.bgBase} onChange={hex => d.set({ bgBase: hex })} />
+              </div>
+            </div>
+
+            <div className="rounded-xl p-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <div className="flex items-center justify-between mb-3">
+                <Label>Gradient Layers</Label>
+                <button onClick={() => d.addGradientLayer()}
+                  className="flex items-center gap-1 font-mono text-[10px] px-2 py-1 rounded-lg"
+                  style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)', color: 'var(--t-p)' }}>
+                  <Plus size={10} /> Add layer
+                </button>
+              </div>
+              {/* Full background preview */}
+              <div className="rounded-xl h-16 mb-3" style={{
+                background: d.bgBase,
+                backgroundImage: buildGradientCSS(d.gradientLayers) !== 'none' ? buildGradientCSS(d.gradientLayers) : undefined,
+                border: '1px solid var(--t-bdr)',
+              }} />
+              {d.gradientLayers.map((layer, i) => (
+                <GradientLayerEditor key={layer.id} layer={layer} layerIdx={i} />
+              ))}
+            </div>
+
+            <div className="rounded-xl p-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Row><Label>Noise Overlay</Label><Slider value={Math.round(d.noiseOpacity * 1000)} min={0} max={80} onChange={v => d.set({ noiseOpacity: v / 1000 })} unit="‰" /></Row>
+            </div>
+          </div>
+        )}
+
+        {/* COLORS */}
+        {activeSection === 'colors' && (
+          <div className="space-y-4">
+            <SectionHeader title="Color Palette" subtitle="Accent · semantic · text · status bar" />
+
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Row><Toggle value={d.overrideAccents} onChange={v => d.set({ overrideAccents: v })} /><Label>Override theme accents</Label></Row>
+              <div className="space-y-3">
+                {[{ label: 'Primary', k: 'primaryHex' as const }, { label: 'Secondary', k: 'secondaryHex' as const }, { label: 'Tertiary', k: 'tertiaryHex' as const }].map(({ label, k }) => (
+                  <Row key={k}><Label className="w-20">{label}</Label><ColorPicker value={d[k]} onChange={hex => d.set({ [k]: hex })} /></Row>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Label>Semantic Colors</Label>
+              {[{ label: 'Success', k: 'successHex' as const }, { label: 'Warning', k: 'warningHex' as const }, { label: 'Error', k: 'errorHex' as const }, { label: 'Info', k: 'infoHex' as const }].map(({ label, k }) => (
+                <Row key={k}>
+                  <span className="font-mono text-[10px] w-16" style={{ color: 'var(--t-tx2)' }}>{label}</span>
+                  <ColorPicker value={d[k]} onChange={hex => d.set({ [k]: hex })} />
+                  <div className="w-4 h-4 rounded-full shrink-0" style={{ background: d[k], boxShadow: `0 0 6px ${d[k]}80` }} />
+                </Row>
+              ))}
+            </div>
+
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Row><Toggle value={d.overrideText} onChange={v => d.set({ overrideText: v })} /><Label>Override text colors</Label></Row>
+              {[{ label: 'Primary', k: 'text1Hex' as const }, { label: 'Secondary', k: 'text2Hex' as const }, { label: 'Muted', k: 'text3Hex' as const }].map(({ label, k }) => (
+                <Row key={k}><span className="font-mono text-[10px] w-16" style={{ color: 'var(--t-tx2)' }}>{label}</span><ColorPicker value={d[k]} onChange={hex => d.set({ [k]: hex })} /></Row>
+              ))}
+            </div>
+
+            <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Label>Status Bar</Label>
+              <Row><span className="font-mono text-[10px] w-16" style={{ color: 'var(--t-tx2)' }}>Background</span><ColorPicker value={d.statusBgHex} onChange={hex => d.set({ statusBgHex: hex })} /></Row>
+              <Row><span className="font-mono text-[10px] w-16" style={{ color: 'var(--t-tx2)' }}>Text</span><ColorPicker value={d.statusTextHex} onChange={hex => d.set({ statusTextHex: hex })} /></Row>
+            </div>
+          </div>
+        )}
+
+        {/* SURFACES */}
+        {activeSection === 'surfaces' && (
+          <div className="space-y-4">
+            <SectionHeader title="Surfaces" subtitle="Panel · card · elevated · opacity controls" />
+            {[{ label: 'Panel', hexK: 'panelHex' as const, alphaK: 'panelAlpha' as const },
+              { label: 'Card', hexK: 'cardHex' as const, alphaK: 'cardAlpha' as const },
+              { label: 'Elevated', hexK: 'elevatedHex' as const, alphaK: 'elevatedAlpha' as const },
+            ].map(({ label, hexK, alphaK }) => (
+              <div key={label} className="rounded-xl p-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <Label>{label}</Label>
+                  <div className="w-10 h-5 rounded-lg" style={{ background: hexAlpha(d[hexK], d[alphaK]), border: '1px solid var(--t-bdr)' }} />
+                </div>
+                <Row><span className="font-mono text-[10px] w-10" style={{ color: 'var(--t-tx3)' }}>Color</span><ColorPicker value={d[hexK]} alpha={d[alphaK]} onChange={hex => d.set({ [hexK]: hex })} onAlpha={a => d.set({ [alphaK]: a })} /></Row>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* GLASS */}
+        {activeSection === 'glass' && (
+          <div className="space-y-4">
+            <SectionHeader title="Glass & Blur" subtitle="Backdrop blur · border · inner highlight" />
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Row><Label>Backdrop Blur</Label><Slider value={d.glassBlur} min={0} max={40} onChange={v => d.set({ glassBlur: v })} unit="px" /></Row>
+              <Divider />
+              <Row><Label>Border Color</Label><ColorPicker value={d.glassBorderHex} alpha={d.glassBorderAlpha} onChange={hex => d.set({ glassBorderHex: hex })} onAlpha={a => d.set({ glassBorderAlpha: a })} /></Row>
+              <Divider />
+              <Row><Toggle value={d.innerHighlight} onChange={v => d.set({ innerHighlight: v })} /><Label>Inner Highlight</Label></Row>
+              {d.innerHighlight && <Row><Label>Opacity</Label><Slider value={Math.round(d.innerHighlightOpacity * 100)} min={0} max={100} onChange={v => d.set({ innerHighlightOpacity: v / 100 })} unit="%" /></Row>}
+            </div>
+          </div>
+        )}
+
+        {/* BORDERS */}
+        {activeSection === 'borders' && (
+          <div className="space-y-4">
+            <SectionHeader title="Borders & Radius" subtitle="Corner radius · border color · style" />
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <div>
+                <Label>Corner Radius</Label>
+                <div className="flex gap-3 mt-3">
+                  {[0, 4, 8, 12, 16, 20, 24].map(r => (
+                    <button key={r} onClick={() => d.set({ radiusBase: r })}
+                      className="w-10 h-10 flex items-center justify-center font-mono text-[9px] transition-all"
+                      style={{
+                        borderRadius: r, border: d.radiusBase === r ? '2px solid var(--t-p)' : '1px solid var(--t-bdr)',
+                        background: d.radiusBase === r ? 'var(--t-p-glass)' : 'transparent',
+                        color: 'var(--t-tx2)', boxShadow: d.radiusBase === r ? '0 0 8px var(--t-p-glow)' : 'none',
+                      }}
+                    >{r}px</button>
+                  ))}
+                </div>
+                <Row className="mt-3"><Label>Custom</Label><Slider value={d.radiusBase} min={0} max={32} onChange={v => d.set({ radiusBase: v })} unit="px" /></Row>
+              </div>
+              <Divider />
+              <Row><Label>Border Color</Label><ColorPicker value={d.borderHex} alpha={d.borderAlpha} onChange={hex => d.set({ borderHex: hex })} onAlpha={a => d.set({ borderAlpha: a })} /></Row>
+            </div>
+          </div>
+        )}
+
+        {/* SHADOWS */}
+        {activeSection === 'shadows' && (
+          <div className="space-y-4">
+            <SectionHeader title="Shadows" subtitle="Presets · custom layers · depth" />
+
+            {/* Presets */}
+            <div className="rounded-xl p-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Label>Preset</Label>
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {(['none','subtle','soft','raised','floating','dramatic','custom'] as const).map(s => (
+                  <button key={s} onClick={() => d.set({ shadowPreset: s })}
+                    className="py-2 rounded-xl font-mono text-[10px] capitalize transition-all"
+                    style={{
+                      background: d.shadowPreset === s ? 'var(--t-p-glass)' : 'transparent',
+                      border: d.shadowPreset === s ? '1px solid var(--t-p)' : '1px solid var(--t-bdr)',
+                      color: d.shadowPreset === s ? 'var(--t-tx1)' : 'var(--t-tx3)',
+                      boxShadow: d.shadowPreset === s ? '0 0 8px var(--t-p-glow)' : 'none',
+                    }}
+                  >{s}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom layers */}
+            <div className="rounded-xl p-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <div className="flex items-center justify-between mb-3">
+                <Label>Custom Shadow Layers</Label>
+                <button onClick={() => d.addShadowLayer()}
+                  className="flex items-center gap-1 font-mono text-[10px] px-2 py-1 rounded-lg"
+                  style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)', color: 'var(--t-p)' }}>
+                  <Plus size={10} /> Add
+                </button>
+              </div>
+              {d.shadowLayers.map(l => <ShadowLayerEditor key={l.id} layer={l} />)}
+            </div>
+          </div>
+        )}
+
+        {/* GLOW */}
+        {activeSection === 'glow' && (
+          <div className="space-y-4">
+            <SectionHeader title="Glow & Ambient" subtitle="Accent glow · intensity · spread" />
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Row><Toggle value={d.glowEnabled} onChange={v => d.set({ glowEnabled: v })} /><Label>Enable Glow</Label></Row>
+              {d.glowEnabled && (
+                <>
+                  <Row><Label>Intensity</Label><Slider value={Math.round(d.glowIntensity * 100)} min={0} max={100} onChange={v => d.set({ glowIntensity: v / 100 })} unit="%" /></Row>
+                  <Row><Label>Spread</Label><Slider value={d.glowSpread} min={0} max={60} onChange={v => d.set({ glowSpread: v })} unit="px" /></Row>
+                  <Row><Toggle value={d.glowFollowsPrimary} onChange={v => d.set({ glowFollowsPrimary: v })} /><Label>Follow primary color</Label></Row>
+                  {!d.glowFollowsPrimary && <Row><Label>Glow Color</Label><ColorPicker value={d.glowHex} onChange={hex => d.set({ glowHex: hex })} /></Row>}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TYPOGRAPHY */}
+        {activeSection === 'typography' && (
+          <div className="space-y-4">
+            <SectionHeader title="Typography" subtitle="Font families · base size" />
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              {[{ label: 'Display', k: 'displayFont' as const, opts: DISPLAY_OPTIONS },
+                { label: 'Body', k: 'bodyFont' as const, opts: FONT_OPTIONS },
+                { label: 'Mono', k: 'monoFont' as const, opts: MONO_OPTIONS },
+              ].map(({ label, k, opts }) => (
+                <Row key={k}>
+                  <span className="font-mono text-[10px] w-16" style={{ color: 'var(--t-tx2)' }}>{label}</span>
+                  <select value={d[k]} onChange={e => d.set({ [k]: e.target.value })}
+                    className="flex-1 font-mono text-[11px] px-3 py-2 rounded-xl outline-none"
+                    style={{ background: 'var(--t-panel)', border: '1px solid var(--t-bdr)', color: 'var(--t-tx1)' }}>
+                    {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </Row>
+              ))}
+              <Divider />
+              <Row><Label>Base Font Size</Label><Slider value={d.baseFontSize} min={11} max={16} step={0.5} onChange={v => d.set({ baseFontSize: v })} unit="px" /></Row>
+            </div>
+          </div>
+        )}
+
+        {/* MOTION */}
+        {activeSection === 'motion' && (
+          <div className="space-y-4">
+            <SectionHeader title="Motion" subtitle="Transitions · hover effects" />
+            <div className="rounded-xl p-4 space-y-4" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
+              <Row><Label>Transition</Label><Slider value={d.transitionMs} min={50} max={600} onChange={v => d.set({ transitionMs: v })} unit="ms" /></Row>
+              <Row><Label>Hover Lift</Label><Slider value={d.hoverLiftPx} min={0} max={8} onChange={v => d.set({ hoverLiftPx: v })} unit="px" /></Row>
+              <Row><Toggle value={d.hoverGlow} onChange={v => d.set({ hoverGlow: v })} /><Label>Hover glow effect</Label></Row>
+            </div>
+          </div>
+        )}
+
+        {/* EXPORT */}
+        {activeSection === 'export' && (
+          <div className="space-y-4">
+            <SectionHeader title="Export Theme" subtitle="Copy as CSS variables or JSON design tokens" />
+            <div className="space-y-3">
+              {[{ label: 'Copy CSS Variables', desc: 'All active CSS custom properties as :root block', action: exportCSS, icon: Copy },
+                { label: 'Copy JSON Tokens', desc: 'Full design token object for version control or import', action: exportJSON, icon: Download },
+              ].map(({ label, desc, action, icon: Icon }) => (
+                <button key={label} onClick={action}
+                  className="w-full flex items-center gap-3 p-4 rounded-xl text-left transition-all"
+                  style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)', boxShadow: 'var(--t-shadow)' }}
+                >
+                  <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${accent}20`, border: '1px solid var(--t-bdr)' }}>
+                    <Icon size={14} style={{ color: accent }} />
+                  </div>
+                  <div>
+                    <p className="font-mono text-[11px] font-semibold" style={{ color: 'var(--t-tx1)' }}>{label}</p>
+                    <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>{desc}</p>
+                  </div>
+                </button>
               ))}
             </div>
           </div>
         )}
 
-        {/* GLASS section */}
-        {activeSection === 'glass' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="font-condensed font-bold uppercase tracking-wider text-base" style={{ color: 'var(--t-tx1)' }}>Glass Effects</h2>
-              <p className="font-mono text-[10px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>Granular 3D glass depth and light physics</p>
-            </div>
-
-            {/* Presets */}
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-widest mb-2" style={{ color: 'var(--t-tx3)' }}>Presets</p>
-              <div className="flex gap-2 flex-wrap">
-                {[{
-                  label: 'Airy', values: { blur: 12, opacity: 55, border: 55, shadow: 60, gradient: 80 },
-                }, {
-                  label: 'Frosted', values: { blur: 22, opacity: 80, border: 70, shadow: 100, gradient: 100 },
-                }, {
-                  label: 'Deep', values: { blur: 32, opacity: 90, border: 85, shadow: 180, gradient: 130 },
-                }, {
-                  label: 'Crystal', values: { blur: 40, opacity: 70, border: 90, shadow: 120, gradient: 200 },
-                }].map(({ label, values }) => (
-                  <button key={label}
-                    onClick={() => {
-                      setGlassBlur(values.blur); setGlassOpacity(values.opacity / 100)
-                      setBorderOpacity(values.border / 100); setShadowDepth(values.shadow / 100)
-                      setGradientIntensity(values.gradient / 100)
-                    }}
-                    className="px-4 py-2 rounded-xl font-mono text-[11px] transition-all"
-                    style={{
-                      background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)',
-                      color: 'var(--t-tx1)', boxShadow: 'var(--t-shadow)',
-                    }}
-                  >{label}</button>
-                ))}
-              </div>
-            </div>
-
-            {/* Sliders */}
-            <div className="space-y-5">
-              <GlassSlider label="Backdrop Blur" hint="panel frost" value={glassBlur} min={0} max={40}
-                format={v => `${v}px`} onChange={setGlassBlur} accent={accent} />
-              <GlassSlider label="Glass Opacity" hint="panel fill" value={Math.round(glassOpacity * 100)} min={30} max={100}
-                format={v => `${v}%`} onChange={v => setGlassOpacity(v / 100)} accent={accent} />
-              <GlassSlider label="Border Opacity" hint="glass edge" value={Math.round(borderOpacity * 100)} min={10} max={100}
-                format={v => `${v}%`} onChange={v => setBorderOpacity(v / 100)} accent={accent} />
-              <GlassSlider label="Shadow Depth" hint="3D lift" value={Math.round(shadowDepth * 100)} min={0} max={300}
-                format={v => `${v}%`} onChange={v => setShadowDepth(v / 100)} accent={accent} />
-              <GlassSlider label="Gradient Intensity" hint="bg color" value={Math.round(gradientIntensity * 100)} min={0} max={300}
-                format={v => `${v}%`} onChange={v => setGradientIntensity(v / 100)} accent={accent} />
-              <div className="flex items-center justify-between py-1">
-                <div>
-                  <span className="font-mono text-[11px]" style={{ color: 'var(--t-tx1)' }}>Inner Highlight</span>
-                  <span className="font-mono text-[9px] ml-2" style={{ color: 'var(--t-tx3)' }}>top specular edge</span>
-                </div>
-                <button onClick={() => setInnerHighlight(!innerHighlight)}
-                  className="relative w-9 h-5 rounded-full transition-all"
-                  style={{ background: innerHighlight ? accent : 'var(--t-bdr-s)', boxShadow: innerHighlight ? `0 0 8px ${accent}60` : 'none' }}
-                >
-                  <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
-                    style={{ left: innerHighlight ? '1.1rem' : '0.1rem', boxShadow: '0 1px 3px rgba(0,0,0,0.20)' }} />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* AI MODELS section */}
+        {/* AI MODELS */}
         {activeSection === 'ai-models' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="font-condensed font-bold uppercase tracking-wider text-base" style={{ color: 'var(--t-tx1)' }}>AI Models</h2>
-              <p className="font-mono text-[10px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>Available models by provider · routing lanes configured in D1</p>
-            </div>
+          <div className="space-y-5">
+            <SectionHeader title="AI Models" subtitle="Provider routing · capability lanes · D1 model registry" />
             {AI_MODELS.map(({ provider, models }) => (
               <div key={provider}>
-                <p className="font-mono text-[10px] uppercase tracking-widest mb-2" style={{ color: 'var(--t-tx3)' }}>{provider}</p>
-                <div className="space-y-1.5">
-                  {models.map(model => (
-                    <div key={model.id}
-                      className="flex items-center justify-between px-4 py-3 rounded-xl"
-                      style={{
-                        background: model.id === 'claude-sonnet-4-5' ? 'var(--t-p-glass)' : 'var(--t-panel)',
-                        border: model.id === 'claude-sonnet-4-5' ? '1px solid var(--t-bdr-s)' : '1px solid var(--t-bdr)',
-                        boxShadow: 'var(--t-shadow)',
-                      }}
-                    >
+                <Label>{provider}</Label>
+                <div className="mt-2 space-y-1.5">
+                  {models.map(m => (
+                    <div key={m.id} className="flex items-center justify-between px-4 py-3 rounded-xl transition-all"
+                      style={{ background: m.active ? 'var(--t-p-glass)' : 'var(--t-panel)', border: m.active ? '1px solid var(--t-bdr-s)' : '1px solid var(--t-bdr)', boxShadow: 'var(--t-shadow)' }}>
                       <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 rounded-full" style={{
-                          background: model.id === 'claude-sonnet-4-5' ? accent : 'var(--t-tx3)',
-                          boxShadow: model.id === 'claude-sonnet-4-5' ? `0 0 6px ${accent}` : 'none',
-                        }} />
+                        <div className="w-2 h-2 rounded-full" style={{ background: m.active ? accent : 'var(--t-tx3)', boxShadow: m.active ? `0 0 6px ${accent}` : 'none' }} />
                         <div>
-                          <p className="font-mono text-[11px] font-medium" style={{ color: 'var(--t-tx1)' }}>{model.name}</p>
-                          <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>{model.id}</p>
+                          <p className="font-mono text-[11px] font-medium" style={{ color: 'var(--t-tx1)' }}>{m.name}</p>
+                          <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>{m.id}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {model.caps.map(cap => (
-                          <span key={cap} className="font-mono text-[8px] px-2 py-0.5 rounded-md"
-                            style={{ background: 'var(--t-p-glass)', color: accent, border: `1px solid ${accent}25` }}>
-                            {cap}
-                          </span>
-                        ))}
-                        <span className="font-mono text-[8px] px-2 py-0.5 rounded-md"
-                          style={{ background: 'var(--t-bdr)', color: 'var(--t-tx3)' }}>
-                          {model.size}
-                        </span>
+                        {m.caps.map(c => <Pill key={c} label={c} />)}
+                        <Pill label={m.size} style={{ color: 'var(--t-tx3)' }} />
                       </div>
                     </div>
                   ))}
@@ -383,15 +710,13 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* OTHER SECTIONS — placeholder */}
-        {!['themes', 'glass', 'ai-models'].includes(activeSection) && (
+        {/* PLACEHOLDER SECTIONS */}
+        {!['themes','background','colors','surfaces','glass','borders','shadows','glow','typography','motion','export','ai-models'].includes(activeSection) && (
           <div className="flex flex-col items-center justify-center h-64 text-center gap-3">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-bdr)' }}>
-              {(() => { const s = SECTIONS.find(s => s.id === activeSection); return s ? <s.icon size={20} style={{ color: accent }} /> : null })()} 
+              {(() => { const s = SECTIONS.find(s => s.id === activeSection); return s ? <s.icon size={20} style={{ color: accent }} /> : null })()}
             </div>
-            <p className="font-mono text-xs font-semibold" style={{ color: 'var(--t-tx1)' }}>
-              {SECTIONS.find(s => s.id === activeSection)?.label}
-            </p>
+            <p className="font-mono text-xs font-semibold" style={{ color: 'var(--t-tx1)' }}>{SECTIONS.find(s => s.id === activeSection)?.label}</p>
             <p className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>Coming in Sprint 5 · D1 migration 0009</p>
           </div>
         )}
