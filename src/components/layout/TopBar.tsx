@@ -3,65 +3,87 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useUiStore } from '@/stores/uiStore'
 import { CostMeter } from '@/components/ui/CostMeter'
-
-const PAGE_LABELS: Record<string, string> = {
-  '/': 'Dashboard',
-  '/ide': 'IDE',
-  '/terminal': 'Terminal',
-  '/orchestrator': 'Orchestrator',
-  '/pipeline': 'Pipeline',
-  '/settings': 'Settings',
-}
+import { Search } from 'lucide-react'
 
 export function TopBar() {
   const pathname = usePathname()
   const router = useRouter()
   const { openCommandPalette } = useUiStore()
-  const pageLabel = PAGE_LABELS[pathname] ?? 'Cockpit'
 
   return (
-    <header className="h-10 bg-base-1 border-b border-white/[0.06] flex items-center px-4 gap-4 shrink-0">
-      {/* Left: logo + workspace */}
-      <div className="flex items-center gap-2">
-        <div className="w-7 h-7 flex items-center justify-center bg-gold/10 rounded font-condensed font-bold text-gold text-xs leading-none select-none">
-          LL
+    <header
+      className="flex items-center px-3 gap-3 shrink-0"
+      style={{
+        height: 38,
+        background: 'rgba(8, 9, 14, 0.95)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderBottom: '1px solid rgba(255,255,255,0.05)',
+      }}
+    >
+      {/* Left: brand */}
+      <div className="flex items-center gap-2 shrink-0">
+        <div
+          className="w-6 h-6 rounded flex items-center justify-center"
+          style={{
+            background: 'rgba(245,200,66,0.12)',
+            border: '1px solid rgba(245,200,66,0.2)',
+          }}
+        >
+          <span className="font-mono font-bold text-[9px]" style={{ color: '#f5c842' }}>LL</span>
         </div>
-        <span className="text-gold font-condensed font-bold text-sm tracking-widest uppercase hidden sm:block">
+        <span className="font-mono font-bold text-[11px] tracking-widest" style={{ color: '#f5c842' }}>
           LL COCKPIT
         </span>
-        <div className="w-px h-4 bg-white/[0.08] hidden sm:block" />
-        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-base-3 border border-white/[0.06] rounded">
-          <span className="w-1.5 h-1.5 rounded-full bg-green shrink-0" />
-          <span className="text-text3 font-mono text-[10px]">workspace: NEXUS PRIME</span>
-        </div>
       </div>
 
-      {/* Center: breadcrumb */}
+      {/* Separator */}
+      <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
+
+      {/* Workspace badge */}
+      <div
+        className="flex items-center gap-1.5 px-2 py-0.5 rounded"
+        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+      >
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#10b981', boxShadow: '0 0 4px #10b981' }} />
+        <span className="font-mono text-[10px]" style={{ color: '#4b5563' }}>NEXUS PRIME</span>
+      </div>
+
+      {/* Center search bar — Cursor-style */}
       <div className="flex-1 flex items-center justify-center">
-        <span className="text-text3 font-mono text-[10px]">
-          LL COCKPIT
-          <span className="text-text3/40 mx-1.5">›</span>
-          <span className="text-text2">{pageLabel}</span>
-        </span>
-      </div>
-
-      {/* Right: actions */}
-      <div className="flex items-center gap-2">
-        <CostMeter />
-        <div className="w-px h-4 bg-white/[0.08]" />
-        <button className="text-text3 hover:text-text2 transition-colors font-mono text-sm" title="Globe">⊕</button>
-        <button className="text-text3 hover:text-text2 transition-colors font-mono text-sm" title="Layout">⊠</button>
-        <button
-          onClick={() => router.push('/settings')}
-          className="text-text3 hover:text-text2 transition-colors font-mono text-sm"
-          title="Settings"
-        >⚙</button>
         <button
           onClick={openCommandPalette}
-          className="flex items-center gap-1 px-2 py-0.5 bg-base-3 border border-white/[0.06] rounded text-text3 font-mono text-[10px] hover:text-text2 hover:border-white/[0.12] transition-colors"
+          className="flex items-center gap-2 px-3 py-1 rounded transition-all"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            color: '#374151',
+            minWidth: 220,
+            maxWidth: 400,
+            width: '100%',
+          }}
         >
-          ⌘K
+          <Search size={11} strokeWidth={1.5} />
+          <span className="font-mono text-[10px] flex-1 text-left">Search or run command…</span>
+          <kbd
+            className="font-mono text-[9px] px-1 rounded"
+            style={{ background: 'rgba(255,255,255,0.06)', color: '#374151' }}
+          >
+            ⌘K
+          </kbd>
         </button>
+      </div>
+
+      {/* Right: cost + actions */}
+      <div className="flex items-center gap-2 shrink-0">
+        <CostMeter />
+        <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.06)' }} />
+        <button
+          onClick={() => router.push('/settings')}
+          className="font-mono text-xs transition-colors"
+          style={{ color: '#374151' }}
+          title="Settings"
+        >⚙</button>
       </div>
     </header>
   )
