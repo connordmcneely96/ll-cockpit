@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 /* ─── Font Variables ──────────────────────────────────────────────────────── */
-/* Loaded via <link> in layout.tsx — Google Fonts served from browser side    */
 :root {
   --font-mono: 'JetBrains Mono';
   --font-condensed: 'Barlow Condensed';
@@ -12,7 +11,6 @@
 
 /* ─── Design Tokens ─────────────────────────────────────────────────────────── */
 :root {
-  /* Background layers */
   --bg-base: #0a0b0f;
   --bg-1:    #0d0f1a;
   --bg-2:    #111320;
@@ -20,65 +18,96 @@
   --bg-4:    #1c2035;
   --bg-5:    #232840;
 
-  /* Blue palette */
-  --blue:       #3b82f6;
-  --blue-dim:   #1d4ed8;
+  --blue:        #3b82f6;
+  --blue-dim:    #1d4ed8;
   --blue-bright: #60a5fa;
-  --blue-glow:  rgba(59, 130, 246, 0.15);
+  --blue-glow:   rgba(59, 130, 246, 0.15);
 
-  /* Brand + semantic */
   --gold:  #f5c842;
   --cyan:  #06b6d4;
   --green: #10b981;
   --red:   #ef4444;
 
-  /* Text */
   --text1: #e2e8f0;
   --text2: #94a3b8;
   --text3: #4b5563;
 
-  /* Borders */
   --border:        rgba(255, 255, 255, 0.06);
   --border-strong: rgba(255, 255, 255, 0.12);
 }
 
 /* ─── Base ────────────────────────────────────────────────────────────────── */
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html,
-body {
+html, body {
   height: 100%;
-  background-color: var(--bg-base);
   color: var(--text1);
 }
 
 body {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  background-color: var(--bg-base);
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgba(59,130,246,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 100%, rgba(59,130,246,0.04) 0%, transparent 60%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+}
+
+/* ─── Drag state ──────────────────────────────────────────────────────────── */
+body.ia-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 /* ─── Scrollbar ───────────────────────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(59, 130, 246, 0.25);
+  background: rgba(59, 130, 246, 0.2);
   border-radius: 2px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(59, 130, 246, 0.5);
+::-webkit-scrollbar-thumb:hover { background: rgba(59, 130, 246, 0.45); }
+
+/* ─── Glass utilities ─────────────────────────────────────────────────────── */
+.glass {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(10, 11, 15, 0.75);
 }
 
-/* ─── Glass overlay ───────────────────────────────────────────────────────── */
-.glass {
+.glass-card {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  background-color: rgba(10, 11, 15, 0.8);
+  background: rgba(22, 25, 40, 0.50);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+}
+
+.glass-panel {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(11, 13, 22, 0.80);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ─── Glow utilities ──────────────────────────────────────────────────────── */
+.glow-blue {
+  box-shadow: 0 0 12px rgba(59,130,246,0.3), 0 0 32px rgba(59,130,246,0.1);
+}
+.glow-blue-sm {
+  box-shadow: 0 0 6px rgba(59,130,246,0.4);
+}
+.glow-green {
+  box-shadow: 0 0 8px rgba(16,185,129,0.4);
+}
+
+/* ─── Border animations ───────────────────────────────────────────────────── */
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(59,130,246,0.15); }
+  50%       { border-color: rgba(59,130,246,0.45); }
+}
+.border-pulse-active {
+  animation: border-pulse 2s ease-in-out infinite;
 }
 
 /* ─── Prose (agent message output) ───────────────────────────────────────── */
@@ -91,7 +120,6 @@ body {
   font-size: 0.8125rem;
   line-height: 1.6;
 }
-
 .agent-prose code:not(pre code) {
   background: var(--bg-4);
   border-radius: 0.25rem;
@@ -99,35 +127,14 @@ body {
   font-size: 0.875em;
   color: var(--cyan);
 }
-
-.agent-prose p {
-  margin-bottom: 0.75rem;
-  line-height: 1.7;
-}
-
+.agent-prose p     { margin-bottom: 0.75rem; line-height: 1.7; }
 .agent-prose ul,
-.agent-prose ol {
-  padding-left: 1.25rem;
-  margin-bottom: 0.75rem;
-}
-
-.agent-prose li {
-  margin-bottom: 0.25rem;
-}
-
+.agent-prose ol    { padding-left: 1.25rem; margin-bottom: 0.75rem; }
+.agent-prose li    { margin-bottom: 0.25rem; }
 .agent-prose h1,
 .agent-prose h2,
-.agent-prose h3 {
-  color: var(--text1);
-  font-weight: 600;
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
-}
-
-.agent-prose strong {
-  color: var(--gold);
-}
-
+.agent-prose h3    { color: var(--text1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
+.agent-prose strong { color: var(--gold); }
 .agent-prose blockquote {
   border-left: 3px solid var(--gold);
   padding-left: 1rem;
