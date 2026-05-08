@@ -2,118 +2,158 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Font Variables ──────────────────────────────────────────────────────── */
+/* ── Fonts ──────────────────────────────────────────────────────────────── */
 :root {
-  --font-mono: 'JetBrains Mono';
+  --font-mono:      'JetBrains Mono';
   --font-condensed: 'Barlow Condensed';
-  --font-sans: 'Barlow';
+  --font-sans:      'Barlow';
 }
 
-/* ─── Design Tokens ─────────────────────────────────────────────────────────── */
+/* ── Theme variables (default: Midnight) ────────────────────────────────── */
+/* All set dynamically by ThemeProvider via JS. These are the fallbacks. */
 :root {
-  --bg-base: #0a0b0f;
-  --bg-1:    #0d0f1a;
-  --bg-2:    #111320;
-  --bg-3:    #161928;
-  --bg-4:    #1c2035;
-  --bg-5:    #232840;
+  --t-bg:    #0a0b0f;
+  --t-bg1:   #0d0f1a;
+  --t-bg2:   #111320;
+  --t-bg3:   #161928;
+  --t-bg4:   #1c2035;
+  --t-bg5:   #232840;
 
-  --blue:        #3b82f6;
-  --blue-dim:    #1d4ed8;
-  --blue-bright: #60a5fa;
-  --blue-glow:   rgba(59, 130, 246, 0.15);
+  --t-p:         #3b82f6;
+  --t-p-dim:     #1d4ed8;
+  --t-p-bright:  #60a5fa;
+  --t-p-glow:    rgba(59,130,246,0.22);
+  --t-p-glass:   rgba(59,130,246,0.09);
 
-  --gold:  #f5c842;
-  --cyan:  #06b6d4;
-  --green: #10b981;
-  --red:   #ef4444;
+  --t-s:     #06b6d4;
+  --t-gold:  #f5c842;
 
-  --text1: #e2e8f0;
-  --text2: #94a3b8;
-  --text3: #4b5563;
+  --t-tx1:   #e2e8f0;
+  --t-tx2:   #94a3b8;
+  --t-tx3:   #4b5563;
 
-  --border:        rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --t-bdr:   rgba(255,255,255,0.06);
+  --t-bdr-s: rgba(255,255,255,0.12);
+
+  --t-glass:     rgba(11,13,22,0.78);
+  --t-glass-bdr: rgba(59,130,246,0.14);
+
+  --t-sb-bg: #172038;
+  --t-sb-tx: #93c5fd;
+
+  --t-g1:    rgba(59,130,246,0.07);
+  --t-g2:    rgba(6,182,212,0.04);
+  --t-blur:  22px;
+
+  --t-panel-opacity: 0.82;
 }
 
-/* ─── Base ────────────────────────────────────────────────────────────────── */
+/* ── Base ────────────────────────────────────────────────────────────────── */
 * { box-sizing: border-box; }
-
-html, body {
-  height: 100%;
-  color: var(--text1);
-}
+html, body { height: 100%; color: var(--t-tx1); }
 
 body {
-  background-color: var(--bg-base);
+  background-color: var(--t-bg);
   background-image:
-    radial-gradient(ellipse at 20% 0%, rgba(59,130,246,0.06) 0%, transparent 60%),
-    radial-gradient(ellipse at 80% 100%, rgba(59,130,246,0.04) 0%, transparent 60%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+    radial-gradient(ellipse at 15% 0%, var(--t-g1) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 100%, var(--t-g2) 0%, transparent 55%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.022'/%3E%3C/svg%3E");
+  transition: background-color 0.4s ease, color 0.4s ease;
 }
 
-/* ─── Drag state ──────────────────────────────────────────────────────────── */
+/* ── Drag state ─────────────────────────────────────────────────────────── */
 body.ia-resizing {
   cursor: col-resize !important;
   user-select: none !important;
   -webkit-user-select: none !important;
 }
 
-/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(59, 130, 246, 0.2);
-  border-radius: 2px;
-}
-::-webkit-scrollbar-thumb:hover { background: rgba(59, 130, 246, 0.45); }
+::-webkit-scrollbar-thumb { background: var(--t-p-glass); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--t-p-glow); }
 
-/* ─── Glass utilities ─────────────────────────────────────────────────────── */
+/* ── Glass utilities ────────────────────────────────────────────────────── */
 .glass {
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  background: rgba(10, 11, 15, 0.75);
-}
-
-.glass-card {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  background: rgba(22, 25, 40, 0.50);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 10px;
+  backdrop-filter: blur(var(--t-blur));
+  -webkit-backdrop-filter: blur(var(--t-blur));
+  background: var(--t-glass);
+  border: 1px solid var(--t-glass-bdr);
+  transition: background 0.4s ease, border-color 0.4s ease;
 }
 
 .glass-panel {
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  background: rgba(11, 13, 22, 0.80);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(var(--t-blur));
+  -webkit-backdrop-filter: blur(var(--t-blur));
+  background: var(--t-glass);
+  border-right: 1px solid var(--t-bdr);
+  transition: all 0.4s ease;
 }
 
-/* ─── Glow utilities ──────────────────────────────────────────────────────── */
-.glow-blue {
-  box-shadow: 0 0 12px rgba(59,130,246,0.3), 0 0 32px rgba(59,130,246,0.1);
-}
-.glow-blue-sm {
-  box-shadow: 0 0 6px rgba(59,130,246,0.4);
-}
-.glow-green {
-  box-shadow: 0 0 8px rgba(16,185,129,0.4);
+.glass-card {
+  backdrop-filter: blur(calc(var(--t-blur) * 0.6));
+  -webkit-backdrop-filter: blur(calc(var(--t-blur) * 0.6));
+  background: var(--t-p-glass);
+  border: 1px solid var(--t-glass-bdr);
+  border-radius: 10px;
+  transition: all 0.3s ease;
 }
 
-/* ─── Border animations ───────────────────────────────────────────────────── */
+.glass-card:hover {
+  background: var(--t-p-glass);
+  border-color: var(--t-p-bright);
+  box-shadow: 0 0 20px var(--t-p-glow);
+  transform: translateY(-1px);
+}
+
+/* ── Glow utilities ─────────────────────────────────────────────────────── */
+.glow-p   { box-shadow: 0 0 14px var(--t-p-glow), 0 0 30px rgba(0,0,0,0.3); }
+.glow-p-sm { box-shadow: 0 0 7px var(--t-p-glow); }
+.glow-s   { box-shadow: 0 0 14px color-mix(in srgb, var(--t-s) 30%, transparent); }
+
+/* ── Border pulse ───────────────────────────────────────────────────────── */
 @keyframes border-pulse {
-  0%, 100% { border-color: rgba(59,130,246,0.15); }
-  50%       { border-color: rgba(59,130,246,0.45); }
+  0%, 100% { border-color: var(--t-bdr); }
+  50%       { border-color: var(--t-p-bright); }
 }
-.border-pulse-active {
-  animation: border-pulse 2s ease-in-out infinite;
+.border-pulse-active { animation: border-pulse 2.5s ease-in-out infinite; }
+
+/* ── Shimmer (loading skeleton) ─────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+.shimmer {
+  background: linear-gradient(90deg,
+    var(--t-bg3) 25%,
+    var(--t-bg4) 50%,
+    var(--t-bg3) 75%);
+  background-size: 200% auto;
+  animation: shimmer 1.8s linear infinite;
 }
 
-/* ─── Prose (agent message output) ───────────────────────────────────────── */
+/* ── Tailwind compatibility aliases ─────────────────────────────────────── */
+/* These allow existing bg-base-X classes to respond to themes */
+.bg-base   { background-color: var(--t-bg)  !important; }
+.bg-base-1 { background-color: var(--t-bg1) !important; }
+.bg-base-2 { background-color: var(--t-bg2) !important; }
+.bg-base-3 { background-color: var(--t-bg3) !important; }
+.bg-base-4 { background-color: var(--t-bg4) !important; }
+.bg-base-5 { background-color: var(--t-bg5) !important; }
+.text-text1 { color: var(--t-tx1) !important; }
+.text-text2 { color: var(--t-tx2) !important; }
+.text-text3 { color: var(--t-tx3) !important; }
+.text-blue, .text-blue-DEFAULT { color: var(--t-p) !important; }
+.bg-blue\/10 { background-color: var(--t-p-glass) !important; }
+.border-white\/\[0\.06\] { border-color: var(--t-bdr) !important; }
+.text-gold { color: var(--t-gold) !important; }
+.text-green { color: var(--t-s) !important; }
+
+/* ── Agent prose ────────────────────────────────────────────────────────── */
 .agent-prose pre {
-  background: var(--bg-4);
-  border: 1px solid var(--border);
+  background: var(--t-bg4);
+  border: 1px solid var(--t-bdr);
   border-radius: 0.5rem;
   padding: 1rem;
   overflow-x: auto;
@@ -121,11 +161,11 @@ body.ia-resizing {
   line-height: 1.6;
 }
 .agent-prose code:not(pre code) {
-  background: var(--bg-4);
+  background: var(--t-bg4);
   border-radius: 0.25rem;
   padding: 0.1em 0.3em;
   font-size: 0.875em;
-  color: var(--cyan);
+  color: var(--t-s);
 }
 .agent-prose p     { margin-bottom: 0.75rem; line-height: 1.7; }
 .agent-prose ul,
@@ -133,11 +173,11 @@ body.ia-resizing {
 .agent-prose li    { margin-bottom: 0.25rem; }
 .agent-prose h1,
 .agent-prose h2,
-.agent-prose h3    { color: var(--text1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
-.agent-prose strong { color: var(--gold); }
+.agent-prose h3    { color: var(--t-tx1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
+.agent-prose strong { color: var(--t-gold); }
 .agent-prose blockquote {
-  border-left: 3px solid var(--gold);
+  border-left: 3px solid var(--t-gold);
   padding-left: 1rem;
-  color: var(--text2);
+  color: var(--t-tx2);
   margin: 0.75rem 0;
 }
