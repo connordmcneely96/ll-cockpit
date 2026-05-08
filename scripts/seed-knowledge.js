@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// NEXUS Knowledge Base Seeder — May 2-7 2026 Sessions
+// NEXUS Knowledge Base Seeder — May 7-8 2026 Sessions
 // Run: node scripts/seed-knowledge.js
 
 const BASE_URL = 'https://ll-cockpit.connorpattern.workers.dev';
@@ -25,43 +25,87 @@ async function seed(label, type, data) {
 }
 
 async function main() {
-  console.log('\n🧠 NEXUS Knowledge Base Seeder — May 2-7 2026 Sessions\n');
+  console.log('\n🧠 NEXUS Knowledge Base Seeder — May 7-8 2026\n');
 
-  // ─── MAY 7 NEW NODES ───
-  await seed('May7: Three-panel layout live', 'study_node', { title: 'Cockpit Three-Panel Layout — ExplorerPanel + Center + AgentPanel', category: 'architecture', content: 'Layout: TopBar (40px) | ExplorerPanel (220px) | center (flex, border-x) | AgentPanel (280px) | StatusBar (24px). ExplorerPanel shows 11 agents + R2 workspace. Clicking agent sets uiStore.selectedAgent → AgentPanel renders inline chat without page navigation. Center stays on current view (Dashboard/IDE/Terminal/Pipeline). Agent chat is no longer a full-page route. /agent/[name] pages redirect to / and set selectedAgent. Deployed May 7 2026 as version 9e7dec45.', tags: 'layout,three-panel,explorer,agent-panel,status-bar,antigravity,cursor', source: 'session_log_may7' });
-  await seed('May7: Antigravity dashboard design', 'study_node', { title: 'Cockpit Dashboard — Antigravity-Style with Stat Cards + Agent Grid', category: 'architecture', content: 'Dashboard: 6 stat cards across top (SESSIONS TODAY, TOKENS USED, COST TODAY, ACTIVE AGENTS, PIPELINE TASKS, HOURS TODAY). Below: agent roster grid (2-3 cols) + right column (workspace nav + recent activity). Agent cards: status radio (ACTIVE/IDLE), activity preview, tool chips, OPEN button. Clicking card or OPEN sets selectedAgent. TopBar: 40px, LL logo + workspace badge (green dot + NEXUS PRIME) on left, breadcrumb center, cost meter + settings on right.', tags: 'dashboard,antigravity,stat-cards,agent-cards,topbar,breadcrumb', source: 'session_log_may7' });
-  await seed('May7: Tailwind design tokens update', 'study_node', { title: 'Cockpit Tailwind Token System — Blue-Black Cursor/Antigravity Palette', category: 'codebase', content: 'Colors: base (DEFAULT:#0a0b0f, 1:#0d0f1a, 2:#111320, 3:#161928, 4:#1c2035, 5:#232840). blue (DEFAULT:#3b82f6, dim:#1d4ed8, bright:#60a5fa, glow:rgba(59,130,246,0.15)). gold:#f5c842 (brand only). cyan:#06b6d4. green:#10b981. red:#ef4444. text1:#e2e8f0. text2:#94a3b8. text3:#4b5563. Border default: rgba(255,255,255,0.06). Animations: dot-bounce (streaming indicator). Globals: SVG noise texture on body, blue-tinted scrollbar, .glass backdrop-blur mixin.', tags: 'tailwind,tokens,colors,design-system,blue-black,cursor,antigravity', source: 'session_log_may7' });
-  await seed('May7: Google Cloud VM replaces Hetzner', 'study_node', { title: 'Infrastructure Decision — Google Cloud VM Replaces Hetzner', category: 'architecture', content: 'Decision: Google Cloud VM replaces Hetzner VPS for all compute. SearXNG is self-hosted on Google Cloud VM. Cloudflare Tunnel (cloudflared) exposes Google Cloud VM services to Workers. Terminal PTY: Cloudflare provides native PTY tunnel support — no custom WebSocket PTY server needed. This eliminates Sprint 6A custom PTY server build. All sprint plan references updated to reflect Google Cloud VM.', tags: 'infrastructure,google-cloud-vm,hetzner,cloudflare-pty,tunnel,terminal', source: 'session_log_may7' });
-  await seed('May7: Sam repo extraction — PaaS value', 'study_node', { title: "Sam Primeaux's leadership-legacy Repo — Full PaaS Value Extraction", category: 'architecture', content: 'Key extractions from SamPrimeaux/leadership-legacy (Vite+React+CF Worker): (1) 10 Worker API routes to add (r2/list, r2/text, r2/object, ai/providers, agent/code, github/status, oauth/github/start, oauth/google/start). (2) D1 schemas: cms_ai_providers, cms_ai_models, cms_ai_routing_policy, cms_r2_buckets, cms_r2_objects. (3) Full Supabase schema: 24 tables including ll_tenants, ll_workspaces, ll_routing_arms (Thompson Sampling), ll_routing_decisions, ll_stream_events, ll_tool_call_events, ll_error_events, ll_eval_runs, ll_codebase_chunks, ll_codebase_symbols. (4) RUBRIC.md: 7-category readiness scoring (0-5) for PaaS gate. (5) Workspace registration pattern: agentsam_workspace + agentsam_scripts with safe_to_run flag. (6) 10-phase onboarding playbook. (7) Thompson Sampling routing strategy. (8) 5 KV namespace strategy. (9) useResizablePanels hook, Monaco file tree, terminal preset strip, agent-to-editor apply. (10) OpenSCAD CAD integration pattern.', tags: 'sam-repo,extraction,paas,supabase,thompson-sampling,rubric,workspace-registration,r2,monaco', source: 'session_log_may7' });
-  await seed('May7: Thompson Sampling AI routing', 'study_node', { title: 'Thompson Sampling Multi-Provider AI Routing — Production Pattern', category: 'technology', content: 'Each model+task_type combination is a routing_arm with alpha (successes+1) and beta (failures+1). On each request: sample Beta(alpha, beta) value for each eligible arm. Select arm with highest sampled value. After completion: alpha++ on success, beta++ on failure. Arms self-optimize — better models get more traffic. Stored in Supabase ll_routing_arms table with fields: alpha, beta, total_runs, successes, failures, avg_cost_usd, avg_quality_score. Routing strategy: deterministic guardrails → then Thompson Sampling inside safe model pool → log all outcomes. Implement in Sprint 10 alongside ll_routing_arms table.', tags: 'thompson-sampling,ai-routing,multi-provider,anthropic,openai,supabase,routing-arms', source: 'session_log_may7' });
-  await seed('May7: Supabase PaaS telemetry schema', 'study_node', { title: 'Supabase PaaS Telemetry Schema — 24 Tables for Multi-Tenant Observability', category: 'architecture', content: 'Multi-tenant foundation: ll_tenants (tenant registry) + ll_workspaces (one per project/brand). RAG: ll_documents (vector(1024) embeddings), ll_semantic_search_log, ll_knowledge_edges. Analytics: ll_site_sessions, ll_site_events, ll_lead_events. AI routing: ll_model_cost_snapshots, ll_routing_arms (Thompson Sampling), ll_routing_decisions. Agent telemetry: ll_prompt_runs, ll_stream_events (per-request SSE metrics), ll_tool_call_events, ll_error_events (severity: debug/info/warning/error/critical). Evals: ll_eval_suites, ll_eval_runs (human scores: architecture/quality/speed/cost 1-5). R2: ll_r2_object_events, ll_designstudio_runs. Codebase: ll_codebase_snapshots, ll_codebase_files, ll_codebase_chunks (vector(1024)), ll_codebase_symbols. 4 pre-built views. RLS enabled on all 24 tables. Apply via sql/supabase/010_full_cms_analytics_rag.sql.', tags: 'supabase,paas,telemetry,multi-tenant,rag,routing-arms,eval-runs,codebase-chunks', source: 'session_log_may7' });
-  await seed('May7: PaaS readiness rubric (Sam)', 'study_node', { title: 'PaaS Client Readiness Rubric — 7 Categories, Score 0-5', category: 'process', content: 'From docs/RUBRIC.md. Score 4 required on all categories before client goes to production. Categories: Integration Setup (0=nothing, 4=works through API with safe errors, 5=tested/logged/monitored/documented), Secret Safety (4=audited, never returned to browser), Dashboard Usability (4=clear/fast/role-aware), AI Tooling (4=routing+cost+fallbacks work), Tool Execution Safety (4=risk levels+approval gates+audit logs), Testing (4=core workflows tested), Connor Readiness (3=can run/test/deploy with a guide). Production decision: block if any category below target OR any exposed secrets OR any destructive tool without approval OR build/Playwright/health fails. Port this as SENTINEL scoring matrix for PaaS client gating.', tags: 'rubric,paas,readiness,scoring,sentinel,production-gate,client-onboarding', source: 'session_log_may7' });
-  await seed('May7: Master sprint plan Sprints 1-10', 'study_node', { title: 'NEXUS Master Sprint Plan — Sprints 1-10 Complete Map', category: 'architecture', content: 'Sprint 1 (done): CF Foundation. Sprint 2 (done): Knowledge Pipeline + MCP. Sprint 3 (done): Supabase Mirror + ChatGPT. Sprint 4 (in progress): Cockpit Core + UI. Sprint 5 (next): IDE + R2 + Sam Extraction (resizable panels, R2 routes, Monaco wiring, D1 migrations 0004-0008, new pages). Sprint 6: Research Pipeline + Terminal (Cloudflare PTY to Google Cloud VM, ORACLE detect-fetch-summarize-vectorize-deliver, contextual suggestions, automatic artifacts). Sprint 7: Agent Tool Chains (3 pipelines: Lead-Contract-Deposit, Brief-Build-Deliver-Invoice, Intelligence-Content-Publish). Sprint 8: Testing + Quality Gates (Playwright 10 UI tests + 7 API tests, SENTINEL rubric gate). Sprint 9: Day 28 Goal (first paying client through Cockpit, Demo Loom, LinkedIn blast). Sprint 10: PaaS Multi-Tenant (ll_tenants, workspace registration, Thompson Sampling, Stripe, nexus_db, 5 KV namespaces).', tags: 'sprint-plan,roadmap,sprints,paas,day28,oracle,playwright,thompson-sampling', source: 'session_log_may7' });
-  await seed('May7: Claude Code hallucination push to branch', 'study_node', { title: 'Claude Code Hallucination — Reporting Push to Branch That Never Happened', category: 'failure_pattern', content: 'Symptom: Claude Code reports "All 4 commits are pushed and the build is clean" but git branch -a shows no new branch. After git fetch --all, the branch still does not appear. Root cause: Claude Code generated a successful-looking report but the git push command either failed silently or was never executed. Diagnostic: Run git branch -a then git fetch --all to check if the branch exists on remote. Fix: Push files directly via GitHub MCP (push_files tool) from Claude Chat instead of relying on Claude Code git push. This bypass is reliable because it uses the GitHub API directly.', tags: 'claude-code,hallucination,git,push,branch,github-mcp,verification', source: 'session_log_may7' });
+  // ─── MAY 8 SESSION NODES ───
 
-  // ─── PREVIOUS SPRINT ITEMS (kept for idempotency) ───
-  const sprintItems = [
-    { id: 'sprint-4-agent-streaming-done', sprint_number: 4, title: 'Agent streaming — code complete, credits needed', description: 'route.ts uses native fetch. React #185 fixed. All secrets deployed. Blocked on Anthropic credits.', status: 'in_progress', priority: 1, agent: 'BUILDER', category: 'streaming' },
-    { id: 'sprint-4-three-panel-layout', sprint_number: 4, title: 'Three-panel layout — LIVE', description: 'ExplorerPanel (220px) + center (flex) + AgentPanel (280px). ExplorerPanel shows 11 agents. Clicking agent opens inline chat in AgentPanel. No page navigation. uiStore.selectedAgent drives AgentPanel.', status: 'done', priority: 1, agent: 'BUILDER', category: 'frontend' },
-    { id: 'sprint-4-dashboard-redesign', sprint_number: 4, title: 'Dashboard redesign — Antigravity-style LIVE', description: '6 stat cards + agent roster grid with status/tools/cost. TopBar: LL logo + workspace badge + breadcrumb. StatusBar: NEXUS PRIME + model + cost.', status: 'done', priority: 1, agent: 'BUILDER', category: 'frontend' },
-    { id: 'sprint-4-auth-verify', sprint_number: 4, title: 'Verify Supabase auth in production', description: 'Auth route and middleware configured. Not confirmed working end-to-end in production.', status: 'todo', priority: 2, agent: 'BUILDER', category: 'auth' },
-    { id: 'sprint-4-d1-messages', sprint_number: 4, title: 'Wire D1 message persistence from UI', description: 'agent_tasks writes in route.ts. cockpit_messages persistence and read not confirmed.', status: 'todo', priority: 2, agent: 'BUILDER', category: 'database' },
-    { id: 'sprint-5-resizable-panels', sprint_number: 5, title: 'useResizablePanels TypeScript hook', description: 'Port Sam\'s useResizablePanels hook. ExplorerWidth (190-440px), AgentWidth (280-620px), TerminalHeight (150-540px). Persist to localStorage. Drag dividers with cursor-col-resize.', status: 'todo', priority: 1, agent: 'BUILDER', category: 'frontend' },
-    { id: 'sprint-5-r2-routes', sprint_number: 5, title: 'R2 API routes — list, text, object, ai/providers, agent/code', description: 'GET /api/r2/list?prefix=, GET /api/r2/text?key=, GET /api/r2/object/[...key], GET /api/ai/providers, POST /api/agent/code, GET /api/github/status, enhanced GET /api/health.', status: 'todo', priority: 1, agent: 'BUILDER', category: 'api' },
-    { id: 'sprint-5-monaco-wire', sprint_number: 5, title: 'Wire Monaco IDE — R2 file tree + tabs + language detection', description: 'getLanguageFromKey(key), R2 file tree via /api/r2/list, tab system, open R2 file in Monaco, agent-to-editor apply pattern, terminal preset strip.', status: 'todo', priority: 1, agent: 'BUILDER', category: 'ide' },
-    { id: 'sprint-5-d1-migrations', sprint_number: 5, title: 'D1 migrations 0004-0008', description: '0004: cms_ai_providers/models/routing_policy. 0005: cms_r2_buckets/objects. 0006: analytics_events/sessions/ai_completions/routing_decisions. 0007: content_queue/subscribers/revenue/pending_approvals. 0008: research_sources/queue/digests/project_links.', status: 'todo', priority: 1, agent: 'BUILDER', category: 'database' },
-    { id: 'sprint-5-new-pages', sprint_number: 5, title: 'New Cockpit pages — AI Providers, R2 Storage, Analytics, Leads', description: '/ai-providers (P1), /storage (P1), /analytics (P2), /leads (P2), /media (P3), /cms (P3).', status: 'todo', priority: 2, agent: 'BUILDER', category: 'frontend' },
-    { id: 'sprint-6-terminal-pty', sprint_number: 6, title: 'Terminal — Cloudflare PTY tunnel to Google Cloud VM', description: 'Cloudflare native PTY tunnels. No custom WebSocket PTY server needed. Wire xterm.js to Cloudflare PTY pointing at Google Cloud VM. Validate Supabase JWT before accepting connection.', status: 'todo', priority: 1, agent: 'BUILDER', category: 'terminal' },
-    { id: 'sprint-6-oracle-pipeline', sprint_number: 6, title: 'ORACLE research pipeline — Detect-Fetch-Summarize-Vectorize-Deliver', description: 'Cron Worker (hourly): YouTube Data API + RSS + X scraper. Workers AI summarization. Vectorize RESEARCH_INDEX. 7am digest posted as ORACLE message in Cockpit. D1 migration 0008. Contextual suggestions from Vectorize on project open.', status: 'todo', priority: 1, agent: 'ORACLE', category: 'research' },
-    { id: 'sprint-10-paas-foundation', sprint_number: 10, title: 'PaaS multi-tenant foundation — tenants + workspace registration', description: 'D1: tenants, nexus_workspaces, nexus_workspace_scripts. Supabase: ll_tenants, ll_workspaces, ll_routing_arms (Thompson Sampling). Per-tenant OAuth KV. Vectorize metadata filtering. API tenant scoping from Supabase auth. nexus_db D1 creation. 5 KV namespaces (sessions, rate_limits, oauth_state, cache, flags). 10-phase PaaS onboarding playbook. Rubric gate: all 7 categories score >=4.', status: 'todo', priority: 1, agent: 'BUILDER', category: 'paas' },
-  ];
+  await seed('May8: R2 API routes live', 'study_node', {
+    title: 'R2 API Routes — All 7 Live and Verified',
+    category: 'architecture',
+    content: 'Seven R2 and AI API routes deployed and verified via PowerShell. GET /api/r2/list?prefix= returns objects from ll-cockpit-r2 (binding: env.R2). GET /api/r2/text?key= reads text files with extension validation (binary guard blocks .zip/.png etc, returns 415). GET /api/r2/object/[...key] streams raw objects with correct Content-Type. GET /api/ai/providers checks which AI secrets are deployed (Anthropic confirmed active, OpenAI/Gemini not yet). POST /api/agent/code uses native fetch to Anthropic NOT SDK (SDK incompatible with CF Workers). GET /api/github/status checks GitHub OAuth secrets. GET /api/health now checks d1+kv+r2+supabase+anthropic+workers_ai — all returning ok. Current R2 bucket (ll-cockpit-r2) has 1 object: ll_project_knowledge.zip (153KB, binary). All routes use getCloudflareContext() pattern.',
+    tags: 'r2,api-routes,monaco,ide,health-check,anthropic,cloudflare',
+    source: 'session_log_may8'
+  });
 
-  for (const item of sprintItems) {
-    await seed(`Sprint ${item.sprint_number}: ${item.title.substring(0, 50)}`, 'sprint_item', item);
-  }
+  await seed('May8: D1 migrations 0004-0007 complete', 'study_node', {
+    title: 'D1 Migrations 0004-0007 — 34 Tables Now Live',
+    category: 'architecture',
+    content: 'Ran migrations directly via Cloudflare MCP D1 query tool. No Claude Code needed. New tables: cms_ai_providers (seeded: anthropic active, openai/gemini needs_secret, workers_ai active), cms_ai_models (seeded: haiku/sonnet/opus lanes + BGE embeddings), cms_ai_routing_policy (seeded: default routing sonnet as default_workhorse, haiku as cheap_fast_router, opus as senior_reasoning), cms_r2_buckets (seeded: ll-cockpit-r2 binding), cms_r2_objects, analytics_events, ai_completions, content_queue, subscribers, revenue, pending_approvals. Total D1 tables: 34. Note: research pipeline tables (migration 0008) not yet run — planned for Sprint 6 with ORACLE pipeline.',
+    tags: 'd1,migrations,cms-ai-providers,routing-policy,tables,cloudflare-mcp',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: CMS design system — design tokens + DesignProvider', 'study_node', {
+    title: 'CMS Design Token System — Full Granular Control',
+    category: 'architecture',
+    content: 'Built complete design token system in 4 files. src/lib/design-tokens.ts: types (GradientLayer, GradientStop, ShadowLayer, DesignTokens) + utility functions (hexToRgb, hexAlpha, lighten, darken, buildGradientCSS, buildShadowCSS). src/stores/designStore.ts: Zustand store with all CRUD actions for gradient layers/stops, shadow layers, persisted to localStorage as ll-design-v1. src/components/theme/DesignProvider.tsx: replaces ThemeProvider, applies 12 systems to CSS: background, gradient layers, accent colors, semantic colors, text, surfaces, glass, border radius scale, shadows, glow, status bar, motion, typography. src/app/layout.tsx: uses DesignProvider instead of ThemeProvider. 6 granular controls: backdrop blur, glass opacity, border opacity, shadow depth, gradient intensity, inner highlight toggle. All applied via CSS custom properties on document.documentElement.',
+    tags: 'design-tokens,design-provider,glassmorphic,css-variables,zustand,gradient',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: 10 themes dark teal default', 'study_node', {
+    title: 'Theme System — 10 Themes, Dark Teal Default',
+    category: 'architecture',
+    content: 'themes.ts rebuilt with 10 themes. DEFAULT_THEME_ID = teal. Dark themes: Teal Pro (#070e0b base, #00c9a7 accent — matches Sam Primeaux inneranimalmedia.com production app), Ocean (#060b14, #3b82f6), Noir (#080808, #818cf8), Synthwave (#0a0010, #e879f9). Light themes: Pearl (#f8faff, #3b82f6), Aurora (#faf5ff, #8b5cf6), Sunset (#fff8f2, #f97316), Bloom (#fff0f5, #f43f5e), Forest (#f2fdf7, #10b981), Sky (#f0f9ff, #38bdf8). Each theme has full CSS variable set: --t-body, --t-g1/g2 (gradient colors), --t-p/p-dim/p-bright/p-glow/p-glass, --t-s, --t-tx1/2/3, --t-bdr/bdr-s, --t-sb-bg/tx, --t-blur. ThemeProvider upgraded to DesignProvider which applies both theme vars AND design overrides.',
+    tags: 'themes,teal,dark-mode,light-mode,css-variables,design-system',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: Browser page with iframe', 'study_node', {
+    title: 'Browser Page — Embedded Browser at /browser',
+    category: 'codebase',
+    content: 'Created src/app/(cockpit)/browser/page.tsx. Full embedded browser with: traffic lights (ff5f57/febc2e/28c840), back/forward buttons with history stack, refresh button, URL bar with navigation on Enter, bookmarks bar (LL Cockpit, Cloudflare, Supabase, GitHub, Anthropic, Linear), loading progress indicator (animated gradient bar), iframe with sandbox allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation. History managed via useState array + index. Added browser.tsx tab to TabBar between ide.tsx and terminal.tsx. Note: many sites block iframe embedding via X-Frame-Options — works for our own Workers URL and some others.',
+    tags: 'browser,iframe,tab-bar,navigation,bookmarks',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: Settings CMS full sidebar nav', 'study_node', {
+    title: 'Settings Page — Full CMS Control Panel with Sidebar Nav',
+    category: 'codebase',
+    content: 'Rebuilt settings/page.tsx as a full CMS design control panel. Left sidebar: user card (CM Pro Plan), filter input, Appearance section (Themes, Background, Colors, Surfaces, Glass & Blur, Borders & Radius, Shadows, Glow & Ambient, Typography, Motion, Export Theme), Integrations section (AI Models, Tools & MCP, GitHub, Storage, Security, General). Reset to defaults button. Right content: 11 design sections each with professional controls. AI Models section matches Sam Primeaux inneranimalmedia.com settings exactly: provider groups (Anthropic/OpenAI/Gemini/Workers AI), status dots, capability badges (Tools/Vision/Embed), size badges (small/medium/large). Gradient layer builder: per-layer type selector (radial/linear/conic), per-stop color picker + alpha + position, gradient preview bar. Shadow layer builder: x/y/blur/spread/color/alpha/inset controls. Export: copies CSS vars or JSON tokens to clipboard. TypeScript fix: Label component accepts optional className prop.',
+    tags: 'settings,cms,sidebar-nav,ai-models,design-panel,gradient-builder,shadow-builder',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: Cursor IDE chrome TabBar + TopBar + StatusBar', 'study_node', {
+    title: 'Cursor-Style IDE Chrome — TabBar, TopBar, StatusBar',
+    category: 'codebase',
+    content: 'TabBar (src/components/layout/TabBar.tsx): 35px file tabs at top of editor area. Tabs: dashboard.tsx, ide.tsx, browser.tsx, terminal.tsx, pipeline.tsx, agents.tsx, storage.tsx, analytics.tsx. Active tab: blue top accent line + lighter background. Hover shows X close button. TopBar (src/components/layout/TopBar.tsx): 38px, glass panel, LL logo + LL COCKPIT gold text, workspace badge with green dot, centered search bar that opens command palette, cost meter, settings gear. StatusBar (src/components/layout/StatusBar.tsx): 22px, uses --t-sb-bg/tx CSS vars (themed per active theme), git branch icon + main, NEXUS PRIME, claude-sonnet-4-5, UTF-8, TypeScript. ActivityRail (src/components/layout/ActivityRail.tsx): 48px left strip, LL logo mark, 7 nav icons with active glow state, tooltips on hover, settings pinned at bottom. All components use CSS variables so they respond to theme changes instantly.',
+    tags: 'tab-bar,top-bar,status-bar,activity-rail,cursor,ide,css-variables',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: Claude Code hallucination pattern — branch push never happened', 'study_node', {
+    title: 'Failure Pattern — Claude Code Hallucinating Successful Git Push',
+    category: 'failure_pattern',
+    content: 'Occurred twice this session. Claude Code reports all commits pushed and branch created. Running git branch -a or checking GitHub shows no branch exists. Root cause: Claude Code generates a successful-looking report but the git push either failed silently or was never executed. Diagnostic: always check github.com/{repo}/branches or run git fetch --all && git branch -r after Claude Code claims to push. Fix: use GitHub MCP push_files tool from Claude Chat to push directly via GitHub API — guaranteed to land. This is more reliable than trusting Claude Code git operations. Pattern name: Hallucination (from build_failure_modes.md). Applied in this session: pushed all major file sets directly via GitHub MCP instead of Claude Code git commands.',
+    tags: 'claude-code,hallucination,git-push,github-mcp,failure-pattern',
+    source: 'session_log_may8'
+  });
+
+  await seed('May8: Sprint 5 status update', 'sprint_item', {
+    id: 'sprint-5-status-may8',
+    sprint_number: 5,
+    title: 'Sprint 5 Status as of May 8 2026',
+    description: 'DONE: 5A resizable panels (useResizablePanels hook with beginDrag pattern). 5B R2 API routes (all 7 live, verified via PowerShell). 5D D1 migrations 0004-0007 (34 tables, seeded with AI providers/models/routing). DONE (bonus): Browser page /browser, CMS design token system, 10 themes dark teal default, Settings full CMS panel, Cursor IDE chrome. TODO: 5C Monaco IDE wiring (R2 file tree, tab system, language detection, agent-to-editor apply). TODO: 5E new standalone pages (/ai-providers, /storage, /analytics, /leads). TODO: Sprint 4 gaps (Supabase auth verified, D1 message persistence confirmed, PermissionGate).',
+    status: 'in_progress',
+    priority: 1,
+    agent: 'BUILDER',
+    category: 'sprint'
+  });
 
   console.log('\n✅ Seeding complete. Embeddings queuing in background.');
-  console.log('Trigger phrase for next session: "Seed the knowledge base from this session"');
+  console.log('Next: node scripts/seed-knowledge.js');
 }
 
 main().catch(console.error);
