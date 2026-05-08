@@ -3,14 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  LayoutDashboard,
-  Code2,
-  HardDrive,
-  BarChart2,
-  Bot,
-  GitBranch,
-  Settings,
-  TerminalSquare,
+  LayoutDashboard, Code2, TerminalSquare,
+  HardDrive, BarChart2, Bot, GitBranch, Settings,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -31,25 +25,26 @@ export function ActivityRail() {
       className="flex flex-col items-center shrink-0 h-full py-2 gap-0.5"
       style={{
         width: 48,
-        background: 'rgba(10, 11, 15, 0.85)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderRight: '1px solid rgba(255,255,255,0.05)',
+        background: 'var(--t-panel)',
+        backdropFilter: 'blur(var(--t-blur))',
+        WebkitBackdropFilter: 'blur(var(--t-blur))',
+        borderRight: '1px solid var(--t-glass-bdr)',
+        boxShadow: 'var(--t-shadow)',
+        zIndex: 10,
       }}
     >
-      {/* Logo mark */}
+      {/* LL Logo mark */}
       <div
-        className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 shrink-0"
+        className="w-8 h-8 rounded-xl flex items-center justify-center mb-3 shrink-0"
         style={{
-          background: 'rgba(59,130,246,0.15)',
-          border: '1px solid rgba(59,130,246,0.3)',
-          boxShadow: '0 0 12px rgba(59,130,246,0.2)',
+          background: 'var(--t-p-glass)',
+          border: '1px solid var(--t-glass-bdr)',
+          boxShadow: '0 0 12px var(--t-p-glow)',
         }}
       >
-        <span className="text-blue-400 font-mono text-[10px] font-bold">LL</span>
+        <span className="font-mono font-bold text-[10px]" style={{ color: 'var(--t-p)' }}>LL</span>
       </div>
 
-      {/* Nav icons */}
       {NAV_ITEMS.map(({ icon: Icon, label, href }) => {
         const isActive = pathname === href
         return (
@@ -57,30 +52,26 @@ export function ActivityRail() {
             key={href}
             href={href}
             title={label}
-            className="w-8 h-8 rounded-md flex items-center justify-center transition-all duration-150 relative group"
+            className="relative group w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-150"
             style={{
-              background: isActive ? 'rgba(59,130,246,0.18)' : 'transparent',
-              color: isActive ? '#60a5fa' : '#4b5563',
-              boxShadow: isActive ? '0 0 10px rgba(59,130,246,0.25)' : 'none',
+              background: isActive ? 'var(--t-p-glass)' : 'transparent',
+              color: isActive ? 'var(--t-p)' : 'var(--t-tx3)',
+              boxShadow: isActive ? '0 0 10px var(--t-p-glow)' : 'none',
+              border: isActive ? '1px solid var(--t-glass-bdr)' : '1px solid transparent',
             }}
           >
-            <Icon size={16} strokeWidth={isActive ? 2 : 1.5} />
+            <Icon size={15} strokeWidth={isActive ? 2 : 1.5} />
             {/* Tooltip */}
             <span
-              className="absolute left-10 z-50 px-2 py-1 rounded text-[10px] font-mono whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{
-                background: 'rgba(22,25,40,0.95)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: '#94a3b8',
-              }}
+              className="absolute left-10 z-50 px-2 py-1 rounded-lg text-[10px] font-mono whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity glass-float"
+              style={{ color: 'var(--t-tx1)' }}
             >
               {label}
             </span>
-            {/* Active indicator */}
             {isActive && (
               <span
-                className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r"
-                style={{ background: '#3b82f6' }}
+                className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r"
+                style={{ width: 2, height: 16, background: 'var(--t-p)', boxShadow: '0 0 6px var(--t-p-glow)' }}
               />
             )}
           </Link>
@@ -88,15 +79,13 @@ export function ActivityRail() {
       })}
 
       <div className="flex-1" />
-
-      {/* Settings pinned bottom */}
       <Link
         href="/settings"
         title="Settings"
-        className="w-8 h-8 rounded-md flex items-center justify-center transition-all"
-        style={{ color: '#4b5563' }}
+        className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+        style={{ color: 'var(--t-tx3)' }}
       >
-        <Settings size={15} strokeWidth={1.5} />
+        <Settings size={14} strokeWidth={1.5} />
       </Link>
     </aside>
   )

@@ -12,42 +12,27 @@ export function ExplorerPanel() {
     <div
       className="flex flex-col h-full overflow-hidden"
       style={{
-        background: 'rgba(11, 13, 22, 0.75)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderRight: '1px solid rgba(255,255,255,0.05)',
+        background: 'var(--t-panel)',
+        backdropFilter: 'blur(var(--t-blur))',
+        WebkitBackdropFilter: 'blur(var(--t-blur))',
+        borderRight: '1px solid var(--t-glass-bdr)',
+        boxShadow: 'var(--t-shadow)',
       }}
     >
       {/* Header */}
       <div
         className="h-10 flex items-center justify-between px-3 shrink-0"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+        style={{ borderBottom: '1px solid var(--t-glass-bdr)' }}
       >
-        <span className="text-[10px] font-mono uppercase tracking-widest" style={{ color: 'rgba(148,163,184,0.4)' }}>
-          Explorer
-        </span>
-        <button
-          className="transition-colors font-mono text-xs px-1"
-          style={{ color: 'rgba(148,163,184,0.3)' }}
-          title="Refresh"
-        >
-          ↻
-        </button>
+        <span className="text-[10px] font-mono uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>Explorer</span>
+        <button className="font-mono text-xs" style={{ color: 'var(--t-tx3)' }} title="Refresh">↻</button>
       </div>
 
-      {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
-
-        {/* Agents section */}
+        {/* Agents */}
         <div className="py-1">
-          <p
-            className="font-mono uppercase text-[9px] tracking-widest px-3 py-2"
-            style={{ color: 'rgba(148,163,184,0.3)' }}
-          >
-            Agents
-          </p>
-
-          {AGENT_LIST.map((agent) => {
+          <p className="font-mono uppercase text-[9px] tracking-widest px-3 py-2" style={{ color: 'var(--t-tx3)' }}>Agents</p>
+          {AGENT_LIST.map(agent => {
             const isActive = selectedAgent === agent.name
             return (
               <button
@@ -55,146 +40,71 @@ export function ExplorerPanel() {
                 onClick={() => setSelectedAgent(isActive ? null : agent.name)}
                 className="relative w-full flex items-center gap-2.5 px-3 h-8 text-left transition-all duration-150"
                 style={{
-                  background: isActive ? 'rgba(59,130,246,0.08)' : 'transparent',
-                  color: isActive ? '#e2e8f0' : '#64748b',
+                  background: isActive ? 'var(--t-p-glass)' : 'transparent',
+                  color: isActive ? 'var(--t-tx1)' : 'var(--t-tx2)',
+                  boxShadow: isActive ? 'var(--t-shadow)' : 'none',
                 }}
               >
-                {/* Active left border */}
                 {isActive && (
                   <span
                     className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r"
-                    style={{
-                      width: 2,
-                      height: 20,
-                      background: '#3b82f6',
-                      boxShadow: '0 0 8px rgba(59,130,246,0.6)',
-                    }}
+                    style={{ width: 2, height: 20, background: 'var(--t-p)', boxShadow: '0 0 8px var(--t-p-glow)' }}
                   />
                 )}
-
-                {/* Agent color dot */}
                 <span
                   className="shrink-0 rounded-full"
                   style={{
-                    width: 6,
-                    height: 6,
+                    width: 6, height: 6,
                     backgroundColor: agent.color,
-                    boxShadow: isActive ? `0 0 6px ${agent.color}` : 'none',
+                    boxShadow: isActive ? `0 0 8px ${agent.color}` : 'none',
                     animation: isActive ? 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite' : 'none',
                   }}
                 />
-
-                <span className="font-mono text-[11px] flex-1 truncate font-medium">
-                  {agent.displayName}
-                </span>
-                <span
-                  className="font-mono text-[9px] truncate max-w-[68px]"
-                  style={{ color: 'rgba(148,163,184,0.35)' }}
-                >
-                  {agent.role}
-                </span>
+                <span className="font-mono text-[11px] flex-1 truncate font-medium">{agent.displayName}</span>
+                <span className="font-mono text-[9px] truncate max-w-[68px]" style={{ color: 'var(--t-tx3)' }}>{agent.role}</span>
               </button>
             )
           })}
         </div>
 
-        {/* Divider */}
-        <div className="mx-3 my-2" style={{ height: 1, background: 'rgba(255,255,255,0.04)' }} />
+        <div className="mx-3 my-2" style={{ height: 1, background: 'var(--t-bdr)' }} />
 
-        {/* Workspace section */}
+        {/* Workspace */}
         <div className="py-1">
-          <p
-            className="font-mono uppercase text-[9px] tracking-widest px-3 py-2"
-            style={{ color: 'rgba(148,163,184,0.3)' }}
-          >
-            Workspace
-          </p>
+          <p className="font-mono uppercase text-[9px] tracking-widest px-3 py-2" style={{ color: 'var(--t-tx3)' }}>Workspace</p>
 
-          {/* R2 bucket */}
-          <div
-            className="mx-2 mb-2 rounded-lg p-2.5"
-            style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <HardDrive size={11} style={{ color: '#4b5563' }} />
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                Cloudflare R2
-              </span>
-            </div>
-            <p className="font-mono text-[10px] mb-2" style={{ color: '#3b82f6', opacity: 0.7 }}>ll-cockpit-r2</p>
-            <button
-              className="flex items-center gap-1.5 w-full text-[9px] font-mono py-1 px-2 rounded transition-colors"
-              style={{
-                background: 'rgba(59,130,246,0.08)',
-                border: '1px solid rgba(59,130,246,0.15)',
-                color: 'rgba(96,165,250,0.7)',
-              }}
+          {[{
+            icon: HardDrive, label: 'Cloudflare R2', sub: 'll-cockpit-r2',
+            btn: <><RefreshCcw size={9} /> Refresh</>,
+          }, {
+            icon: GitBranch, label: 'GitHub Sync', sub: 'Connect to browse repos, push commits.',
+            btn: <>Connect GitHub</>,
+          }, {
+            icon: FolderOpen, label: 'Google Drive', sub: 'Authorize to browse and index docs.',
+            btn: <>Connect Google</>,
+          }].map(({ icon: Icon, label, sub, btn }) => (
+            <div
+              key={label}
+              className="mx-2 mb-2 rounded-xl p-2.5 glass-card"
             >
-              <RefreshCcw size={9} />
-              Refresh objects
-            </button>
-          </div>
-
-          {/* GitHub Sync */}
-          <div
-            className="mx-2 mb-2 rounded-lg p-2.5"
-            style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
-          >
-            <div className="flex items-center gap-2 mb-1.5">
-              <GitBranch size={11} style={{ color: '#4b5563' }} />
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                GitHub Sync
-              </span>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Icon size={11} style={{ color: 'var(--t-tx3)' }} />
+                <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--t-tx2)' }}>{label}</span>
+              </div>
+              <p className="font-mono text-[9px] mb-2" style={{ color: 'var(--t-tx3)' }}>{sub}</p>
+              <button
+                className="flex items-center gap-1 w-full justify-center text-[9px] font-mono py-1 rounded-lg transition-all"
+                style={{
+                  background: 'var(--t-p-glass)',
+                  border: '1px solid var(--t-glass-bdr)',
+                  color: 'var(--t-p)',
+                  boxShadow: '0 0 8px var(--t-p-glow)',
+                }}
+              >
+                {btn}
+              </button>
             </div>
-            <p className="font-mono text-[9px] mb-2" style={{ color: 'rgba(148,163,184,0.3)' }}>
-              Connect to browse repos, push commits, open PRs.
-            </p>
-            <button
-              className="w-full text-[9px] font-mono py-1 rounded transition-colors"
-              style={{
-                background: 'rgba(59,130,246,0.08)',
-                border: '1px solid rgba(59,130,246,0.15)',
-                color: 'rgba(96,165,250,0.7)',
-              }}
-            >
-              Connect GitHub
-            </button>
-          </div>
-
-          {/* Google Drive */}
-          <div
-            className="mx-2 mb-2 rounded-lg p-2.5"
-            style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
-          >
-            <div className="flex items-center gap-2 mb-1.5">
-              <FolderOpen size={11} style={{ color: '#4b5563' }} />
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                Google Drive
-              </span>
-            </div>
-            <p className="font-mono text-[9px] mb-2" style={{ color: 'rgba(148,163,184,0.3)' }}>
-              Authorize to browse folders, upload, and index docs.
-            </p>
-            <button
-              className="w-full text-[9px] font-mono py-1 rounded transition-colors"
-              style={{
-                background: 'rgba(59,130,246,0.08)',
-                border: '1px solid rgba(59,130,246,0.15)',
-                color: 'rgba(96,165,250,0.7)',
-              }}
-            >
-              Connect Google
-            </button>
-          </div>
+          ))}
         </div>
       </div>
     </div>

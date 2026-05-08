@@ -2,157 +2,182 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Fonts ──────────────────────────────────────────────────────────────── */
+/* ── Fonts ───────────────────────────────────────────────────────────────── */
 :root {
   --font-mono:      'JetBrains Mono';
   --font-condensed: 'Barlow Condensed';
   --font-sans:      'Barlow';
 }
 
-/* ── Theme variables (default: Midnight) ────────────────────────────────── */
-/* All set dynamically by ThemeProvider via JS. These are the fallbacks. */
+/* ── Theme defaults (Pearl — overridden by ThemeProvider) ────────────────── */
 :root {
-  --t-bg:    #0a0b0f;
-  --t-bg1:   #0d0f1a;
-  --t-bg2:   #111320;
-  --t-bg3:   #161928;
-  --t-bg4:   #1c2035;
-  --t-bg5:   #232840;
-
-  --t-p:         #3b82f6;
-  --t-p-dim:     #1d4ed8;
-  --t-p-bright:  #60a5fa;
-  --t-p-glow:    rgba(59,130,246,0.22);
-  --t-p-glass:   rgba(59,130,246,0.09);
-
-  --t-s:     #06b6d4;
-  --t-gold:  #f5c842;
-
-  --t-tx1:   #e2e8f0;
-  --t-tx2:   #94a3b8;
-  --t-tx3:   #4b5563;
-
-  --t-bdr:   rgba(255,255,255,0.06);
-  --t-bdr-s: rgba(255,255,255,0.12);
-
-  --t-glass:     rgba(11,13,22,0.78);
-  --t-glass-bdr: rgba(59,130,246,0.14);
-
-  --t-sb-bg: #172038;
-  --t-sb-tx: #93c5fd;
-
-  --t-g1:    rgba(59,130,246,0.07);
-  --t-g2:    rgba(6,182,212,0.04);
-  --t-blur:  22px;
-
-  --t-panel-opacity: 0.82;
+  --t-body:        #f8faff;
+  --t-g1:          rgba(59,130,246,0.12);
+  --t-g2:          rgba(6,182,212,0.07);
+  --t-p:           #3b82f6;
+  --t-p-dim:       #1d4ed8;
+  --t-p-bright:    #60a5fa;
+  --t-p-glow:      rgba(59,130,246,0.22);
+  --t-p-glass:     rgba(59,130,246,0.08);
+  --t-s:           #06b6d4;
+  --t-gold:        #f59e0b;
+  --t-tx1:         #0f172a;
+  --t-tx2:         #475569;
+  --t-tx3:         #94a3b8;
+  --t-bdr:         rgba(0,0,0,0.07);
+  --t-bdr-s:       rgba(0,0,0,0.14);
+  --t-sb-bg:       #1e3a5f;
+  --t-sb-tx:       #bfdbfe;
+  --t-blur:        22px;
+  --t-panel:       rgba(255,255,255,0.80);
+  --t-glass-bdr:   rgba(255,255,255,0.70);
+  --t-shadow:      inset 0 1px 0 rgba(255,255,255,0.90), 0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.08), 0 16px 40px rgba(0,0,0,0.06);
+  --t-shadow-hover:inset 0 1px 0 rgba(255,255,255,0.90), 0 2px 4px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.12), 0 32px 64px rgba(0,0,0,0.08);
 }
 
-/* ── Base ────────────────────────────────────────────────────────────────── */
+/* ── Base ─────────────────────────────────────────────────────────────────── */
 * { box-sizing: border-box; }
-html, body { height: 100%; color: var(--t-tx1); }
+html, body { height: 100%; }
 
 body {
-  background-color: var(--t-bg);
+  color: var(--t-tx1);
+  background-color: var(--t-body);
   background-image:
-    radial-gradient(ellipse at 15% 0%, var(--t-g1) 0%, transparent 55%),
-    radial-gradient(ellipse at 85% 100%, var(--t-g2) 0%, transparent 55%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.022'/%3E%3C/svg%3E");
-  transition: background-color 0.4s ease, color 0.4s ease;
+    radial-gradient(ellipse at 15% 10%, var(--t-g1) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 90%, var(--t-g2) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, var(--t-g1) 0%, transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.018'/%3E%3C/svg%3E");
+  background-attachment: fixed;
+  transition: background-color 0.5s ease, color 0.4s ease;
 }
 
-/* ── Drag state ─────────────────────────────────────────────────────────── */
+/* ── Drag ─────────────────────────────────────────────────────────────────── */
 body.ia-resizing {
   cursor: col-resize !important;
   user-select: none !important;
   -webkit-user-select: none !important;
 }
 
-/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--t-p-glass); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--t-p-glass); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--t-p-glow); }
 
-/* ── Glass utilities ────────────────────────────────────────────────────── */
+/* ── Glass system ─────────────────────────────────────────────────────────── */
+/*
+  The 3D depth comes from three layers:
+  1. Inner top highlight  (inset 0 1px 0 rgba(255,255,255,0.90)) — specular
+  2. Backdrop blur        (backdrop-filter: blur)
+  3. Multi-layer shadow   (soft, mid, ambient)
+*/
+
 .glass {
+  background: var(--t-panel);
   backdrop-filter: blur(var(--t-blur));
   -webkit-backdrop-filter: blur(var(--t-blur));
-  background: var(--t-glass);
   border: 1px solid var(--t-glass-bdr);
-  transition: background 0.4s ease, border-color 0.4s ease;
+  box-shadow: var(--t-shadow);
+  transition: background 0.4s ease, box-shadow 0.3s ease, border-color 0.4s ease;
+}
+
+.glass-hover {
+  background: var(--t-panel);
+  backdrop-filter: blur(var(--t-blur));
+  -webkit-backdrop-filter: blur(var(--t-blur));
+  border: 1px solid var(--t-glass-bdr);
+  box-shadow: var(--t-shadow);
+  transition: all 0.25s ease;
+}
+.glass-hover:hover {
+  box-shadow: var(--t-shadow-hover);
+  transform: translateY(-2px);
+  border-color: var(--t-p);
 }
 
 .glass-panel {
+  background: var(--t-panel);
   backdrop-filter: blur(var(--t-blur));
   -webkit-backdrop-filter: blur(var(--t-blur));
-  background: var(--t-glass);
-  border-right: 1px solid var(--t-bdr);
-  transition: all 0.4s ease;
+  border-right: 1px solid var(--t-glass-bdr);
+  box-shadow: var(--t-shadow);
 }
 
 .glass-card {
-  backdrop-filter: blur(calc(var(--t-blur) * 0.6));
-  -webkit-backdrop-filter: blur(calc(var(--t-blur) * 0.6));
-  background: var(--t-p-glass);
+  background: var(--t-panel);
+  backdrop-filter: blur(calc(var(--t-blur) * 0.7));
+  -webkit-backdrop-filter: blur(calc(var(--t-blur) * 0.7));
   border: 1px solid var(--t-glass-bdr);
-  border-radius: 10px;
-  transition: all 0.3s ease;
+  border-radius: 12px;
+  box-shadow: var(--t-shadow);
+  transition: all 0.25s ease;
 }
-
 .glass-card:hover {
-  background: var(--t-p-glass);
-  border-color: var(--t-p-bright);
-  box-shadow: 0 0 20px var(--t-p-glow);
-  transform: translateY(-1px);
+  box-shadow: var(--t-shadow-hover);
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--t-p) 40%, var(--t-glass-bdr));
 }
 
-/* ── Glow utilities ─────────────────────────────────────────────────────── */
-.glow-p   { box-shadow: 0 0 14px var(--t-p-glow), 0 0 30px rgba(0,0,0,0.3); }
-.glow-p-sm { box-shadow: 0 0 7px var(--t-p-glow); }
-.glow-s   { box-shadow: 0 0 14px color-mix(in srgb, var(--t-s) 30%, transparent); }
+/* Floating element (modal, popover, dropdown) — most elevated */
+.glass-float {
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255,255,255,0.80);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 4px 8px rgba(0,0,0,0.05),
+    0 16px 48px rgba(0,0,0,0.12),
+    0 48px 96px rgba(0,0,0,0.08);
+}
 
-/* ── Border pulse ───────────────────────────────────────────────────────── */
+[data-mode='dark'] .glass-float {
+  background: rgba(16,16,20,0.92);
+  border-color: rgba(255,255,255,0.10);
+}
+
+/* ── Glow ─────────────────────────────────────────────────────────────────── */
+.glow-p    { box-shadow: 0 0 16px var(--t-p-glow), 0 0 32px rgba(0,0,0,0.04); }
+.glow-p-sm { box-shadow: 0 0 8px var(--t-p-glow); }
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
 @keyframes border-pulse {
   0%, 100% { border-color: var(--t-bdr); }
   50%       { border-color: var(--t-p-bright); }
 }
 .border-pulse-active { animation: border-pulse 2.5s ease-in-out infinite; }
 
-/* ── Shimmer (loading skeleton) ─────────────────────────────────────────── */
 @keyframes shimmer {
   0%   { background-position: -200% center; }
   100% { background-position:  200% center; }
 }
 .shimmer {
   background: linear-gradient(90deg,
-    var(--t-bg3) 25%,
-    var(--t-bg4) 50%,
-    var(--t-bg3) 75%);
+    rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.06) 50%, rgba(0,0,0,0.03) 75%);
   background-size: 200% auto;
   animation: shimmer 1.8s linear infinite;
 }
 
-/* ── Tailwind compatibility aliases ─────────────────────────────────────── */
-/* These allow existing bg-base-X classes to respond to themes */
-.bg-base   { background-color: var(--t-bg)  !important; }
-.bg-base-1 { background-color: var(--t-bg1) !important; }
-.bg-base-2 { background-color: var(--t-bg2) !important; }
-.bg-base-3 { background-color: var(--t-bg3) !important; }
-.bg-base-4 { background-color: var(--t-bg4) !important; }
-.bg-base-5 { background-color: var(--t-bg5) !important; }
+@keyframes dot-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1;   }
+}
+.animate-dot-bounce { animation: dot-bounce 1.4s ease-in-out infinite both; }
+
+/* ── Tailwind color compatibility ─────────────────────────────────────────── */
+.bg-base, .bg-\[var\(--t-body\)\] { background-color: var(--t-body) !important; }
+.bg-base-1 { background-color: transparent !important; }
+.bg-base-2 { background: var(--t-panel) !important; }
 .text-text1 { color: var(--t-tx1) !important; }
 .text-text2 { color: var(--t-tx2) !important; }
 .text-text3 { color: var(--t-tx3) !important; }
-.text-blue, .text-blue-DEFAULT { color: var(--t-p) !important; }
-.bg-blue\/10 { background-color: var(--t-p-glass) !important; }
-.border-white\/\[0\.06\] { border-color: var(--t-bdr) !important; }
-.text-gold { color: var(--t-gold) !important; }
-.text-green { color: var(--t-s) !important; }
+.text-blue  { color: var(--t-p) !important; }
+.text-gold  { color: var(--t-gold) !important; }
+.border-white\/\[0\.06\] { border-color: var(--t-glass-bdr) !important; }
 
-/* ── Agent prose ────────────────────────────────────────────────────────── */
+/* ── Agent prose ──────────────────────────────────────────────────────────── */
 .agent-prose pre {
-  background: var(--t-bg4);
+  background: rgba(0,0,0,0.04);
   border: 1px solid var(--t-bdr);
   border-radius: 0.5rem;
   padding: 1rem;
@@ -160,12 +185,13 @@ body.ia-resizing {
   font-size: 0.8125rem;
   line-height: 1.6;
 }
+[data-mode='dark'] .agent-prose pre { background: rgba(255,255,255,0.04); }
 .agent-prose code:not(pre code) {
-  background: var(--t-bg4);
+  background: rgba(0,0,0,0.05);
   border-radius: 0.25rem;
   padding: 0.1em 0.3em;
   font-size: 0.875em;
-  color: var(--t-s);
+  color: var(--t-p);
 }
 .agent-prose p     { margin-bottom: 0.75rem; line-height: 1.7; }
 .agent-prose ul,
@@ -176,7 +202,7 @@ body.ia-resizing {
 .agent-prose h3    { color: var(--t-tx1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
 .agent-prose strong { color: var(--t-gold); }
 .agent-prose blockquote {
-  border-left: 3px solid var(--t-gold);
+  border-left: 3px solid var(--t-p);
   padding-left: 1rem;
   color: var(--t-tx2);
   margin: 0.75rem 0;
