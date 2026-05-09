@@ -1,9 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
-  Brain, RefreshCcw, Play, CheckCircle, Clock,
-  AlertCircle, Database, Zap, FileText, ChevronDown, ChevronRight,
+  Brain, RefreshCcw, Play, CheckCircle,
+  AlertCircle, Database, Zap, FileText,
+  ChevronDown, ChevronRight, Clock,
 } from 'lucide-react'
 
 interface Source {
@@ -33,18 +36,21 @@ export default function OraclePage() {
   const loadStatus = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/oracle/pipeline')
-      const data = await res.json() as { ok: boolean; sources?: Source[]; queue?: QueueStat[]; latest_digest?: DigestInfo }
-      if (data.ok) {
-        setSources(data.sources ?? [])
-        setQueueStats(data.queue ?? [])
-        setLatestDigest(data.latest_digest ?? null)
+      const [statusRes, digestRes] = await Promise.all([
+        fetch('/api/oracle/pipeline'),
+        fetch('/api/oracle/digest'),
+      ])
+      const [status, digest] = await Promise.all([
+        statusRes.json() as Promise<{ ok: boolean; sources?: Source[]; queue?: QueueStat[]; latest_digest?: DigestInfo }>,
+        digestRes.json() as Promise<{ ok: boolean; digest?: any }>,
+      ])
+      if (status.ok) {
+        setSources(status.sources ?? [])
+        setQueueStats(status.queue ?? [])
+        setLatestDigest(status.latest_digest ?? null)
       }
-      // Also load latest digest text
-      const dr = await fetch('/api/oracle/digest')
-      const dd = await dr.json() as { ok: boolean; digest?: any }
-      if (dd.ok && dd.digest?.digest_markdown) {
-        setLatestDigestText(dd.digest.digest_markdown)
+      if (digest.ok && digest.digest?.digest_markdown) {
+        setLatestDigestText(digest.digest.digest_markdown)
       }
     } finally {
       setLoading(false)
@@ -71,8 +77,9 @@ export default function OraclePage() {
   }
 
   const totalQueued = queueStats.reduce((a, s) => a + Number(s.count), 0)
-  const vectorized = queueStats.find(s => s.status === 'vectorized')?.count ?? 0
-  const failed = queueStats.find(s => s.status === 'failed')?.count ?? 0
+  const vectorized = Number(queueStats.find(s => s.status === 'vectorized')?.count ?? 0)
+  const pending = Number(queueStats.find(s => s.status === 'pending')?.count ?? 0)
+  const failed = Number(queueStats.find(s => s.status === 'failed')?.count ?? 0)
 
   return (
     <div className="h-full overflow-y-auto">
@@ -84,7 +91,12 @@ export default function OraclePage() {
           <h1 className="font-condensed font-bold uppercase tracking-wider text-base" style={{ color: 'var(--t-tx1)' }}>ORACLE Research</h1>
           <span className="font-mono text-[10px] px-2 py-0.5 rounded-full"
             style={{ background: 'var(--t-p-glass)', color: 'var(--t-p)', border: '1px solid var(--t-glass-bdr)' }}>
-            {sources.length} sources · {totalQueued} queued
+            {sources.length} sources · {totalQueued} total
+          </span>
+          {/* Cost badge */}
+          <span className="font-mono text-[9px] px-2 py-0.5 rounded-full"
+            style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)' }}>
+            Summarize: FREE · Embed: FREE · Digest: ~$0.001/day
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -96,7 +108,7 @@ export default function OraclePage() {
             className="flex items-center gap-2 px-4 py-1.5 rounded-xl font-mono text-[11px] font-semibold transition-all disabled:opacity-50"
             style={{ background: running ? 'var(--t-bdr-s)' : 'var(--t-p)', color: '#fff', boxShadow: running ? 'none' : '0 0 16px var(--t-p-glow)' }}>
             {running ? <RefreshCcw size={12} className="animate-spin" /> : <Play size={12} />}
-            {running ? 'Running pipeline…' : 'Run Pipeline Now'}
+            {running ? 'Running…' : 'Run Pipeline Now'}
           </button>
         </div>
       </div>
@@ -104,15 +116,12 @@ export default function OraclePage() {
       <div className="p-6 space-y-6">
         {/* Stats */}
         <div className="grid grid-cols-4 gap-4">
-          {[{
-            label: 'Sources', value: sources.length, icon: Database, color: 'var(--t-p)',
-          }, {
-            label: 'Total Queued', value: totalQueued, icon: Clock, color: '#f59e0b',
-          }, {
-            label: 'Vectorized', value: vectorized, icon: Zap, color: '#10b981',
-          }, {
-            label: 'Failed', value: failed, icon: AlertCircle, color: failed > 0 ? '#ef4444' : 'var(--t-tx3)',
-          }].map(({ label, value, icon: Icon, color }) => (
+          {[
+            { label: 'Sources', value: sources.length, icon: Database, color: 'var(--t-p)' },
+            { label: 'Pending', value: pending, icon: Clock, color: '#f59e0b' },
+            { label: 'Vectorized', value: vectorized, icon: Zap, color: '#10b981' },
+            { label: 'Failed', value: failed, icon: AlertCircle, color: failed > 0 ? '#ef4444' : 'var(--t-tx3)' },
+          ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="rounded-2xl p-4"
               style={{ background: 'var(--d-card)', backdropFilter: 'blur(var(--t-blur))', border: '1px solid var(--t-glass-bdr)', boxShadow: 'var(--t-shadow)' }}>
               <div className="flex items-start justify-between">
@@ -150,6 +159,20 @@ export default function OraclePage() {
           </div>
         )}
 
+        {/* Model cost info */}
+        <div className="rounded-2xl p-4 flex items-center gap-6"
+          style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.20)' }}>
+          <Zap size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+          <div className="space-y-0.5">
+            <p className="font-mono text-[11px] font-semibold" style={{ color: '#10b981' }}>Zero-cost summarization</p>
+            <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>
+              Summarize: Workers AI Llama 3.1 8B — FREE (10k neurons/day, ~416 items) ·
+              Embed: Workers AI BGE — FREE ·
+              Digest: Claude Haiku — ~$0.001 once/day
+            </p>
+          </div>
+        </div>
+
         {/* Sources */}
         <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--d-card)', backdropFilter: 'blur(var(--t-blur))', border: '1px solid var(--t-glass-bdr)', boxShadow: 'var(--t-shadow)' }}>
           <div className="px-5 py-3" style={{ borderBottom: '1px solid var(--t-glass-bdr)' }}>
@@ -169,7 +192,7 @@ export default function OraclePage() {
                 </span>
                 <span className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>every {s.check_interval_hours}h</span>
                 <span className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>
-                  {s.last_checked ? `checked ${Math.round((Date.now()/1000 - s.last_checked) / 3600)}h ago` : 'never checked'}
+                  {s.last_checked ? `${Math.round((Date.now()/1000 - s.last_checked)/3600)}h ago` : 'never'}
                 </span>
               </div>
             ))}
@@ -190,15 +213,18 @@ export default function OraclePage() {
                   <div key={step}>
                     <button onClick={() => setExpandedStep(isExpanded ? null : step)}
                       className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/[0.02]">
-                      {ok ? <CheckCircle size={13} style={{ color: '#10b981', flexShrink: 0 }} /> : <AlertCircle size={13} style={{ color: '#ef4444', flexShrink: 0 }} />}
-                      <span className="font-mono text-[11px] capitalize flex-1" style={{ color: 'var(--t-tx1)' }}>{step}</span>
+                      {ok
+                        ? <CheckCircle size={13} style={{ color: '#10b981', flexShrink: 0 }} />
+                        : <AlertCircle size={13} style={{ color: '#ef4444', flexShrink: 0 }} />}
+                      <span className="font-mono text-[11px] flex-1" style={{ color: 'var(--t-tx1)' }}>{step}</span>
                       {result?.processed !== undefined && <span className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>{result.processed} processed</span>}
-                      {result?.enqueued !== undefined && <span className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>{result.results?.reduce((a: number, r: any) => a + r.enqueued, 0)} enqueued</span>}
+                      {result?.vectorized !== undefined && <span className="font-mono text-[10px]" style={{ color: '#10b981' }}>{result.vectorized} vectorized</span>}
                       {isExpanded ? <ChevronDown size={12} style={{ color: 'var(--t-tx3)' }} /> : <ChevronRight size={12} style={{ color: 'var(--t-tx3)' }} />}
                     </button>
                     {isExpanded && (
                       <div className="px-5 pb-3">
-                        <pre className="font-mono text-[9px] whitespace-pre-wrap" style={{ color: 'var(--t-tx3)' }}>
+                        <pre className="font-mono text-[9px] whitespace-pre-wrap rounded-xl p-3 overflow-x-auto"
+                          style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--t-tx3)', maxHeight: 300 }}>
                           {JSON.stringify(result, null, 2)}
                         </pre>
                       </div>
@@ -210,7 +236,7 @@ export default function OraclePage() {
           </div>
         )}
 
-        {/* Latest digest */}
+        {/* Latest digest — rendered as markdown */}
         {latestDigestText && (
           <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--d-card)', backdropFilter: 'blur(var(--t-blur))', border: '1px solid var(--t-glass-bdr)', boxShadow: 'var(--t-shadow)' }}>
             <div className="px-5 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--t-glass-bdr)' }}>
@@ -219,10 +245,10 @@ export default function OraclePage() {
               </p>
               <FileText size={13} style={{ color: 'var(--t-p)' }} />
             </div>
-            <div className="px-5 py-4">
-              <div className="font-mono text-[11px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--t-tx2)' }}>
+            <div className="px-5 py-4 agent-prose">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {latestDigestText}
-              </div>
+              </ReactMarkdown>
             </div>
           </div>
         )}
