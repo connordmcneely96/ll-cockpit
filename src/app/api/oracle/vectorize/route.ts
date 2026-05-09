@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
-// ORACLE Step 4 — Vectorize summarized items into nexus-knowledge index
 export async function POST(req: NextRequest) {
   try {
     const { env } = await getCloudflareContext()
-    const body = await req.json() as { batch_size?: number }
+    const body = await req.json().catch(() => ({})) as { batch_size?: number }
     const batchSize = body.batch_size ?? 5
+
+    if (!env.AI) return NextResponse.json({ ok: false, error: 'Workers AI binding not available' }, { status: 503 })
+    if (!env.KNOWLEDGE_VECTORIZE) return NextResponse.json({ ok: false, error: 'Vectorize binding not available' }, { status: 503 })
 
     const items = await env.DB.prepare(
       "SELECT * FROM research_queue WHERE status = 'summarized' ORDER BY relevance_score DESC LIMIT ?"
@@ -26,7 +28,6 @@ export async function POST(req: NextRequest) {
           `Relevance: ${summary.relevance_reason ?? ''}`,
         ].join('\n')
 
-        // Generate embedding via Workers AI
         const embedResult = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
           text: [textToEmbed],
         }) as { data: number[][] }
@@ -36,7 +37,6 @@ export async function POST(req: NextRequest) {
 
         const vectorId = `research-${item.id}`
 
-        // Upsert into Vectorize
         await env.KNOWLEDGE_VECTORIZE.upsert([{
           id: vectorId,
           values: vector,
