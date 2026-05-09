@@ -1,4 +1,5 @@
 import type { OpenNextConfig } from '@opennextjs/cloudflare'
+import { scheduled } from './src/workers/oracle-cron'
 
 const config: OpenNextConfig = {
   default: {
@@ -25,4 +26,5 @@ const config: OpenNextConfig = {
   },
 }
 
+export { scheduled }
 export default config
