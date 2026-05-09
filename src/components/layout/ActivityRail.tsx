@@ -3,8 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  LayoutDashboard, Code2, TerminalSquare,
-  HardDrive, BarChart2, Bot, Cpu, Globe, Settings,
+  LayoutDashboard, Code2, Globe, TerminalSquare,
+  HardDrive, BarChart2, Bot, Cpu, Brain, Settings,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { icon: TerminalSquare,  label: 'Terminal',      href: '/terminal' },
   { icon: HardDrive,       label: 'Storage',       href: '/storage' },
   { icon: BarChart2,       label: 'Analytics',     href: '/analytics' },
+  { icon: Brain,           label: 'ORACLE',        href: '/oracle' },
   { icon: Bot,             label: 'AI Providers',  href: '/ai-providers' },
   { icon: Cpu,             label: 'Orchestrator',  href: '/orchestrator' },
 ]
@@ -33,14 +34,9 @@ export function ActivityRail() {
         zIndex: 10,
       }}
     >
-      {/* LL logo mark */}
       <div
         className="w-8 h-8 rounded-xl flex items-center justify-center mb-3 shrink-0"
-        style={{
-          background: 'var(--t-p-glass)',
-          border: '1px solid var(--t-glass-bdr)',
-          boxShadow: '0 0 12px var(--t-p-glow)',
-        }}
+        style={{ background: 'var(--t-p-glass)', border: '1px solid var(--t-glass-bdr)', boxShadow: '0 0 12px var(--t-p-glow)' }}
       >
         <span className="font-mono font-bold text-[10px]" style={{ color: 'var(--t-p)' }}>LL</span>
       </div>
@@ -61,19 +57,12 @@ export function ActivityRail() {
             }}
           >
             <Icon size={15} strokeWidth={isActive ? 2 : 1.5} />
-            {/* Tooltip */}
             <span
               className="absolute left-10 z-50 px-2 py-1 rounded-lg text-[10px] font-mono whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{
-                background: 'var(--d-elevated)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid var(--t-glass-bdr)',
-                color: 'var(--t-tx1)',
-              }}
+              style={{ background: 'var(--d-elevated)', backdropFilter: 'blur(20px)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx1)' }}
             >
               {label}
             </span>
-            {/* Active indicator */}
             {isActive && (
               <span
                 className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r"
@@ -86,12 +75,11 @@ export function ActivityRail() {
 
       <div className="flex-1" />
 
-      {/* Settings pinned at bottom */}
       <Link
         href="/settings"
         title="Settings"
         className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
-        style={{ color: 'var(--t-tx3)' }}
+        style={{ color: pathname === '/settings' ? 'var(--t-p)' : 'var(--t-tx3)' }}
       >
         <Settings size={14} strokeWidth={1.5} />
       </Link>
