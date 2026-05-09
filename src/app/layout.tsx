@@ -7,6 +7,22 @@ export const metadata: Metadata = {
   description: 'Leadership Legacy Digital — AI Cockpit',
 }
 
+// All fonts referenced in typography dropdowns must be loaded here
+const GOOGLE_FONTS = [
+  'Barlow:wght@400;500;600',
+  'Barlow+Condensed:wght@400;600;700',
+  'JetBrains+Mono:wght@400;500;600',
+  'Inter:wght@300;400;500;600',
+  'Space+Grotesk:wght@300;400;500;600;700',
+  'DM+Sans:wght@300;400;500;600',
+  'Outfit:wght@300;400;500;600;700',
+  'Nunito:wght@300;400;500;600',
+  'Poppins:wght@300;400;500;600',
+  'Fira+Code:wght@400;500',
+  'Source+Code+Pro:wght@400;500',
+  'IBM+Plex+Mono:wght@400;500',
+].join('&family=')
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -14,7 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Barlow+Condensed:wght@400;600;700&family=Barlow:wght@400;500;600&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap"
+          href={`https://fonts.googleapis.com/css2?family=${GOOGLE_FONTS}&display=swap`}
           rel="stylesheet"
         />
       </head>

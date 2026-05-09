@@ -2,83 +2,113 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Fonts ───────────────────────────────────────────────────────────────── */
+/* ── Fonts ───────────────────────────────────────────────────── */
 :root {
   --font-mono:      'JetBrains Mono';
   --font-condensed: 'Barlow Condensed';
   --font-sans:      'Barlow';
 }
 
-/* ── Theme defaults (Pearl — overridden by ThemeProvider) ────────────────── */
+/* ── CSS variable defaults (Teal — overridden by DesignProvider) ───────────── */
 :root {
-  --t-body:        #f8faff;
-  --t-g1:          rgba(59,130,246,0.12);
-  --t-g2:          rgba(6,182,212,0.07);
-  --t-p:           #3b82f6;
-  --t-p-dim:       #1d4ed8;
-  --t-p-bright:    #60a5fa;
-  --t-p-glow:      rgba(59,130,246,0.22);
-  --t-p-glass:     rgba(59,130,246,0.08);
-  --t-s:           #06b6d4;
-  --t-gold:        #f59e0b;
-  --t-tx1:         #0f172a;
-  --t-tx2:         #475569;
-  --t-tx3:         #94a3b8;
-  --t-bdr:         rgba(0,0,0,0.07);
-  --t-bdr-s:       rgba(0,0,0,0.14);
-  --t-sb-bg:       #1e3a5f;
-  --t-sb-tx:       #bfdbfe;
-  --t-blur:        22px;
-  --t-panel:       rgba(255,255,255,0.80);
-  --t-glass-bdr:   rgba(255,255,255,0.70);
-  --t-shadow:      inset 0 1px 0 rgba(255,255,255,0.90), 0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.08), 0 16px 40px rgba(0,0,0,0.06);
-  --t-shadow-hover:inset 0 1px 0 rgba(255,255,255,0.90), 0 2px 4px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.12), 0 32px 64px rgba(0,0,0,0.08);
+  --t-body:         #070e0b;
+  --t-p:            #00c9a7;
+  --t-p-dim:        #00a389;
+  --t-p-bright:     #33d4ba;
+  --t-p-glow:       rgba(0,201,167,0.28);
+  --t-p-glass:      rgba(0,201,167,0.10);
+  --t-s:            #0ea5e9;
+  --t-gold:         #f59e0b;
+  --t-tx1:          #e0f2ee;
+  --t-tx2:          #7ab5a8;
+  --t-tx3:          #3d6b62;
+  --t-bdr:          rgba(0,201,167,0.12);
+  --t-bdr-s:        rgba(0,201,167,0.22);
+  --t-sb-bg:        #041008;
+  --t-sb-tx:        #5fe3c8;
+  --t-blur:         22px;
+  --t-panel:        rgba(13,26,20,0.60);
+  --t-glass-bdr:    rgba(0,201,167,0.18);
+  --t-shadow:       inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 8px rgba(0,0,0,0.25), 0 16px 32px rgba(0,0,0,0.18);
+  --t-shadow-hover: inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 16px rgba(0,0,0,0.30), 0 24px 48px rgba(0,0,0,0.22);
+
+  /* Per-surface */
+  --d-rail:         rgba(13,26,20,0.60);
+  --d-explorer:     rgba(13,26,20,0.52);
+  --d-topbar:       rgba(13,26,20,0.65);
+  --d-tabbar:       rgba(13,26,20,0.55);
+  --d-agent:        rgba(13,26,20,0.52);
+  --d-panel:        rgba(13,26,20,0.50);
+  --d-card:         rgba(13,26,20,0.45);
+  --d-elevated:     rgba(13,26,20,0.80);
+
+  /* Semantic */
+  --d-success:      #10b981;
+  --d-warning:      #f59e0b;
+  --d-error:        #ef4444;
+  --d-info:         #3b82f6;
+
+  /* Radius scale */
+  --d-radius-sm:    5px;
+  --d-radius-md:    10px;
+  --d-radius-lg:    15px;
+  --d-radius-xl:    25px;
+  --d-radius-full:  9999px;
+
+  /* Glow */
+  --d-glow:         rgba(0,201,167,0.28);
+  --d-glow-spread:  12px;
+  --d-glow-full:    0 0 12px rgba(0,201,167,0.28);
+
+  /* Motion */
+  --d-transition:   200ms ease;
+  --d-hover-lift:   translateY(-2px) scale(1);
+  --d-hover-scale:  scale(1);
+
+  /* Typography */
+  --d-font-size:    14px;
+  --d-font-weight:  400;
+  --d-letter-spacing: 0em;
 }
 
-/* ── Base ─────────────────────────────────────────────────────────────────── */
+/* ── Base ───────────────────────────────────────────────────── */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-
 body {
   color: var(--t-tx1);
   background-color: var(--t-body);
-  background-image:
-    radial-gradient(ellipse at 15% 10%, var(--t-g1) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 90%, var(--t-g2) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, var(--t-g1) 0%, transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.018'/%3E%3C/svg%3E");
   background-attachment: fixed;
+  font-family: var(--font-sans), sans-serif;
+  font-size: var(--d-font-size);
+  font-weight: var(--d-font-weight);
+  letter-spacing: var(--d-letter-spacing);
   transition: background-color 0.5s ease, color 0.4s ease;
 }
 
-/* ── Drag ─────────────────────────────────────────────────────────────────── */
 body.ia-resizing {
   cursor: col-resize !important;
   user-select: none !important;
   -webkit-user-select: none !important;
 }
 
-/* ── Scrollbar ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--t-p-glass); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--t-p-glow); }
 
-/* ── Glass system ─────────────────────────────────────────────────────────── */
-/*
-  The 3D depth comes from three layers:
-  1. Inner top highlight  (inset 0 1px 0 rgba(255,255,255,0.90)) — specular
-  2. Backdrop blur        (backdrop-filter: blur)
-  3. Multi-layer shadow   (soft, mid, ambient)
-*/
-
+/* ── Glass system ──────────────────────────────────────────────── */
+/* ALL glass classes pick up motion vars automatically */
 .glass {
   background: var(--t-panel);
   backdrop-filter: blur(var(--t-blur));
   -webkit-backdrop-filter: blur(var(--t-blur));
   border: 1px solid var(--t-glass-bdr);
   box-shadow: var(--t-shadow);
-  transition: background 0.4s ease, box-shadow 0.3s ease, border-color 0.4s ease;
+  transition:
+    background var(--d-transition),
+    box-shadow var(--d-transition),
+    border-color var(--d-transition),
+    transform var(--d-transition);
 }
 
 .glass-hover {
@@ -87,11 +117,15 @@ body.ia-resizing {
   -webkit-backdrop-filter: blur(var(--t-blur));
   border: 1px solid var(--t-glass-bdr);
   box-shadow: var(--t-shadow);
-  transition: all 0.25s ease;
+  transition:
+    background var(--d-transition),
+    box-shadow var(--d-transition),
+    border-color var(--d-transition),
+    transform var(--d-transition);
 }
 .glass-hover:hover {
   box-shadow: var(--t-shadow-hover);
-  transform: translateY(-2px);
+  transform: var(--d-hover-lift);
   border-color: var(--t-p);
 }
 
@@ -101,46 +135,43 @@ body.ia-resizing {
   -webkit-backdrop-filter: blur(var(--t-blur));
   border-right: 1px solid var(--t-glass-bdr);
   box-shadow: var(--t-shadow);
+  transition: background var(--d-transition), box-shadow var(--d-transition);
 }
 
 .glass-card {
-  background: var(--t-panel);
+  background: var(--d-card);
   backdrop-filter: blur(calc(var(--t-blur) * 0.7));
   -webkit-backdrop-filter: blur(calc(var(--t-blur) * 0.7));
   border: 1px solid var(--t-glass-bdr);
-  border-radius: 12px;
+  border-radius: var(--d-radius-lg);
   box-shadow: var(--t-shadow);
-  transition: all 0.25s ease;
+  transition:
+    background var(--d-transition),
+    box-shadow var(--d-transition),
+    border-color var(--d-transition),
+    transform var(--d-transition);
 }
 .glass-card:hover {
   box-shadow: var(--t-shadow-hover);
-  transform: translateY(-2px);
+  transform: var(--d-hover-lift);
   border-color: color-mix(in srgb, var(--t-p) 40%, var(--t-glass-bdr));
 }
 
-/* Floating element (modal, popover, dropdown) — most elevated */
+/* Floating — most elevated layer */
 .glass-float {
-  background: rgba(255,255,255,0.92);
+  background: var(--d-elevated);
   backdrop-filter: blur(40px);
   -webkit-backdrop-filter: blur(40px);
-  border: 1px solid rgba(255,255,255,0.80);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.95),
-    0 4px 8px rgba(0,0,0,0.05),
-    0 16px 48px rgba(0,0,0,0.12),
-    0 48px 96px rgba(0,0,0,0.08);
+  border: 1px solid var(--t-glass-bdr);
+  box-shadow: var(--t-shadow-hover);
+  border-radius: var(--d-radius-lg);
 }
 
-[data-mode='dark'] .glass-float {
-  background: rgba(16,16,20,0.92);
-  border-color: rgba(255,255,255,0.10);
-}
-
-/* ── Glow ─────────────────────────────────────────────────────────────────── */
-.glow-p    { box-shadow: 0 0 16px var(--t-p-glow), 0 0 32px rgba(0,0,0,0.04); }
+/* ── Glow utilities ─────────────────────────────────────────────── */
+.glow-p    { box-shadow: var(--d-glow-full), 0 0 32px rgba(0,0,0,0.04); }
 .glow-p-sm { box-shadow: 0 0 8px var(--t-p-glow); }
 
-/* ── Animations ───────────────────────────────────────────────────────────── */
+/* ── Animations ───────────────────────────────────────────────── */
 @keyframes border-pulse {
   0%, 100% { border-color: var(--t-bdr); }
   50%       { border-color: var(--t-p-bright); }
@@ -152,22 +183,20 @@ body.ia-resizing {
   100% { background-position:  200% center; }
 }
 .shimmer {
-  background: linear-gradient(90deg,
-    rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.06) 50%, rgba(0,0,0,0.03) 75%);
+  background: linear-gradient(90deg, rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.06) 50%, rgba(0,0,0,0.03) 75%);
   background-size: 200% auto;
   animation: shimmer 1.8s linear infinite;
 }
 
 @keyframes dot-bounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40%           { transform: scale(1);   opacity: 1;   }
+  40%           { transform: scale(1);   opacity: 1; }
 }
 .animate-dot-bounce { animation: dot-bounce 1.4s ease-in-out infinite both; }
 
-/* ── Tailwind color compatibility ─────────────────────────────────────────── */
-.bg-base, .bg-\[var\(--t-body\)\] { background-color: var(--t-body) !important; }
-.bg-base-1 { background-color: transparent !important; }
-.bg-base-2 { background: var(--t-panel) !important; }
+/* ── Tailwind aliases ───────────────────────────────────────────────── */
+.bg-base    { background-color: var(--t-body)  !important; }
+.bg-base-2  { background: var(--t-panel) !important; }
 .text-text1 { color: var(--t-tx1) !important; }
 .text-text2 { color: var(--t-tx2) !important; }
 .text-text3 { color: var(--t-tx3) !important; }
@@ -175,11 +204,11 @@ body.ia-resizing {
 .text-gold  { color: var(--t-gold) !important; }
 .border-white\/\[0\.06\] { border-color: var(--t-glass-bdr) !important; }
 
-/* ── Agent prose ──────────────────────────────────────────────────────────── */
+/* ── Agent prose ─────────────────────────────────────────────────── */
 .agent-prose pre {
   background: rgba(0,0,0,0.04);
   border: 1px solid var(--t-bdr);
-  border-radius: 0.5rem;
+  border-radius: var(--d-radius-md);
   padding: 1rem;
   overflow-x: auto;
   font-size: 0.8125rem;
@@ -197,13 +226,6 @@ body.ia-resizing {
 .agent-prose ul,
 .agent-prose ol    { padding-left: 1.25rem; margin-bottom: 0.75rem; }
 .agent-prose li    { margin-bottom: 0.25rem; }
-.agent-prose h1,
-.agent-prose h2,
-.agent-prose h3    { color: var(--t-tx1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
+.agent-prose h1,.agent-prose h2,.agent-prose h3 { color: var(--t-tx1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
 .agent-prose strong { color: var(--t-gold); }
-.agent-prose blockquote {
-  border-left: 3px solid var(--t-p);
-  padding-left: 1rem;
-  color: var(--t-tx2);
-  margin: 0.75rem 0;
-}
+.agent-prose blockquote { border-left: 3px solid var(--t-p); padding-left: 1rem; color: var(--t-tx2); margin: 0.75rem 0; }
