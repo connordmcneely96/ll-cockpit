@@ -1,4 +1,4 @@
-// ─── Agent Types ─────────────────────────────────────────────────────────────
+// ── Agent Types ──
 
 export type AgentName =
   | 'nexus'
@@ -19,7 +19,7 @@ export interface AgentPermissions {
   can_send_email: boolean
   can_delete: boolean
   read_only: boolean
-  requires_approval: string[] // tool names that need PermissionGate
+  requires_approval: string[]
 }
 
 export interface AgentTool {
@@ -38,7 +38,7 @@ export interface AgentConfig {
   tools: AgentTool[]
 }
 
-// ─── Message Types ────────────────────────────────────────────────────────────
+// ── Message Types ──
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
@@ -61,7 +61,7 @@ export interface ToolCallEvent {
   requiresApproval: boolean
 }
 
-// ─── SSE Event Types ──────────────────────────────────────────────────────────
+// ── SSE Event Types ──
 
 export interface SSETextEvent {
   type: 'text'
@@ -90,7 +90,7 @@ export interface SSEErrorEvent {
 
 export type SSEEvent = SSETextEvent | SSEToolCallEvent | SSEDoneEvent | SSEErrorEvent
 
-// ─── D1 Row Types ─────────────────────────────────────────────────────────────
+// ── D1 Row Types ──
 
 export interface AgentTaskRow {
   id: string
@@ -127,22 +127,33 @@ export interface ToolCallRow {
   created_at: number
 }
 
-// ─── Cloudflare Env ───────────────────────────────────────────────────────────
+// ── Cloudflare Env ──
+// Keep in sync with wrangler.toml bindings
 
 export interface CloudflareEnv {
+  // D1
   DB: D1Database
+  // KV
   KV: KVNamespace
+  // R2
   R2: R2Bucket
+  // Queues
   KNOWLEDGE_QUEUE: Queue
+  // Workers AI
+  AI: Ai
+  // Vectorize
+  KNOWLEDGE_VECTORIZE: VectorizeIndex
+  // Secrets
   ANTHROPIC_API_KEY: string
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
   SUPABASE_SERVICE_ROLE_KEY: string
+  // Assets
   ASSETS: Fetcher
-  WORKER_SELF_REFERENCE: Fetcher
+  WORKER_SELF_REFERENCE?: Fetcher
 }
 
-// ─── UI Types ─────────────────────────────────────────────────────────────────
+// ── UI Types ──
 
 export interface CommandItem {
   id: string
