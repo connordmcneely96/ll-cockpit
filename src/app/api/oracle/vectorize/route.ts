@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
+import type { CloudflareEnv } from '@/types'
 
 export async function POST(req: NextRequest) {
   try {
-    const { env } = await getCloudflareContext()
+    const ctx = await getCloudflareContext()
+    const env = ctx.env as unknown as CloudflareEnv
+
     const body = await req.json().catch(() => ({})) as { batch_size?: number }
     const batchSize = body.batch_size ?? 5
 
