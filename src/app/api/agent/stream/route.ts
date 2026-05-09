@@ -12,7 +12,6 @@ function sseChunk(event: SSEEvent): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
 }
 
-// Anthropic SSE event shapes
 interface AnthropicMessageStart {
   type: 'message_start'
   message: { usage: { input_tokens: number } }
@@ -40,14 +39,14 @@ type AnthropicEvent =
   | { type: string }
 
 export async function POST(req: NextRequest) {
-  // ── 1. Auth ──────────────────────────────────────────────────────────────────
+  // ── 1. Auth ──
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  // ── 1b. Agent permission check ────────────────────────────────────────────────
+  // ── 1b. Agent permission check ──
   let agentNameEarly: string
   try {
     const rawBody = await req.clone().json() as { agentName: string; message: string }
@@ -70,7 +69,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 2. Parse body ─────────────────────────────────────────────────────────────
+  // ── 2. Parse body ──
   let agentName: string, message: string
   try {
     const body = await req.json() as { agentName: string; message: string }
@@ -80,20 +79,20 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
 
-  // ── 3. Load agent ─────────────────────────────────────────────────────────────
+  // ── 3. Load agent ──
   const agent = getAgent(agentName)
   if (!agent) {
     return new Response(JSON.stringify({ error: `Unknown agent: ${agentName}` }), { status: 404 })
   }
 
-  // ── 4. Get bindings ───────────────────────────────────────────────────────────
+  // ── 4. Get bindings ──
   const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
   }
 
-  // ── 5. Token budget check ──────────────────────────────────────────────────────
+  // ── 5. Token budget check ──
   const kvKey = `session_tokens:${user.id}`
   const storedTokens = await KV.get(kvKey)
   const currentTokens = storedTokens ? parseInt(storedTokens, 10) : 0
@@ -104,14 +103,14 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 6. Create task record ──────────────────────────────────────────────────────
+  // ── 6. Create task record ──
   const taskId = crypto.randomUUID()
   await DB.prepare(
     `INSERT INTO agent_tasks (id, user_id, agent_name, task_type, input, status, created_at)
      VALUES (?, ?, ?, 'chat', ?, 'running', unixepoch())`
   ).bind(taskId, user.id, agentName, message).run()
 
-  // ── 7. Call Anthropic API directly via native fetch (SDK incompatible with CF Workers) ──
+  // ── 7. Call Anthropic ──
   const anthropicBody: Record<string, unknown> = {
     model: 'claude-sonnet-4-5',
     max_tokens: 8096,
@@ -156,7 +155,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 8. Stream Anthropic SSE → client SSE ──────────────────────────────────────
+  // ── 8. Stream ──
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => controller.enqueue(sseChunk(event))
@@ -167,6 +166,7 @@ export async function POST(req: NextRequest) {
       let currentToolId = ''
       let currentToolName = ''
       let currentToolInput = ''
+      const startMs = Date.now()  // ← track latency
 
       try {
         const reader = anthropicRes.body!.getReader()
@@ -212,7 +212,6 @@ export async function POST(req: NextRequest) {
                 currentToolInput += e.delta.partial_json
               }
             } else if (evt.type === 'content_block_stop') {
-              // If we were accumulating a tool call, emit it now
               if (currentToolId && currentToolName) {
                 let parsedInput: Record<string, unknown> = {}
                 try { parsedInput = JSON.parse(currentToolInput) } catch { /* ok */ }
@@ -244,26 +243,59 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // ── 9. Finalize ────────────────────────────────────────────────────────
+        // ── 9. Finalize ──
         const totalTokens = totalInputTokens + totalOutputTokens
         const costUsd = calculateCost(totalInputTokens, totalOutputTokens)
+        const latencyMs = Date.now() - startMs
 
+        // Update KV token budget
         await KV.put(kvKey, String(currentTokens + totalTokens), { expirationTtl: 86400 })
 
+        // Update agent_tasks
         await DB.prepare(
           `UPDATE agent_tasks SET output = ?, status = 'complete', tokens_used = ?, cost_usd = ? WHERE id = ?`
         ).bind(fullResponse, totalTokens, costUsd, taskId).run()
+
+        // ✔ Write to ai_completions — this is what populates /analytics AI Usage tab
+        await DB.prepare(
+          `INSERT INTO ai_completions (id, agent_name, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at)
+           VALUES (?, ?, ?, 'chat', ?, ?, ?, ?, 1, datetime('now'))`
+        ).bind(
+          crypto.randomUUID(),
+          agentName,
+          'claude-sonnet-4-5',
+          totalInputTokens,
+          totalOutputTokens,
+          costUsd,
+          latencyMs,
+        ).run()
+
+        // ✔ Write to analytics_events — this is what populates /analytics Events tab
+        await DB.prepare(
+          `INSERT INTO analytics_events (id, event_name, page_path, session_id, metadata_json, created_at)
+           VALUES (?, 'agent_message', '/agent', ?, ?, datetime('now'))`
+        ).bind(
+          crypto.randomUUID(),
+          taskId,
+          JSON.stringify({ agent: agentName, tokens: totalTokens, cost: costUsd }),
+        ).run()
 
         if (fullResponse.length > 100) {
           await captureTrainingData({ db: DB, agentName, instruction: message, response: fullResponse })
         }
 
-        console.log('[stream] done — tokens:', totalTokens, 'cost:', costUsd)
         send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId })
       } catch (e) {
         console.error('[stream] stream error:', e)
         const errMsg = e instanceof Error ? `${e.name}: ${e.message}` : 'Unknown streaming error'
         send({ type: 'error', message: errMsg })
+
+        // Log failed completion
+        await DB.prepare(
+          `INSERT INTO ai_completions (id, agent_name, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at)
+           VALUES (?, ?, 'claude-sonnet-4-5', 'chat', 0, 0, 0, ?, 0, datetime('now'))`
+        ).bind(crypto.randomUUID(), agentName, Date.now() - startMs).run().catch(() => {})
+
         await DB.prepare(
           `UPDATE agent_tasks SET status = 'error', error_log = ? WHERE id = ?`
         ).bind(errMsg, taskId).run()
