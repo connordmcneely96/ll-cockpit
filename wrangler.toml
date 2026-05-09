@@ -1,4 +1,4 @@
-﻿name = "ll-cockpit"
+name = "ll-cockpit"
 main = ".open-next/worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -27,3 +27,11 @@ binding = "AI"
 [[vectorize]]
 binding = "KNOWLEDGE_VECTORIZE"
 index_name = "nexus-knowledge"
+
+# ORACLE runs at 7am CST (1pm UTC) every day
+# Also runs hourly fetch-only to keep queue fresh
+[triggers]
+crons = [
+  "0 13 * * *",   # 7am CST — full pipeline (fetch + summarize + vectorize + digest)
+  "0 * * * *",    # every hour — fetch only (keeps queue populated)
+]
