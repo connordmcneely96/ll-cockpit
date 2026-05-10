@@ -16,9 +16,7 @@ export function TerminalPane() {
   const connect = useCallback(async () => {
     setConnState('connecting')
     setError(null)
-
     try {
-      // Fetch token server-side — secret never in browser bundle
       const res = await fetch('/api/terminal/token')
       const data = await res.json() as { ok: boolean; token?: string; wsUrl?: string; error?: string }
       if (!data.ok || !data.token) throw new Error(data.error ?? 'Failed to get terminal token')
@@ -28,31 +26,22 @@ export function TerminalPane() {
 
       ws.onopen = () => {
         setConnState('connected')
-        // Send initial resize
         const term = termRef.current
-        if (term) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-        }
+        if (term) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
       }
-
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data) as { type: string; data?: string }
-          if (msg.type === 'output' && msg.data && termRef.current) {
-            termRef.current.write(msg.data)
-          }
+          if (msg.type === 'output' && msg.data && termRef.current) termRef.current.write(msg.data)
         } catch {
-          // raw data fallback
           if (termRef.current) termRef.current.write(event.data)
         }
       }
-
       ws.onerror = () => {
         setConnState('error')
         setError('WebSocket error — check tunnel is running')
         termRef.current?.writeln('\r\n\x1b[31m✗ Connection error\x1b[0m')
       }
-
       ws.onclose = (e) => {
         setConnState('disconnected')
         termRef.current?.writeln(`\r\n\x1b[33m— Disconnected (${e.code})\x1b[0m`)
@@ -73,8 +62,10 @@ export function TerminalPane() {
       const { Terminal } = await import('@xterm/xterm')
       const { FitAddon } = await import('@xterm/addon-fit')
       const { WebLinksAddon } = await import('@xterm/addon-web-links')
+      const { ClipboardAddon } = await import('@xterm/addon-clipboard')
 
       term = new Terminal({
+        allowProposedApi: true,  // required for ClipboardAddon
         theme: {
           background: '#0a0f0c',
           foreground: '#e0f2ee',
@@ -98,11 +89,13 @@ export function TerminalPane() {
         scrollback: 5000,
         allowTransparency: true,
         convertEol: true,
+        rightClickSelectsWord: true,
       })
 
       fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
       term.loadAddon(new WebLinksAddon())
+      term.loadAddon(new ClipboardAddon())
 
       if (containerRef.current) {
         term.open(containerRef.current)
@@ -112,26 +105,52 @@ export function TerminalPane() {
       termRef.current = term
       fitAddonRef.current = fitAddon
 
-      // Welcome message
       term.writeln('\x1b[1;36m┤ NEXUS PRIME ├ Terminal\x1b[0m')
       term.writeln('\x1b[2m  nexus-vm · GCP us-central1 · e2-micro\x1b[0m')
       term.writeln('')
 
-      // Wire input to WebSocket
+      // Input → WebSocket
       term.onData(data => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ type: 'input', data }))
         }
       })
 
-      // Resize handler
+      // Ctrl+Shift+V — paste from clipboard into terminal
+      term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
+          navigator.clipboard.readText().then(text => {
+            if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
+            }
+          }).catch(() => {})
+          return false  // prevent default
+        }
+        // Ctrl+Shift+C — copy selection
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
+          const selection = term.getSelection()
+          if (selection) navigator.clipboard.writeText(selection).catch(() => {})
+          return false
+        }
+        return true
+      })
+
+      // Right-click paste
+      containerRef.current?.addEventListener('contextmenu', (e) => {
+        e.preventDefault()
+        navigator.clipboard.readText().then(text => {
+          if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
+          }
+        }).catch(() => {})
+      })
+
       term.onResize(({ cols, rows }) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }))
         }
       })
 
-      // Auto-connect on mount
       await connect()
     }
 
@@ -139,7 +158,6 @@ export function TerminalPane() {
 
     const handleResize = () => fitAddonRef.current?.fit()
     window.addEventListener('resize', handleResize)
-
     return () => {
       window.removeEventListener('resize', handleResize)
       wsRef.current?.close()
@@ -156,7 +174,6 @@ export function TerminalPane() {
 
   return (
     <div className="w-full h-full flex flex-col" style={{ background: '#0a0f0c' }}>
-      {/* Status bar */}
       <div className="flex items-center justify-between px-3 py-1 shrink-0"
         style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid rgba(0,201,167,0.12)' }}>
         <div className="flex items-center gap-2">
@@ -173,19 +190,18 @@ export function TerminalPane() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <span className="font-mono text-[9px]" style={{ color: 'rgba(224,242,238,0.2)' }}>
+            Ctrl+Shift+C copy · Ctrl+Shift+V paste · right-click paste
+          </span>
           {(connState === 'disconnected' || connState === 'error') && (
             <button onClick={reconnect}
-              className="font-mono text-[10px] px-2 py-0.5 rounded-lg transition-all"
+              className="font-mono text-[10px] px-2 py-0.5 rounded-lg"
               style={{ background: 'rgba(0,201,167,0.12)', color: '#00c9a7', border: '1px solid rgba(0,201,167,0.25)' }}>
               Reconnect
             </button>
           )}
-          <span className="font-mono text-[9px]" style={{ color: 'rgba(224,242,238,0.3)' }}>
-            terminal.leadershiplegacydigital.com
-          </span>
         </div>
       </div>
-      {/* xterm container */}
       <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
     </div>
   )
