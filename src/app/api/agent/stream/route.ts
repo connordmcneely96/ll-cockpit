@@ -19,7 +19,7 @@ interface AnthropicMessageStart {
 interface AnthropicContentBlockStart {
   type: 'content_block_start'
   index: number
-  content_block: { type: string; id?: string; text?: string }
+  content_block: { type: string; id?: string; name?: string; text?: string }
 }
 interface AnthropicContentBlockDelta {
   type: 'content_block_delta'
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     agentName = body.agentName
     message = body.message
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })  
   }
 
   // ── 3. Load agent ──
@@ -164,9 +164,9 @@ export async function POST(req: NextRequest) {
       let totalInputTokens = 0
       let totalOutputTokens = 0
       let currentToolId = ''
-      let currentToolName = ''
+      let currentToolName = ''  // fix: was using .text, now correctly uses .name
       let currentToolInput = ''
-      const startMs = Date.now()  // ← track latency
+      const startMs = Date.now()
 
       try {
         const reader = anthropicRes.body!.getReader()
@@ -196,13 +196,16 @@ export async function POST(req: NextRequest) {
             if (evt.type === 'message_start') {
               const e = evt as AnthropicMessageStart
               totalInputTokens = e.message.usage.input_tokens
+
             } else if (evt.type === 'content_block_start') {
               const e = evt as AnthropicContentBlockStart
               if (e.content_block.type === 'tool_use') {
                 currentToolId = e.content_block.id ?? ''
-                currentToolName = e.content_block.text ?? ''
+                // FIX: tool name is in .name, not .text
+                currentToolName = e.content_block.name ?? ''
                 currentToolInput = ''
               }
+
             } else if (evt.type === 'content_block_delta') {
               const e = evt as AnthropicContentBlockDelta
               if (e.delta.type === 'text_delta' && e.delta.text) {
@@ -211,6 +214,7 @@ export async function POST(req: NextRequest) {
               } else if (e.delta.type === 'input_json_delta' && e.delta.partial_json) {
                 currentToolInput += e.delta.partial_json
               }
+
             } else if (evt.type === 'content_block_stop') {
               if (currentToolId && currentToolName) {
                 let parsedInput: Record<string, unknown> = {}
@@ -234,6 +238,7 @@ export async function POST(req: NextRequest) {
                 currentToolName = ''
                 currentToolInput = ''
               }
+
             } else if (evt.type === 'message_delta') {
               const e = evt as AnthropicMessageDelta
               if (e.usage?.output_tokens) {
@@ -248,49 +253,33 @@ export async function POST(req: NextRequest) {
         const costUsd = calculateCost(totalInputTokens, totalOutputTokens)
         const latencyMs = Date.now() - startMs
 
-        // Update KV token budget
         await KV.put(kvKey, String(currentTokens + totalTokens), { expirationTtl: 86400 })
 
-        // Update agent_tasks
         await DB.prepare(
           `UPDATE agent_tasks SET output = ?, status = 'complete', tokens_used = ?, cost_usd = ? WHERE id = ?`
         ).bind(fullResponse, totalTokens, costUsd, taskId).run()
 
-        // ✔ Write to ai_completions — this is what populates /analytics AI Usage tab
         await DB.prepare(
           `INSERT INTO ai_completions (id, agent_name, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at)
            VALUES (?, ?, ?, 'chat', ?, ?, ?, ?, 1, datetime('now'))`
-        ).bind(
-          crypto.randomUUID(),
-          agentName,
-          'claude-sonnet-4-5',
-          totalInputTokens,
-          totalOutputTokens,
-          costUsd,
-          latencyMs,
-        ).run()
+        ).bind(crypto.randomUUID(), agentName, 'claude-sonnet-4-5', totalInputTokens, totalOutputTokens, costUsd, latencyMs).run()
 
-        // ✔ Write to analytics_events — this is what populates /analytics Events tab
         await DB.prepare(
           `INSERT INTO analytics_events (id, event_name, page_path, session_id, metadata_json, created_at)
            VALUES (?, 'agent_message', '/agent', ?, ?, datetime('now'))`
-        ).bind(
-          crypto.randomUUID(),
-          taskId,
-          JSON.stringify({ agent: agentName, tokens: totalTokens, cost: costUsd }),
-        ).run()
+        ).bind(crypto.randomUUID(), taskId, JSON.stringify({ agent: agentName, tokens: totalTokens, cost: costUsd })).run()
 
         if (fullResponse.length > 100) {
           await captureTrainingData({ db: DB, agentName, instruction: message, response: fullResponse })
         }
 
         send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId })
+
       } catch (e) {
         console.error('[stream] stream error:', e)
         const errMsg = e instanceof Error ? `${e.name}: ${e.message}` : 'Unknown streaming error'
         send({ type: 'error', message: errMsg })
 
-        // Log failed completion
         await DB.prepare(
           `INSERT INTO ai_completions (id, agent_name, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at)
            VALUES (?, ?, 'claude-sonnet-4-5', 'chat', 0, 0, 0, ?, 0, datetime('now'))`
@@ -299,6 +288,7 @@ export async function POST(req: NextRequest) {
         await DB.prepare(
           `UPDATE agent_tasks SET status = 'error', error_log = ? WHERE id = ?`
         ).bind(errMsg, taskId).run()
+
       } finally {
         controller.close()
       }
