@@ -1,5 +1,6 @@
 'use client'
 
+import '@/app/oracle-digest.css'
 import { useState, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -90,7 +91,7 @@ export default function OraclePage() {
       const res = await fetch('/api/oracle/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: true }),  // force=true overrides kill switches for manual runs
+        body: JSON.stringify({ force: true }),
       })
       const data = await res.json() as { ok: boolean; pipeline?: PipelineStep[] }
       if (data.ok) setPipelineLog(data.pipeline ?? [])
@@ -120,7 +121,6 @@ export default function OraclePage() {
   const vectorized = Number(queueStats.find(s => s.status === 'vectorized')?.count ?? 0)
   const pending = Number(queueStats.find(s => s.status === 'pending')?.count ?? 0)
   const failed = Number(queueStats.find(s => s.status === 'failed')?.count ?? 0)
-
   const cronEnabled = config.find(c => c.key === 'cron_enabled')?.value === '1'
 
   return (
@@ -135,7 +135,6 @@ export default function OraclePage() {
             style={{ background: 'var(--t-p-glass)', color: 'var(--t-p)', border: '1px solid var(--t-glass-bdr)' }}>
             {sources.filter(s => s.active).length} sources · {totalQueued} total
           </span>
-          {/* Master cron status indicator */}
           <span className="flex items-center gap-1 font-mono text-[9px] px-2 py-0.5 rounded-full"
             style={{ background: cronEnabled ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)', color: cronEnabled ? '#10b981' : '#ef4444', border: `1px solid ${cronEnabled ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}` }}>
             {cronEnabled ? <Shield size={9} /> : <ShieldOff size={9} />}
@@ -143,13 +142,12 @@ export default function OraclePage() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Tabs */}
           <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid var(--t-glass-bdr)' }}>
             {(['overview', 'history', 'sources'] as const).map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className="px-3 py-1.5 font-mono text-[10px] capitalize transition-all"
                 style={{ background: activeTab === tab ? 'var(--t-p-glass)' : 'transparent', color: activeTab === tab ? 'var(--t-p)' : 'var(--t-tx3)' }}>
-                {tab === 'history' ? `History (${digestHistory.length || ''})` : tab}
+                {tab === 'history' ? `History` : tab}
               </button>
             ))}
           </div>
@@ -166,10 +164,9 @@ export default function OraclePage() {
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* OVERVIEW TAB */}
+        {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="p-6 space-y-6">
 
@@ -180,7 +177,7 @@ export default function OraclePage() {
                   <Shield size={13} style={{ color: 'var(--t-p)' }} />
                   <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>Emergency Controls</p>
                 </div>
-                <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>Toggles take effect immediately · Manual runs always execute</p>
+                <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>Cron respects these · Manual runs always execute</p>
               </div>
               <div className="divide-y" style={{ borderColor: 'var(--t-bdr)' }}>
                 {KILL_SWITCH_ORDER.map(key => {
@@ -188,28 +185,24 @@ export default function OraclePage() {
                   if (!item) return null
                   const isOn = item.value === '1'
                   const isMaster = key === 'cron_enabled'
-                  const isToggling = togglingKey === key
                   return (
                     <div key={key} className="flex items-center justify-between px-5 py-3"
-                      style={{ background: isMaster && !isOn ? 'rgba(239,68,68,0.05)' : 'transparent' }}>
+                      style={{ background: isMaster && !isOn ? 'rgba(239,68,68,0.04)' : 'transparent' }}>
                       <div className="flex items-center gap-3">
                         {isMaster
                           ? isOn ? <Shield size={14} style={{ color: '#10b981' }} /> : <ShieldOff size={14} style={{ color: '#ef4444' }} />
-                          : <div className="w-2 h-2 rounded-full shrink-0" style={{ background: isOn ? '#10b981' : '#6b7280', boxShadow: isOn ? '0 0 6px #10b981' : 'none' }} />}
+                          : <div className="w-2 h-2 rounded-full" style={{ background: isOn ? '#10b981' : '#6b7280', boxShadow: isOn ? '0 0 6px #10b981' : 'none' }} />}
                         <div>
                           <p className="font-mono text-[12px] font-semibold" style={{ color: isMaster ? (isOn ? '#10b981' : '#ef4444') : 'var(--t-tx1)' }}>
-                            {item.label} {isMaster ? '— MASTER SWITCH' : ''}
+                            {item.label}{isMaster ? ' — MASTER SWITCH' : ''}
                           </p>
                           <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>{item.description}</p>
                         </div>
                       </div>
-                      <button
-                        onClick={() => toggleSwitch(key, isOn)}
-                        disabled={isToggling}
-                        className="relative w-11 h-6 rounded-full transition-all shrink-0 disabled:opacity-50"
-                        style={{ background: isOn ? (isMaster ? '#10b981' : 'var(--t-p)') : '#4b5563', boxShadow: isOn ? `0 0 10px ${isMaster ? '#10b981' : 'var(--t-p-glow)'}` : 'none' }}
-                      >
-                        <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all shadow-md"
+                      <button onClick={() => toggleSwitch(key, isOn)} disabled={togglingKey === key}
+                        className="relative w-11 h-6 rounded-full transition-all disabled:opacity-50"
+                        style={{ background: isOn ? (isMaster ? '#10b981' : 'var(--t-p)') : '#4b5563', boxShadow: isOn ? `0 0 10px ${isMaster ? '#10b981' : 'var(--t-p-glow)'}` : 'none' }}>
+                        <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all shadow"
                           style={{ left: isOn ? '1.35rem' : '0.1rem' }} />
                       </button>
                     </div>
@@ -251,10 +244,7 @@ export default function OraclePage() {
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS_COLORS[status] ?? '#6b7280' }} />
                       <span className="font-mono text-[11px] w-24" style={{ color: 'var(--t-tx2)' }}>{status}</span>
                       <div className="flex-1 h-1.5 rounded-full" style={{ background: 'var(--t-bdr-s)' }}>
-                        <div className="h-full rounded-full transition-all" style={{
-                          width: `${totalQueued > 0 ? (Number(count) / totalQueued) * 100 : 0}%`,
-                          background: STATUS_COLORS[status] ?? '#6b7280',
-                        }} />
+                        <div className="h-full rounded-full transition-all" style={{ width: `${totalQueued > 0 ? (Number(count) / totalQueued) * 100 : 0}%`, background: STATUS_COLORS[status] ?? '#6b7280' }} />
                       </div>
                       <span className="font-mono text-[10px] w-6 text-right" style={{ color: 'var(--t-tx3)' }}>{count}</span>
                     </div>
@@ -263,14 +253,13 @@ export default function OraclePage() {
               </div>
             )}
 
-            {/* Cost info */}
-            <div className="rounded-2xl p-4 flex items-center gap-4"
-              style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.20)' }}>
+            {/* Cost banner */}
+            <div className="rounded-2xl p-4 flex items-center gap-4" style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.20)' }}>
               <Zap size={16} style={{ color: '#10b981', flexShrink: 0 }} />
               <div>
-                <p className="font-mono text-[11px] font-semibold" style={{ color: '#10b981' }}>Zero-cost summarization</p>
+                <p className="font-mono text-[11px] font-semibold" style={{ color: '#10b981' }}>Near-zero cost pipeline</p>
                 <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>
-                  Summarize: Workers AI Llama 3.1 8B — FREE (~416 items/day) · Embed: Workers AI BGE — FREE · Digest: Claude Haiku — ~$0.001 once/day
+                  Fetch: $0 · Summarize: Workers AI Llama 3.1 8B — FREE · Embed: Workers AI BGE — FREE · Digest: Claude Haiku — ~$0.001/day
                 </p>
               </div>
             </div>
@@ -289,8 +278,7 @@ export default function OraclePage() {
                       <div key={step}>
                         <button onClick={() => setExpandedStep(isExpanded ? null : step)}
                           className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/[0.02]">
-                          {skipped
-                            ? <div className="w-3 h-3 rounded-full shrink-0" style={{ background: '#6b7280' }} />
+                          {skipped ? <div className="w-3 h-3 rounded-full" style={{ background: '#6b7280' }} />
                             : ok ? <CheckCircle size={13} style={{ color: '#10b981', flexShrink: 0 }} />
                                  : <AlertCircle size={13} style={{ color: '#ef4444', flexShrink: 0 }} />}
                           <span className="font-mono text-[11px] flex-1" style={{ color: skipped ? 'var(--t-tx3)' : 'var(--t-tx1)' }}>{step}</span>
@@ -323,7 +311,7 @@ export default function OraclePage() {
                       Morning Brief · {latestDigest?.digest_date} · {latestDigest?.item_count} items
                     </p>
                   </div>
-                  <button onClick={() => setActiveTab('history')} className="font-mono text-[9px]" style={{ color: 'var(--t-p)' }}>View all history →</button>
+                  <button onClick={() => setActiveTab('history')} className="font-mono text-[9px]" style={{ color: 'var(--t-p)' }}>View all →</button>
                 </div>
                 <div className="px-6 py-5 oracle-digest">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{latestDigestText}</ReactMarkdown>
@@ -335,16 +323,14 @@ export default function OraclePage() {
 
         {/* HISTORY TAB */}
         {activeTab === 'history' && (
-          <div className="flex h-full">
-            {/* Digest list */}
-            <div className="w-72 shrink-0 overflow-y-auto border-r" style={{ borderColor: 'var(--t-glass-bdr)' }}>
+          <div className="flex h-full" style={{ minHeight: 400 }}>
+            <div className="w-64 shrink-0 overflow-y-auto" style={{ borderRight: '1px solid var(--t-glass-bdr)' }}>
               {historyLoading ? (
                 <div className="flex justify-center py-8"><RefreshCcw size={16} className="animate-spin" style={{ color: 'var(--t-p)' }} /></div>
               ) : digestHistory.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 px-4 text-center">
                   <History size={20} style={{ color: 'var(--t-tx3)' }} />
-                  <p className="font-mono text-[11px]" style={{ color: 'var(--t-tx3)' }}>No digests yet</p>
-                  <p className="font-mono text-[9px]" style={{ color: 'var(--t-tx3)' }}>Run the pipeline to generate your first digest</p>
+                  <p className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>No digests yet · Run the pipeline to generate your first morning brief</p>
                 </div>
               ) : (
                 <div className="divide-y" style={{ borderColor: 'var(--t-bdr)' }}>
@@ -352,38 +338,32 @@ export default function OraclePage() {
                     <button key={digest.id} onClick={() => setSelectedDigest(digest)}
                       className="w-full text-left px-4 py-3 transition-all"
                       style={{ background: selectedDigest?.id === digest.id ? 'var(--t-p-glass)' : 'transparent', borderLeft: selectedDigest?.id === digest.id ? '2px solid var(--t-p)' : '2px solid transparent' }}>
-                      <p className="font-mono text-[11px] font-semibold" style={{ color: selectedDigest?.id === digest.id ? 'var(--t-p)' : 'var(--t-tx1)' }}>
-                        {digest.digest_date}
-                      </p>
-                      <p className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>{digest.item_count} items · {new Date(digest.created_at * 1000).toLocaleTimeString()}</p>
+                      <p className="font-mono text-[11px] font-semibold" style={{ color: selectedDigest?.id === digest.id ? 'var(--t-p)' : 'var(--t-tx1)' }}>{digest.digest_date}</p>
+                      <p className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>{digest.item_count} items</p>
                     </button>
                   ))}
                 </div>
               )}
             </div>
-
-            {/* Digest viewer */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto p-6">
               {!selectedDigest ? (
-                <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <History size={32} style={{ color: 'var(--t-tx3)' }} />
-                  <p className="font-mono text-sm" style={{ color: 'var(--t-tx2)' }}>Select a digest to read</p>
+                <div className="flex flex-col items-center justify-center h-40 gap-2">
+                  <History size={28} style={{ color: 'var(--t-tx3)' }} />
+                  <p className="font-mono text-sm" style={{ color: 'var(--t-tx2)' }}>Select a digest</p>
                 </div>
               ) : (
-                <div className="p-6">
+                <>
                   <div className="flex items-center justify-between mb-4">
                     <div>
                       <h2 className="font-condensed font-bold text-lg" style={{ color: 'var(--t-tx1)' }}>Morning Brief — {selectedDigest.digest_date}</h2>
-                      <p className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>{selectedDigest.item_count} research items · stored in R2 + D1</p>
+                      <p className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>{selectedDigest.item_count} items · stored in R2 + D1</p>
                     </div>
-                    <button onClick={() => setSelectedDigest(null)} className="w-7 h-7 flex items-center justify-center rounded-xl" style={{ color: 'var(--t-tx3)' }}>
-                      <X size={14} />
-                    </button>
+                    <button onClick={() => setSelectedDigest(null)} className="w-7 h-7 flex items-center justify-center rounded-xl" style={{ color: 'var(--t-tx3)' }}><X size={14} /></button>
                   </div>
                   <div className="oracle-digest">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedDigest.digest_markdown}</ReactMarkdown>
                   </div>
-                </div>
+                </>
               )}
             </div>
           </div>
@@ -394,16 +374,12 @@ export default function OraclePage() {
           <div className="p-6">
             <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--d-card)', backdropFilter: 'blur(var(--t-blur))', border: '1px solid var(--t-glass-bdr)', boxShadow: 'var(--t-shadow)' }}>
               <div className="px-5 py-3" style={{ borderBottom: '1px solid var(--t-glass-bdr)' }}>
-                <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>
-                  Research Sources · {sources.filter(s => s.active).length} active · {sources.filter(s => !s.active).length} paused
-                </p>
+                <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>Sources · {sources.filter(s => s.active).length} active</p>
               </div>
-              {/* RSS */}
-              <div className="px-5 py-2" style={{ borderBottom: '1px solid var(--t-bdr)' }}>
-                <div className="flex items-center gap-1.5 py-1">
-                  <Rss size={11} style={{ color: '#f59e0b' }} />
-                  <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>RSS Feeds</span>
-                </div>
+              {/* RSS group */}
+              <div className="px-5 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid var(--t-bdr)', background: 'rgba(245,158,11,0.04)' }}>
+                <Rss size={11} style={{ color: '#f59e0b' }} />
+                <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: '#f59e0b' }}>RSS Feeds ({sources.filter(s => s.source_type === 'rss').length})</span>
               </div>
               {sources.filter(s => s.source_type === 'rss').map(s => (
                 <div key={s.id} className="flex items-center gap-4 px-5 py-3" style={{ borderBottom: '1px solid var(--t-bdr)' }}>
@@ -417,12 +393,10 @@ export default function OraclePage() {
                   <a href={s.source_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={11} style={{ color: 'var(--t-tx3)' }} /></a>
                 </div>
               ))}
-              {/* YouTube */}
-              <div className="px-5 py-2" style={{ borderBottom: '1px solid var(--t-bdr)', borderTop: '1px solid var(--t-bdr)' }}>
-                <div className="flex items-center gap-1.5 py-1">
-                  <Youtube size={11} style={{ color: '#ef4444' }} />
-                  <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>YouTube Channels</span>
-                </div>
+              {/* YouTube group */}
+              <div className="px-5 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid var(--t-bdr)', borderTop: '1px solid var(--t-glass-bdr)', background: 'rgba(239,68,68,0.04)' }}>
+                <Youtube size={11} style={{ color: '#ef4444' }} />
+                <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: '#ef4444' }}>YouTube Channels ({sources.filter(s => s.source_type === 'youtube_channel').length})</span>
               </div>
               {sources.filter(s => s.source_type === 'youtube_channel').map(s => (
                 <div key={s.id} className="flex items-center gap-4 px-5 py-3" style={{ borderBottom: '1px solid var(--t-bdr)' }}>
@@ -439,7 +413,6 @@ export default function OraclePage() {
             </div>
           </div>
         )}
-
       </div>
     </div>
   )
