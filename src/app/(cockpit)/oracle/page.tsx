@@ -64,6 +64,7 @@ export default function OraclePage() {
       }
       if (digest.ok && digest.digest?.digest_markdown) {
         setLatestDigestText(digest.digest.digest_markdown)
+        setLatestDigest(prev => prev ?? { digest_date: digest.digest.digest_date, item_count: digest.digest.item_count, created_at: digest.digest.created_at })
       }
     } finally {
       setLoading(false)
@@ -94,7 +95,21 @@ export default function OraclePage() {
         body: JSON.stringify({ force: true }),
       })
       const data = await res.json() as { ok: boolean; pipeline?: PipelineStep[] }
-      if (data.ok) setPipelineLog(data.pipeline ?? [])
+      if (data.ok && data.pipeline) {
+        setPipelineLog(data.pipeline)
+
+        // ✔ Extract digest directly from pipeline response — no second fetch needed
+        const digestStep = data.pipeline.find(s => s.step.startsWith('digest'))
+        if (digestStep?.result?.digest) {
+          setLatestDigestText(digestStep.result.digest)
+          setLatestDigest(prev => ({
+            digest_date: digestStep.result.date ?? prev?.digest_date ?? '',
+            item_count: digestStep.result.itemCount ?? prev?.item_count ?? 0,
+            created_at: Math.floor(Date.now() / 1000),
+          }))
+        }
+      }
+      // Refresh queue stats
       await loadStatus()
     } finally {
       setRunning(false)
@@ -147,7 +162,7 @@ export default function OraclePage() {
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className="px-3 py-1.5 font-mono text-[10px] capitalize transition-all"
                 style={{ background: activeTab === tab ? 'var(--t-p-glass)' : 'transparent', color: activeTab === tab ? 'var(--t-p)' : 'var(--t-tx3)' }}>
-                {tab === 'history' ? `History` : tab}
+                {tab}
               </button>
             ))}
           </div>
@@ -166,7 +181,6 @@ export default function OraclePage() {
 
       <div className="flex-1 overflow-y-auto">
 
-        {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="p-6 space-y-6">
 
@@ -284,6 +298,7 @@ export default function OraclePage() {
                           <span className="font-mono text-[11px] flex-1" style={{ color: skipped ? 'var(--t-tx3)' : 'var(--t-tx1)' }}>{step}</span>
                           {result?.processed !== undefined && <span className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>{result.processed} processed</span>}
                           {result?.vectorized !== undefined && <span className="font-mono text-[10px]" style={{ color: '#10b981' }}>{result.vectorized} vectorized</span>}
+                          {result?.itemCount !== undefined && <span className="font-mono text-[10px]" style={{ color: 'var(--t-p)' }}>{result.itemCount} items in brief</span>}
                           {isExpanded ? <ChevronDown size={12} style={{ color: 'var(--t-tx3)' }} /> : <ChevronRight size={12} style={{ color: 'var(--t-tx3)' }} />}
                         </button>
                         {isExpanded && (
@@ -311,7 +326,7 @@ export default function OraclePage() {
                       Morning Brief · {latestDigest?.digest_date} · {latestDigest?.item_count} items
                     </p>
                   </div>
-                  <button onClick={() => setActiveTab('history')} className="font-mono text-[9px]" style={{ color: 'var(--t-p)' }}>View all →</button>
+                  <button onClick={() => setActiveTab('history')} className="font-mono text-[9px]" style={{ color: 'var(--t-p)' }}>All history →</button>
                 </div>
                 <div className="px-6 py-5 oracle-digest">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{latestDigestText}</ReactMarkdown>
@@ -323,7 +338,7 @@ export default function OraclePage() {
 
         {/* HISTORY TAB */}
         {activeTab === 'history' && (
-          <div className="flex h-full" style={{ minHeight: 400 }}>
+          <div className="flex" style={{ minHeight: '100%' }}>
             <div className="w-64 shrink-0 overflow-y-auto" style={{ borderRight: '1px solid var(--t-glass-bdr)' }}>
               {historyLoading ? (
                 <div className="flex justify-center py-8"><RefreshCcw size={16} className="animate-spin" style={{ color: 'var(--t-p)' }} /></div>
@@ -376,7 +391,6 @@ export default function OraclePage() {
               <div className="px-5 py-3" style={{ borderBottom: '1px solid var(--t-glass-bdr)' }}>
                 <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--t-tx3)' }}>Sources · {sources.filter(s => s.active).length} active</p>
               </div>
-              {/* RSS group */}
               <div className="px-5 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid var(--t-bdr)', background: 'rgba(245,158,11,0.04)' }}>
                 <Rss size={11} style={{ color: '#f59e0b' }} />
                 <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: '#f59e0b' }}>RSS Feeds ({sources.filter(s => s.source_type === 'rss').length})</span>
@@ -393,7 +407,6 @@ export default function OraclePage() {
                   <a href={s.source_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={11} style={{ color: 'var(--t-tx3)' }} /></a>
                 </div>
               ))}
-              {/* YouTube group */}
               <div className="px-5 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid var(--t-bdr)', borderTop: '1px solid var(--t-glass-bdr)', background: 'rgba(239,68,68,0.04)' }}>
                 <Youtube size={11} style={{ color: '#ef4444' }} />
                 <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: '#ef4444' }}>YouTube Channels ({sources.filter(s => s.source_type === 'youtube_channel').length})</span>
