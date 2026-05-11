@@ -12,6 +12,20 @@ export function TerminalPane() {
   const wsRef = useRef<WebSocket | null>(null)
   const [connState, setConnState] = useState<ConnState>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [hasSelection, setHasSelection] = useState(false)
+  const [copyFlash, setCopyFlash] = useState(false)
+
+  const copySelection = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    const selection = term.getSelection()
+    if (selection) {
+      navigator.clipboard.writeText(selection).then(() => {
+        setCopyFlash(true)
+        setTimeout(() => setCopyFlash(false), 800)
+      }).catch(() => {})
+    }
+  }, [])
 
   const connect = useCallback(async () => {
     setConnState('connecting')
@@ -65,7 +79,7 @@ export function TerminalPane() {
       const { ClipboardAddon } = await import('@xterm/addon-clipboard')
 
       term = new Terminal({
-        allowProposedApi: true,  // required for ClipboardAddon
+        allowProposedApi: true,
         theme: {
           background: '#0a0f0c',
           foreground: '#e0f2ee',
@@ -89,7 +103,7 @@ export function TerminalPane() {
         scrollback: 5000,
         allowTransparency: true,
         convertEol: true,
-        rightClickSelectsWord: true,
+        rightClickSelectsWord: false, // disabled — right-click now copy/paste
       })
 
       fitAddon = new FitAddon()
@@ -116,33 +130,54 @@ export function TerminalPane() {
         }
       })
 
-      // Ctrl+Shift+V — paste from clipboard into terminal
+      // Track selection state for Copy button visibility
+      term.onSelectionChange(() => {
+        setHasSelection(!!term.getSelection())
+      })
+
+      // Keyboard shortcuts
       term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        // Ctrl+Shift+X — copy selection (avoids Chrome DevTools Ctrl+Shift+C conflict)
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'X' && e.type === 'keydown') {
+          const selection = term.getSelection()
+          if (selection) {
+            navigator.clipboard.writeText(selection).then(() => {
+              setCopyFlash(true)
+              setTimeout(() => setCopyFlash(false), 800)
+            }).catch(() => {})
+          }
+          return false
+        }
+        // Ctrl+Shift+V — paste from clipboard into terminal
         if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
           navigator.clipboard.readText().then(text => {
             if (text && wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
             }
           }).catch(() => {})
-          return false  // prevent default
-        }
-        // Ctrl+Shift+C — copy selection
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
-          const selection = term.getSelection()
-          if (selection) navigator.clipboard.writeText(selection).catch(() => {})
           return false
         }
         return true
       })
 
-      // Right-click paste
+      // Smart right-click: COPY if selection exists, PASTE if nothing selected
       containerRef.current?.addEventListener('contextmenu', (e) => {
         e.preventDefault()
-        navigator.clipboard.readText().then(text => {
-          if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
-          }
-        }).catch(() => {})
+        const selection = term.getSelection()
+        if (selection) {
+          // Has selection → copy to clipboard
+          navigator.clipboard.writeText(selection).then(() => {
+            setCopyFlash(true)
+            setTimeout(() => setCopyFlash(false), 800)
+          }).catch(() => {})
+        } else {
+          // No selection → paste from clipboard
+          navigator.clipboard.readText().then(text => {
+            if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
+            }
+          }).catch(() => {})
+        }
       })
 
       term.onResize(({ cols, rows }) => {
@@ -191,8 +226,21 @@ export function TerminalPane() {
         </div>
         <div className="flex items-center gap-2">
           <span className="font-mono text-[9px]" style={{ color: 'rgba(224,242,238,0.2)' }}>
-            Ctrl+Shift+C copy · Ctrl+Shift+V paste · right-click paste
+            Select→right-click copy · Ctrl+Shift+X copy · Ctrl+Shift+V paste
           </span>
+          {/* Copy button — appears when text is selected */}
+          {hasSelection && (
+            <button
+              onClick={copySelection}
+              className="font-mono text-[10px] px-2 py-0.5 rounded-lg transition-all"
+              style={{
+                background: copyFlash ? 'rgba(16,185,129,0.25)' : 'rgba(0,201,167,0.12)',
+                color: copyFlash ? '#10b981' : '#00c9a7',
+                border: `1px solid ${copyFlash ? 'rgba(16,185,129,0.5)' : 'rgba(0,201,167,0.25)'}`,
+              }}>
+              {copyFlash ? '✓ Copied' : 'Copy'}
+            </button>
+          )}
           {(connState === 'disconnected' || connState === 'error') && (
             <button onClick={reconnect}
               className="font-mono text-[10px] px-2 py-0.5 rounded-lg"
