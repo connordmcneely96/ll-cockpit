@@ -10,33 +10,27 @@ export function TerminalPane() {
   const termRef = useRef<import('@xterm/xterm').Terminal | null>(null)
   const fitAddonRef = useRef<import('@xterm/addon-fit').FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const pendingSelectionRef = useRef<string>('') // cache selection before mousedown clears it
   const [connState, setConnState] = useState<ConnState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [hasSelection, setHasSelection] = useState(false)
   const [copyFlash, setCopyFlash] = useState(false)
 
-  // Paste from clipboard into terminal, then clear clipboard
+  const docopy = useCallback((text: string) => {
+    if (!text) return
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyFlash(true)
+      setTimeout(() => setCopyFlash(false), 800)
+    }).catch(() => {})
+  }, [])
+
   const pasteAndClear = useCallback(() => {
     navigator.clipboard.readText().then(text => {
       if (text && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
-        // Clear clipboard after paste so stale content never re-pastes
         navigator.clipboard.writeText('').catch(() => {})
       }
     }).catch(() => {})
-  }, [])
-
-  const copySelection = useCallback(() => {
-    const term = termRef.current
-    if (!term) return
-    const selection = term.getSelection()
-    if (selection) {
-      navigator.clipboard.writeText(selection).then(() => {
-        setCopyFlash(true)
-        setTimeout(() => setCopyFlash(false), 800)
-      }).catch(() => {})
-      term.clearSelection()
-    }
   }, [])
 
   const connect = useCallback(async () => {
@@ -142,7 +136,14 @@ export function TerminalPane() {
       })
 
       term.onSelectionChange(() => {
-        setHasSelection(!!term.getSelection())
+        const sel = term.getSelection()
+        setHasSelection(!!sel)
+        if (sel) pendingSelectionRef.current = sel // keep ref fresh
+      })
+
+      // Cache selection on mousedown BEFORE the browser clears it on right-click
+      containerRef.current?.addEventListener('mousedown', () => {
+        pendingSelectionRef.current = term.getSelection()
       })
 
       term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
@@ -152,10 +153,7 @@ export function TerminalPane() {
         if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
           const selection = term.getSelection()
           if (selection) {
-            navigator.clipboard.writeText(selection).then(() => {
-              setCopyFlash(true)
-              setTimeout(() => setCopyFlash(false), 800)
-            }).catch(() => {})
+            doopy(selection)
             term.clearSelection()
             return false
           }
@@ -171,15 +169,13 @@ export function TerminalPane() {
         return true
       })
 
-      // Right-click: copy if selection, paste+clear if not
+      // Right-click: use CACHED selection (captured on mousedown before browser clears it)
       containerRef.current?.addEventListener('contextmenu', (e) => {
         e.preventDefault()
-        const selection = term.getSelection()
-        if (selection) {
-          navigator.clipboard.writeText(selection).then(() => {
-            setCopyFlash(true)
-            setTimeout(() => setCopyFlash(false), 800)
-          }).catch(() => {})
+        const cached = pendingSelectionRef.current
+        pendingSelectionRef.current = '' // consume it
+        if (cached) {
+          doopy(cached)
           term.clearSelection()
         } else {
           pasteAndClear()
@@ -211,6 +207,11 @@ export function TerminalPane() {
     wsRef.current?.close()
     termRef.current?.writeln('\r\n\x1b[36mReconnecting…\x1b[0m')
     connect()
+  }
+
+  const copySelection = () => {
+    const sel = termRef.current?.getSelection() || pendingSelectionRef.current
+    if (sel) doopy(sel)
   }
 
   return (
