@@ -10,7 +10,7 @@ export function TerminalPane() {
   const termRef = useRef<import('@xterm/xterm').Terminal | null>(null)
   const fitAddonRef = useRef<import('@xterm/addon-fit').FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const pendingSelectionRef = useRef<string>('') // cache selection before mousedown clears it
+  const pendingSelectionRef = useRef<string>('')
   const [connState, setConnState] = useState<ConnState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [hasSelection, setHasSelection] = useState(false)
@@ -138,10 +138,10 @@ export function TerminalPane() {
       term.onSelectionChange(() => {
         const sel = term.getSelection()
         setHasSelection(!!sel)
-        if (sel) pendingSelectionRef.current = sel // keep ref fresh
+        if (sel) pendingSelectionRef.current = sel
       })
 
-      // Cache selection on mousedown BEFORE the browser clears it on right-click
+      // Cache selection on mousedown BEFORE right-click clears it
       containerRef.current?.addEventListener('mousedown', () => {
         pendingSelectionRef.current = term.getSelection()
       })
@@ -153,11 +153,11 @@ export function TerminalPane() {
         if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
           const selection = term.getSelection()
           if (selection) {
-            doopy(selection)
+            docopy(selection)
             term.clearSelection()
             return false
           }
-          return true // send SIGINT
+          return true
         }
 
         // Ctrl+V — paste then clear clipboard
@@ -169,13 +169,13 @@ export function TerminalPane() {
         return true
       })
 
-      // Right-click: use CACHED selection (captured on mousedown before browser clears it)
+      // Right-click: use CACHED selection captured on mousedown
       containerRef.current?.addEventListener('contextmenu', (e) => {
         e.preventDefault()
         const cached = pendingSelectionRef.current
-        pendingSelectionRef.current = '' // consume it
+        pendingSelectionRef.current = ''
         if (cached) {
-          doopy(cached)
+          docopy(cached)
           term.clearSelection()
         } else {
           pasteAndClear()
@@ -211,7 +211,7 @@ export function TerminalPane() {
 
   const copySelection = () => {
     const sel = termRef.current?.getSelection() || pendingSelectionRef.current
-    if (sel) doopy(sel)
+    if (sel) docopy(sel)
   }
 
   return (
