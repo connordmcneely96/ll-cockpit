@@ -15,6 +15,17 @@ export function TerminalPane() {
   const [hasSelection, setHasSelection] = useState(false)
   const [copyFlash, setCopyFlash] = useState(false)
 
+  // Paste from clipboard into terminal, then clear clipboard
+  const pasteAndClear = useCallback(() => {
+    navigator.clipboard.readText().then(text => {
+      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
+        // Clear clipboard after paste so stale content never re-pastes
+        navigator.clipboard.writeText('').catch(() => {})
+      }
+    }).catch(() => {})
+  }, [])
+
   const copySelection = useCallback(() => {
     const term = termRef.current
     if (!term) return
@@ -24,6 +35,7 @@ export function TerminalPane() {
         setCopyFlash(true)
         setTimeout(() => setCopyFlash(false), 800)
       }).catch(() => {})
+      term.clearSelection()
     }
   }, [])
 
@@ -123,23 +135,20 @@ export function TerminalPane() {
       term.writeln('\x1b[2m  nexus-vm · GCP us-central1 · e2-micro\x1b[0m')
       term.writeln('')
 
-      // Input → WebSocket
       term.onData(data => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ type: 'input', data }))
         }
       })
 
-      // Track selection for Copy button
       term.onSelectionChange(() => {
         setHasSelection(!!term.getSelection())
       })
 
-      // Key intercepts
       term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
         if (e.type !== 'keydown') return true
 
-        // Ctrl+C — copy if selection, otherwise fall through to send SIGINT
+        // Ctrl+C — copy if selection, SIGINT if not
         if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
           const selection = term.getSelection()
           if (selection) {
@@ -148,25 +157,21 @@ export function TerminalPane() {
               setTimeout(() => setCopyFlash(false), 800)
             }).catch(() => {})
             term.clearSelection()
-            return false // prevent xterm from sending \x03 (SIGINT)
+            return false
           }
-          return true // no selection → send SIGINT normally
+          return true // send SIGINT
         }
 
-        // Ctrl+V — paste from clipboard into terminal
+        // Ctrl+V — paste then clear clipboard
         if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
-          navigator.clipboard.readText().then(text => {
-            if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
-            }
-          }).catch(() => {})
+          pasteAndClear()
           return false
         }
 
         return true
       })
 
-      // Right-click — copy if selection, paste if not
+      // Right-click: copy if selection, paste+clear if not
       containerRef.current?.addEventListener('contextmenu', (e) => {
         e.preventDefault()
         const selection = term.getSelection()
@@ -177,11 +182,7 @@ export function TerminalPane() {
           }).catch(() => {})
           term.clearSelection()
         } else {
-          navigator.clipboard.readText().then(text => {
-            if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({ type: 'input', data: text }))
-            }
-          }).catch(() => {})
+          pasteAndClear()
         }
       })
 
