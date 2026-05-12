@@ -1,5 +1,5 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.0
+ * Design Build pipeline helpers — Sprint 16 v0.2.1
  *
  * Per-section architecture:
  *   buildDesignBuildDAG(brief) → programmatic DecompositionResult
@@ -8,7 +8,10 @@
  *     - st_N+2: ASSEMBLER (deterministic scaffold + stitch, $0 cost)
  *     - st_N+3: CRITIC (reviews assembled page)
  *
- *   No HERMES decompose call — saves $0.018 + 16s and guarantees structure.
+ *   v0.2.1: paren-aware section parser (commas inside `(...)` no longer split sections).
+ *           Parentheticals become COMPOSER guidance ("section guidance: ..."),
+ *           not separate sections. Slug strips parens. Heading hierarchy guidance
+ *           in COMPOSER task (h2 for section headline, h3 for cards inside).
  */
 
 import type {
@@ -26,18 +29,62 @@ import type {
 // DAG BUILDER — programmatic, no HERMES
 // ──────────────────────────────────────────────────────────────────────
 
-export function parseSections(briefSections: string): { name: string; slug: string }[] {
-  return briefSections
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((name) => ({
-      name,
-      slug: name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, ''),
-    }))
+export interface ParsedSection {
+  name: string         // Display name, parentheticals stripped (used in title + nav)
+  slug: string         // URL-safe id (used in section[id] and nav anchors)
+  description: string  // Original text incl. parentheticals (passed to COMPOSER as guidance)
+}
+
+/**
+ * Paren-aware section splitter.
+ *  - Splits on commas and newlines at paren depth 0 only
+ *  - Strips parenthetical content from the display name + slug
+ *  - Preserves the full original text as `description` so COMPOSER can use it as guidance
+ *
+ * Example input:
+ *   "Hero (with a single confident headline), pump categories, certifications and standards (API 610, API 682, ATEX), case studies"
+ *
+ * Output:
+ *   [
+ *     { name: "Hero",                       slug: "hero",                       description: "Hero (with a single confident headline)" },
+ *     { name: "pump categories",            slug: "pump_categories",            description: "pump categories" },
+ *     { name: "certifications and standards", slug: "certifications_and_standards", description: "certifications and standards (API 610, API 682, ATEX)" },
+ *     { name: "case studies",               slug: "case_studies",               description: "case studies" },
+ *   ]
+ */
+export function parseSections(briefSections: string): ParsedSection[] {
+  const tokens: string[] = []
+  let buf = ''
+  let depth = 0
+  for (const ch of briefSections) {
+    if (ch === '(') {
+      depth++
+      buf += ch
+      continue
+    }
+    if (ch === ')') {
+      depth = Math.max(0, depth - 1)
+      buf += ch
+      continue
+    }
+    if ((ch === ',' || ch === '\n') && depth === 0) {
+      if (buf.trim()) tokens.push(buf.trim())
+      buf = ''
+      continue
+    }
+    buf += ch
+  }
+  if (buf.trim()) tokens.push(buf.trim())
+
+  return tokens.map((description) => {
+    // name = description with all parentheticals stripped
+    const name = description.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim()
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+    return { name, slug, description }
+  })
 }
 
 export function buildDesignBuildDAG(
@@ -80,11 +127,15 @@ export function buildDesignBuildDAG(
   sections.forEach((sec, i) => {
     const id = `st_${i + 2}`
     composerIds.push(id)
+    const guidanceBlock =
+      sec.description !== sec.name
+        ? `\n\nSECTION GUIDANCE (from brief): ${sec.description}\n`
+        : ''
     subtasks.push({
       id,
       agent: 'COMPOSER',
       title: `Compose ${sec.name} section`,
-      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl for spec lists where appropriate). Include meaningful inline SVG for any imagery. First character must be <, last must be >.`,
+      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
       depends_on: ['st_1'],
       estimated_cost_usd: 0.04,
       estimated_duration_seconds: 30,
@@ -152,22 +203,18 @@ export function extractHtml(text: string): string {
 
 export function extractSectionHtml(text: string): string {
   if (!text) return ''
-  // Strip fences
   const fenced = text.match(/```(?:html)?\s*([\s\S]*?)```/i)
   let candidate = fenced ? fenced[1] : text
   candidate = candidate.trim()
 
-  // If COMPOSER returned a full doc despite section-mode instruction, dig out body content
   const bodyMatch = candidate.match(/<body[^>]*>([\s\S]*?)<\/body>/i)
   if (bodyMatch) {
     candidate = bodyMatch[1].trim()
   }
 
-  // Find first <section> through its matching </section>
   const sectionMatch = candidate.match(/<section[\s\S]*?<\/section>/i)
   if (sectionMatch) return sectionMatch[0]
 
-  // Fall back to whatever we have
   return candidate
 }
 
@@ -263,7 +310,7 @@ export function renderFullHtml({
     body { font-family: '${bodyFont}', system-ui, sans-serif; background: ${p.background}; color: ${p.text_primary}; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
     .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: ${p.primary}; color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
-    a:focus-visible, button:focus-visible { outline: 2px solid ${p.primary}; outline-offset: 2px; border-radius: 2px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid ${p.primary}; outline-offset: 2px; border-radius: 2px; }
     .mobile-menu { display: none; }
     .mobile-menu.open { display: block; }
   </style>
@@ -295,9 +342,44 @@ export function renderFullHtml({
   </main>
 
   <footer class="bg-primary text-white py-12 mt-16" role="contentinfo">
-    <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4">
-      <p class="text-sm opacity-80">© ${new Date().getFullYear()} ${escapeHtml(brief.client_name)}. All rights reserved.</p>
-      <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
+        <div>
+          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Company</h3>
+          <ul class="space-y-2 text-sm opacity-75">
+            <li><a href="#" class="hover:opacity-100">About</a></li>
+            <li><a href="#" class="hover:opacity-100">Careers</a></li>
+            <li><a href="#" class="hover:opacity-100">Contact</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Resources</h3>
+          <ul class="space-y-2 text-sm opacity-75">
+            <li><a href="#" class="hover:opacity-100">Datasheets</a></li>
+            <li><a href="#" class="hover:opacity-100">Certifications</a></li>
+            <li><a href="#" class="hover:opacity-100">Documentation</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Legal</h3>
+          <ul class="space-y-2 text-sm opacity-75">
+            <li><a href="#" class="hover:opacity-100">Privacy Policy</a></li>
+            <li><a href="#" class="hover:opacity-100">Terms of Service</a></li>
+            <li><a href="#" class="hover:opacity-100">Export Compliance</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Connect</h3>
+          <ul class="space-y-2 text-sm opacity-75">
+            <li><a href="#" class="hover:opacity-100">LinkedIn</a></li>
+            <li><a href="#" class="hover:opacity-100">YouTube</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+        <p class="text-sm opacity-80">© ${new Date().getFullYear()} ${escapeHtml(brief.client_name)}. All rights reserved.</p>
+        <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
+      </div>
     </div>
   </footer>
 </body>
@@ -313,7 +395,6 @@ export async function executeAssembler(
   userId: string,
   pipelineRunId: string,
 ): Promise<{ output: string; cost_usd: number; tokens: number }> {
-  // Pull all done subtasks in this run
   const rows = await env.DB
     .prepare(
       `SELECT short_id, agent_name, title, output FROM agent_subtasks
@@ -353,7 +434,6 @@ export async function executeAssembler(
     throw new Error('ASSEMBLER: no COMPOSER section outputs found')
   }
 
-  // Pull brief metadata
   const brief = await env.DB
     .prepare(
       `SELECT client_name, business_description FROM design_briefs
@@ -437,7 +517,6 @@ export async function finalizeIterationIfReady(
       tokens: number
     }>()
 
-  // Group by agent (sum cost/tokens across multiple subtasks per agent, e.g. multiple COMPOSERs)
   const byAgent: Record<
     string,
     { latestOutput: string; cost: number; tokens: number }
@@ -446,14 +525,13 @@ export async function finalizeIterationIfReady(
     if (row.status === 'done' && row.output) {
       const prev = byAgent[row.agent_name]
       byAgent[row.agent_name] = {
-        latestOutput: row.output, // latest by ordering (short_id asc means last one wins)
+        latestOutput: row.output,
         cost: (prev?.cost ?? 0) + (row.cost_usd ?? 0),
         tokens: (prev?.tokens ?? 0) + (row.tokens ?? 0),
       }
     }
   }
 
-  // Prefer ASSEMBLER output (v0.2 path), fall back to COMPOSER (v0.1 single-shot)
   const finalSource = byAgent.assembler ?? byAgent.composer
   if (!finalSource) {
     return { finalized: false, reason: 'No ASSEMBLER or COMPOSER output found' }
@@ -479,8 +557,6 @@ export async function finalizeIterationIfReady(
       : null
 
   const now = Math.floor(Date.now() / 1000)
-
-  // Total cost = sum of all done subtasks (including all COMPOSERs)
   const totalCost = Object.values(byAgent).reduce((sum, a) => sum + a.cost, 0)
   const totalTokens = Object.values(byAgent).reduce((sum, a) => sum + a.tokens, 0)
 
