@@ -1,8 +1,5 @@
 /**
  * GET /api/design/briefs/[id] — brief detail + iterations + lazy finalization
- *
- * If the orchestrator_run is completed but this iteration hasn't been finalized,
- * pulls COMPOSER output, saves HTML to R2, updates rows, returns ready state.
  */
 
 import { NextRequest } from 'next/server'
@@ -24,7 +21,7 @@ export async function GET(
   }
 
   const { id } = await ctx.params
-  const env = getBindings()
+  const env = await getBindings()
 
   const brief = await env.DB
     .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
@@ -41,7 +38,6 @@ export async function GET(
     .bind(id)
     .all<DesignIterationRow>()
 
-  // Lazy finalize the latest iteration if its run is complete
   const latest = iterations.results?.[0]
   let finalization: FinalizationResult | null = null
   if (latest && brief.orchestrator_run_id) {
@@ -57,7 +53,6 @@ export async function GET(
         latest,
         run,
       )
-      // Re-read iteration + brief if finalized
       if (finalization.finalized) {
         const refreshedIter = await env.DB
           .prepare(`SELECT * FROM design_iterations WHERE id = ?`)
@@ -73,7 +68,6 @@ export async function GET(
     }
   }
 
-  // Also include the orchestrator run state + subtasks for live UI
   let run: OrchestratorRunRow | null = null
   let subtasks: unknown[] = []
   if (brief.orchestrator_run_id) {

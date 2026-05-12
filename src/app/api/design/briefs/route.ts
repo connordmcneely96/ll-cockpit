@@ -1,9 +1,5 @@
 /**
- * POST /api/design/briefs — Sprint 16 v0.2.0
- *   Per-section programmatic DAG — no HERMES decompose.
- *   buildDesignBuildDAG → persistDecomposition → runAutoWave inline.
- *   Each section gets its own 8192 output budget. ASSEMBLER stitches deterministically.
- *
+ * POST /api/design/briefs — Sprint 16 v0.2.1
  * GET /api/design/briefs — list user's briefs
  */
 
@@ -44,7 +40,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const env = getBindings()
+  const env = await getBindings()
   const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(
@@ -75,7 +71,6 @@ export async function POST(req: NextRequest) {
     )
     .run()
 
-  // === PROGRAMMATIC DAG (v0.2.0) — no HERMES call ===
   const decomposition = buildDesignBuildDAG(body, 1)
 
   const { runId, decompositionId } = await persistDecomposition(env.DB, {
@@ -86,7 +81,7 @@ export async function POST(req: NextRequest) {
     inputTokens: 0,
     outputTokens: 0,
     costUsd: 0,
-    modelId: 'design-build-dag-v0.2.0',
+    modelId: 'design-build-dag-v0.2.1',
   })
 
   await env.DB.prepare(
@@ -103,13 +98,10 @@ export async function POST(req: NextRequest) {
     .bind(runId, now, briefId)
     .run()
 
-  // === INLINE WAVE ===
-  // For a 6-section brief: DESIGNER (15s) → 6×COMPOSER parallel (~40s, batched) → ASSEMBLER (1s) → CRITIC (20s)
-  // Total: ~80–90s wall-clock. Paid Worker tier gives 5 minutes.
   const waveResult = await runAutoWave(env, apiKey, user.id, runId, {
     force: true,
     maxWaves: 10,
-    maxParallel: 8,    // allow all COMPOSERs in parallel
+    maxParallel: 8,
   })
 
   return new Response(
@@ -141,7 +133,7 @@ export async function GET(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  const { DB } = getBindings()
+  const { DB } = await getBindings()
   const url = new URL(req.url)
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 30), 100)
   const status = url.searchParams.get('status')

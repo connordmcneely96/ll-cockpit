@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  const { DB } = getBindings()
+  const { DB } = await getBindings()
   const url = new URL(req.url)
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200)
   const status = url.searchParams.get('status')

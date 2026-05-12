@@ -2,12 +2,7 @@
  * GET /api/admin/claim-records
  *
  * One-time migration helper: reassigns historical rows to the currently
- * authenticated user. Use case: when you sign in on a new computer with a
- * different Supabase session and historical data is orphaned under an
- * older user_id.
- *
- * Permissive because ll-cockpit is currently a single-user app.
- *
+ * authenticated user. Permissive because ll-cockpit is currently single-user.
  * Pass ?dry=1 to preview. Otherwise applies.
  */
 
@@ -15,8 +10,6 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 
-// Known tables with a user_id column. Hardcoded so we don't rely on PRAGMA
-// (which doesn't play well with D1's prepared-statement interface).
 const TABLES = [
   'agent_chats',
   'agent_chat_messages',
@@ -40,7 +33,7 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  const { DB } = getBindings()
+  const { DB } = await getBindings()
   const dryRun = req.nextUrl.searchParams.get('dry') === '1'
 
   const results: Array<{
@@ -87,9 +80,6 @@ export async function GET(req: NextRequest) {
         current_user_id: user.id,
         current_user_email: user.email,
         results,
-        next: dryRun
-          ? 'Re-call without ?dry=1 to actually migrate'
-          : 'Refresh /history — all tabs should now show your data',
       },
       null,
       2,
