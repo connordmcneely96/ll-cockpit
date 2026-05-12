@@ -3,6 +3,8 @@
  *
  * Fetches the latest finalized iteration's HTML from R2 and serves it directly.
  * This is the URL Connor shares with clients.
+ *
+ * Cache: short (60s) so iteration changes show up quickly without hammering R2.
  */
 
 import { NextRequest } from 'next/server'
@@ -15,7 +17,6 @@ export async function GET(
   const { id } = await ctx.params
   const env = getBindings()
 
-  // Latest finalized iteration
   const iteration = await env.DB
     .prepare(
       `SELECT preview_r2_key FROM design_iterations
@@ -44,7 +45,9 @@ export async function GET(
   return new Response(html, {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'public, max-age=300',
+      // Short cache so iteration agent changes show up quickly. Hard refresh
+      // (Cmd/Ctrl+Shift+R) bypasses any cache layer.
+      'Cache-Control': 'public, max-age=60, must-revalidate',
     },
   })
 }

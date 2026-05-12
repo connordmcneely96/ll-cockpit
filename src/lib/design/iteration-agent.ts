@@ -8,7 +8,7 @@
  *
  * v0.3.0 MVP tools FULLY IMPLEMENTED:
  *   - update_design_tokens   patches the latest iteration's design_tokens_json
- *   - apply_token_to_html    regenerates the :root CSS vars in the page <style>
+ *   - apply_token_to_html    re-renders page_html with current tokens, re-uploads R2
  *   - regenerate_section     re-runs COMPOSER for one section + re-stitches via ASSEMBLER
  *   - save_iteration         clones current state as a new design_iterations row
  *   - critique               re-scores the current HTML using CRITIC system prompt
@@ -22,6 +22,7 @@ import type { D1Database } from '@cloudflare/workers-types'
 import type {
   DesignBriefRow,
   DesignIterationRow,
+  DesignSection,
   DesignTokens,
   CloudflareEnv,
 } from '@/types'
@@ -34,7 +35,12 @@ import type {
 import { persistDesignChatMessage } from './iteration-chat'
 import type { AnthropicTurn } from './iteration-chat'
 import { calculateCost } from '@/lib/cost'
-import { executeAssembler, savePreviewToR2 } from './pipeline'
+import {
+  executeAssembler,
+  extractSectionHtml,
+  renderFullHtml,
+  savePreviewToR2,
+} from './pipeline'
 
 const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
@@ -48,7 +54,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'update_design_tokens',
     description:
-      'Patch the current design tokens (palette, typography, spacing, motion). Use this for color, font, or spacing changes. The patch is merged into the existing tokens; only include keys you want to change. After calling this, call apply_token_to_html to push the changes into the rendered page.',
+      'Patch the current design tokens (palette, typography, spacing, motion). Use this for color, font, or spacing changes. The patch is merged into the existing tokens; only include keys you want to change. After calling this, call apply_token_to_html to push the changes into the rendered page so the preview reflects them.',
     input_schema: {
       type: 'object',
       properties: {
@@ -67,7 +73,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'apply_token_to_html',
     description:
-      'Regenerate the :root CSS variables block in the page <style> tag using the current design tokens. Run after update_design_tokens to push color/typography changes into the rendered page without re-running COMPOSER.',
+      'Re-render the full page HTML using the current design tokens and existing section outputs, then save back to D1 and re-upload the preview to R2. Run after update_design_tokens so the preview URL reflects color/typography changes. Fast (deterministic, ~1s, $0 cost).',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -139,7 +145,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'assemble_html',
-    description: 'Re-stitch all section HTML into final page. v0.3.0 — not yet implemented (regenerate_section auto-stitches).',
+    description: 'Re-stitch all section HTML into final page. v0.3.0 — use apply_token_to_html for the same effect.',
     input_schema: { type: 'object', properties: {} },
     uses_code_execution: true,
   },
@@ -210,13 +216,12 @@ Current CRITIC score: ${currentIter?.critic_score ?? 'not yet scored'}
 Your job:
   • Listen to the user's refinement request.
   • Use the available tools to make the change. Prefer the smallest tool that can do the job.
-  • For color/typography/spacing changes: update_design_tokens → apply_token_to_html.
-  • For copy or structural changes within a section: regenerate_section.
+  • For color/typography/spacing changes: update_design_tokens → apply_token_to_html. ALWAYS call apply_token_to_html in the same turn as update_design_tokens so the preview actually reflects the change.
+  • For copy or structural changes within a section: regenerate_section (auto-stitches; no need for apply_token_to_html after).
   • After a coherent set of changes, call save_iteration to commit a new iteration row.
   • If the user asks for a quality check, call critique.
   • Keep replies concise. Don't repeat the brief back unless asked.
   • If a request is ambiguous, ask one clarifying question rather than guessing.
-  • If a tool returns "not yet implemented", explain that and offer the closest implemented alternative (regenerate_section + update_design_tokens cover most cases).
 
 Design principles to enforce silently:
   • Accessibility: CTA contrast ≥ 4.5:1, focus rings visible, semantic HTML.
@@ -310,47 +315,116 @@ async function runUpdateDesignTokens(
   return {
     type: 'tool_result',
     tool_use_id: toolUse.id,
-    content: JSON.stringify({ ok: true, updated_keys: Object.keys(input.patch), tokens: merged }),
+    content: JSON.stringify({
+      ok: true,
+      updated_keys: Object.keys(input.patch),
+      tokens: merged,
+      next_step: 'Now call apply_token_to_html so the rendered preview reflects this change.',
+    }),
   }
 }
 
+/**
+ * Re-render the full page using current tokens + existing section HTML, then
+ * persist to D1 and re-upload the preview blob in R2.
+ *
+ * This is the right behavior because the scaffold in renderFullHtml puts
+ * colors inline in `tailwind.config = { ... }` (a script tag) and in inline
+ * `<style>` rules, not in a `:root { --color-* }` block. A regex-and-replace
+ * over a CSS variable block would catch ~10% of the references; a full
+ * re-render catches all of them.
+ */
 async function runApplyTokenToHtml(
   toolUse: DesignAssistantToolUse,
   deps: ToolDeps,
 ): Promise<DesignToolResult> {
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-  if (!iter.page_html) {
+  if (!iter.orchestrator_run_id) {
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,
-      content: 'Iteration has no page_html yet — nothing to apply tokens to.',
+      content: 'Iteration has no orchestrator_run_id — cannot locate section outputs to re-stitch.',
       is_error: true,
     }
   }
-  const tokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
 
-  const newRootBlock = buildRootCssBlock(tokens)
-  const updated = iter.page_html.replace(/:root\s*\{[^}]*\}/, newRootBlock)
+  const tokens: DesignTokens = iter.design_tokens_json
+    ? safeParse(iter.design_tokens_json) ?? emptyTokens()
+    : emptyTokens()
 
-  if (updated === iter.page_html) {
+  const brief = await deps.env.DB
+    .prepare(
+      `SELECT client_name, business_description FROM design_briefs
+         WHERE id = ? AND user_id = ?`,
+    )
+    .bind(deps.briefId, deps.userId)
+    .first<{ client_name: string; business_description: string }>()
+  if (!brief) {
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,
-      content: 'No :root CSS variable block found in page_html to replace. The current scaffold uses Tailwind config + body inline style; tokens already propagate via update_design_tokens + save_iteration.',
-      is_error: false,
+      content: 'Brief not found.',
+      is_error: true,
     }
   }
 
+  const rows = await deps.env.DB
+    .prepare(
+      `SELECT short_id, title, output FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
+           AND status = 'done' AND output IS NOT NULL
+         ORDER BY short_id ASC`,
+    )
+    .bind(iter.orchestrator_run_id, deps.userId)
+    .all<{ short_id: string; title: string; output: string }>()
+
+  if (!rows.results || rows.results.length === 0) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'No COMPOSER section outputs found for this run — cannot re-render.',
+      is_error: true,
+    }
+  }
+
+  const sections: DesignSection[] = rows.results.map((row) => {
+    const match = row.title.match(/Compose\s+(.+?)\s+section/i)
+    const name = match
+      ? match[1]
+      : row.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+    return { name, slug, html: extractSectionHtml(row.output) }
+  })
+
+  const newHtml = renderFullHtml({ brief, tokens, sections })
+
   await deps.env.DB
     .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-    .bind(updated, iter.id)
+    .bind(newHtml, iter.id)
     .run()
+
+  // Re-upload to the SAME R2 key so the preview URL serves the updated page.
+  const { r2Key } = await savePreviewToR2(
+    deps.env,
+    deps.briefId,
+    iter.iteration_number,
+    newHtml,
+  )
 
   return {
     type: 'tool_result',
     tool_use_id: toolUse.id,
-    content: JSON.stringify({ ok: true, applied: newRootBlock.length, html_length: updated.length }),
+    content: JSON.stringify({
+      ok: true,
+      sections_re_rendered: sections.length,
+      new_html_length: newHtml.length,
+      r2_key: r2Key,
+      note: 'Page re-rendered with new tokens and saved to R2. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to bypass cache and see the update immediately.',
+    }),
   }
 }
 
@@ -538,7 +612,7 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
       assembly_warning: assemblyError,
       note: assemblyError
         ? 'Section regenerated but full-page re-assembly failed. Section output saved; preview may not reflect change until save_iteration.'
-        : 'Section regenerated and page re-assembled. Preview URL now serves updated page.',
+        : 'Section regenerated and page re-assembled. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to see the update.',
     }),
   }
 }
@@ -574,6 +648,20 @@ async function runSaveIteration(
     )
     .run()
 
+  // Also save R2 preview for the new iteration so it has its own preview key.
+  if (current.page_html) {
+    const { r2Key } = await savePreviewToR2(
+      deps.env,
+      deps.briefId,
+      nextNumber,
+      current.page_html,
+    )
+    await deps.env.DB
+      .prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`)
+      .bind(r2Key, newId)
+      .run()
+  }
+
   await deps.env.DB
     .prepare(`UPDATE design_briefs SET current_iteration = ?, updated_at = ? WHERE id = ?`)
     .bind(nextNumber, now, deps.briefId)
@@ -586,7 +674,7 @@ async function runSaveIteration(
       ok: true,
       new_iteration_id: newId,
       iteration_number: nextNumber,
-      note: 'New iteration committed. Preview URL reflects current edits.',
+      note: 'New iteration committed and preview re-uploaded to R2.',
     }),
   }
 }
@@ -882,27 +970,4 @@ function emptyTokens(): DesignTokens {
       body_font: 'system-ui',
     },
   }
-}
-
-function buildRootCssBlock(tokens: DesignTokens): string {
-  const p = tokens.palette
-  const t = tokens.typography
-  const lines: string[] = [':root {']
-  lines.push(`  --color-primary: ${p.primary};`)
-  if (p.primary_dark) lines.push(`  --color-primary-dark: ${p.primary_dark};`)
-  if (p.primary_light) lines.push(`  --color-primary-light: ${p.primary_light};`)
-  lines.push(`  --color-accent: ${p.accent};`)
-  lines.push(`  --color-bg: ${p.background};`)
-  if (p.surface) lines.push(`  --color-surface: ${p.surface};`)
-  lines.push(`  --color-text: ${p.text_primary};`)
-  if (p.text_secondary) lines.push(`  --color-text-2: ${p.text_secondary};`)
-  if (p.border) lines.push(`  --color-border: ${p.border};`)
-  lines.push(`  --font-display: ${t.display_font};`)
-  lines.push(`  --font-body: ${t.body_font};`)
-  if (tokens.spacing?.container_max_width)
-    lines.push(`  --container-max: ${tokens.spacing.container_max_width};`)
-  if (tokens.spacing?.section_padding)
-    lines.push(`  --section-padding: ${tokens.spacing.section_padding};`)
-  lines.push('}')
-  return lines.join('\n')
 }
