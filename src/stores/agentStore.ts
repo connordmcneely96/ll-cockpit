@@ -7,6 +7,7 @@ interface AgentState {
   sessions: Record<AgentName, ChatMessage[]>
   sessionTokens: Record<AgentName, number>
   sessionCost: Record<AgentName, number>
+  chatIds: Record<AgentName, string | null>   // Sprint 17 v0.3.0 — server-side chat thread per agent
   pendingToolCall: ToolCallEvent | null
   isStreaming: boolean
 
@@ -15,6 +16,8 @@ interface AgentState {
   setPendingToolCall: (toolCall: ToolCallEvent | null) => void
   setStreaming: (streaming: boolean) => void
   addTokens: (agent: AgentName, tokens: number, cost: number) => void
+  setChatId: (agent: AgentName, chatId: string | null) => void
+  loadChat: (agent: AgentName, chatId: string, messages: ChatMessage[]) => void
   clearSession: (agent: AgentName) => void
 }
 
@@ -22,6 +25,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   sessions: {} as Record<AgentName, ChatMessage[]>,
   sessionTokens: {} as Record<AgentName, number>,
   sessionCost: {} as Record<AgentName, number>,
+  chatIds: {} as Record<AgentName, string | null>,
   pendingToolCall: null,
   isStreaming: false,
 
@@ -65,10 +69,24 @@ export const useAgentStore = create<AgentState>((set) => ({
       },
     })),
 
+  setChatId: (agent, chatId) =>
+    set((state) => ({
+      chatIds: { ...state.chatIds, [agent]: chatId },
+    })),
+
+  loadChat: (agent, chatId, messages) =>
+    set((state) => ({
+      sessions: { ...state.sessions, [agent]: messages },
+      chatIds: { ...state.chatIds, [agent]: chatId },
+      sessionTokens: { ...state.sessionTokens, [agent]: 0 },
+      sessionCost: { ...state.sessionCost, [agent]: 0 },
+    })),
+
   clearSession: (agent) =>
     set((state) => ({
       sessions: { ...state.sessions, [agent]: [] },
       sessionTokens: { ...state.sessionTokens, [agent]: 0 },
       sessionCost: { ...state.sessionCost, [agent]: 0 },
+      chatIds: { ...state.chatIds, [agent]: null },
     })),
 }))

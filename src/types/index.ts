@@ -77,6 +77,7 @@ export interface SSEDoneEvent {
   tokensUsed: number
   costUsd: number
   taskId: string
+  chatId?: string         // Sprint 17 v0.3.0 — returned so client can continue this thread
 }
 export interface SSEErrorEvent { type: 'error'; message: string }
 export type SSEEvent = SSETextEvent | SSEToolCallEvent | SSEDoneEvent | SSEErrorEvent
@@ -113,6 +114,37 @@ export interface ToolCallRow {
   tool_input: string
   tool_output: string | null
   user_approved: number
+  created_at: number
+}
+
+// ── Sprint 17 v0.3.0: Agent Chat Persistence Types ──
+
+export interface AgentChatRow {
+  id: string
+  user_id: string
+  agent_name: string
+  title: string | null
+  message_count: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost_usd: number
+  last_message_preview: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface AgentChatMessageRow {
+  id: string
+  chat_id: string
+  user_id: string
+  role: 'user' | 'assistant'
+  content: string
+  tool_calls_json: string | null
+  task_id: string | null
+  model_id: string | null
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
   created_at: number
 }
 
@@ -373,9 +405,9 @@ export interface DesignTokens {
 }
 
 export interface DesignSection {
-  slug: string         // url-safe identifier, e.g. 'hero', 'products_grid'
-  name: string         // display name, e.g. 'Hero', 'Products Grid'
-  html: string         // section markup (just <section>...</section>, no html/head/body)
+  slug: string
+  name: string
+  html: string
 }
 
 // ── Cloudflare Env ──

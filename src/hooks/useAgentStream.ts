@@ -10,8 +10,14 @@ function randomId(): string {
 }
 
 export function useAgentStream(agentName: AgentName) {
-  const { addMessage, appendToLastMessage, setPendingToolCall, setStreaming, addTokens } =
-    useAgentStore()
+  const {
+    addMessage,
+    appendToLastMessage,
+    setPendingToolCall,
+    setStreaming,
+    addTokens,
+    setChatId,
+  } = useAgentStore()
   const { addGlobalTokens } = useUiStore()
 
   const sendMessage = useCallback(
@@ -33,11 +39,18 @@ export function useAgentStream(agentName: AgentName) {
       addMessage(agentName, assistantMsg)
       setStreaming(true)
 
+      // Read current chatId for this agent (snapshot)
+      const currentChatId = useAgentStore.getState().chatIds[agentName] ?? null
+
       try {
         const res = await fetch('/api/agent/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentName, message: userMessage }),
+          body: JSON.stringify({
+            agentName,
+            message: userMessage,
+            chatId: currentChatId,    // Sprint 17 v0.3.0 — continues server-side thread
+          }),
         })
 
         if (!res.ok) {
@@ -93,12 +106,15 @@ export function useAgentStream(agentName: AgentName) {
         } else if (event.type === 'done') {
           addTokens(agentName, event.tokensUsed, event.costUsd)
           addGlobalTokens(event.tokensUsed, event.costUsd)
+          if (event.chatId) {
+            setChatId(agentName, event.chatId)    // remember thread for next turn
+          }
         } else if (event.type === 'error') {
           appendToLastMessage(agentName, `\n\n**Agent error:** ${event.message}`)
         }
       }
     },
-    [agentName, addMessage, appendToLastMessage, setPendingToolCall, setStreaming, addTokens, addGlobalTokens]
+    [agentName, addMessage, appendToLastMessage, setPendingToolCall, setStreaming, addTokens, setChatId, addGlobalTokens]
   )
 
   return { sendMessage }

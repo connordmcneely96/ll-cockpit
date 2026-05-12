@@ -4,6 +4,13 @@ import { getBindings } from '@/lib/cloudflare'
 import { getAgent } from '@/lib/agents'
 import { calculateCost, SESSION_TOKEN_LIMIT } from '@/lib/cost'
 import { captureTrainingData } from '@/lib/training'
+import {
+  loadChatHistory,
+  getChat,
+  createChat,
+  persistMessage,
+  type AnthropicMessage,
+} from '@/lib/agent-chat'
 import type { SSEEvent } from '@/types'
 
 const encoder = new TextEncoder()
@@ -46,20 +53,27 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  // ── 1b. Agent permission check ──
-  let agentNameEarly: string
+  // ── 2. Parse body ──
+  let agentName: string, message: string, providedChatId: string | undefined
   try {
-    const rawBody = await req.clone().json() as { agentName: string; message: string }
-    agentNameEarly = rawBody.agentName
+    const body = await req.json() as {
+      agentName: string
+      message: string
+      chatId?: string
+    }
+    agentName = body.agentName
+    message = body.message
+    providedChatId = body.chatId
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
 
+  // ── 3. Agent permission check ──
   const { data: permission } = await supabase
     .from('user_agent_permissions')
     .select('can_access')
     .eq('user_id', user.id)
-    .eq('agent_id', agentNameEarly.toUpperCase())
+    .eq('agent_id', agentName.toUpperCase())
     .single()
 
   if (permission && !permission.can_access) {
@@ -69,30 +83,20 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 2. Parse body ──
-  let agentName: string, message: string
-  try {
-    const body = await req.json() as { agentName: string; message: string }
-    agentName = body.agentName
-    message = body.message
-  } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })  
-  }
-
-  // ── 3. Load agent ──
+  // ── 4. Load agent ──
   const agent = getAgent(agentName)
   if (!agent) {
     return new Response(JSON.stringify({ error: `Unknown agent: ${agentName}` }), { status: 404 })
   }
 
-  // ── 4. Get bindings ──
+  // ── 5. Get bindings ──
   const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
   }
 
-  // ── 5. Token budget check ──
+  // ── 6. Token budget check ──
   const kvKey = `session_tokens:${user.id}`
   const storedTokens = await KV.get(kvKey)
   const currentTokens = storedTokens ? parseInt(storedTokens, 10) : 0
@@ -103,20 +107,62 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 6. Create task record ──
+  // ── 7. Resolve or create chat thread ── [Sprint 17 v0.3.0]
+  let chatId = providedChatId
+  let priorMessages: AnthropicMessage[] = []
+
+  if (chatId) {
+    const existing = await getChat(DB, chatId, user.id)
+    if (!existing) {
+      // chatId provided but not found / not owned — reject
+      return new Response(
+        JSON.stringify({ error: `Chat ${chatId} not found` }),
+        { status: 404 }
+      )
+    }
+    if (existing.agent_name !== agentName) {
+      return new Response(
+        JSON.stringify({ error: `Chat belongs to ${existing.agent_name}, not ${agentName}` }),
+        { status: 400 }
+      )
+    }
+    priorMessages = await loadChatHistory(DB, chatId, user.id)
+  } else {
+    chatId = await createChat(DB, {
+      userId: user.id,
+      agentName,
+      firstUserMessage: message,
+    })
+  }
+
+  // ── 8. Persist user message (before LLM call so we don't lose it on crash) ──
+  await persistMessage(DB, {
+    chatId,
+    userId: user.id,
+    role: 'user',
+    content: message,
+  })
+
+  // ── 9. Create task record ──
   const taskId = crypto.randomUUID()
   await DB.prepare(
     `INSERT INTO agent_tasks (id, user_id, agent_name, task_type, input, status, created_at)
      VALUES (?, ?, ?, 'chat', ?, 'running', unixepoch())`
   ).bind(taskId, user.id, agentName, message).run()
 
-  // ── 7. Call Anthropic ──
+  // ── 10. Build messages array (history + new turn) ──
+  const messages: AnthropicMessage[] = [
+    ...priorMessages,
+    { role: 'user', content: message },
+  ]
+
+  // ── 11. Call Anthropic ──
   const anthropicBody: Record<string, unknown> = {
     model: 'claude-sonnet-4-5',
     max_tokens: 8096,
     stream: true,
     system: agent.systemPrompt,
-    messages: [{ role: 'user', content: message }],
+    messages,
   }
 
   if (agent.tools.length > 0) {
@@ -155,7 +201,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 8. Stream ──
+  // ── 12. Stream ──
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => controller.enqueue(sseChunk(event))
@@ -164,8 +210,9 @@ export async function POST(req: NextRequest) {
       let totalInputTokens = 0
       let totalOutputTokens = 0
       let currentToolId = ''
-      let currentToolName = ''  // fix: was using .text, now correctly uses .name
+      let currentToolName = ''
       let currentToolInput = ''
+      const collectedToolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
       const startMs = Date.now()
 
       try {
@@ -201,7 +248,6 @@ export async function POST(req: NextRequest) {
               const e = evt as AnthropicContentBlockStart
               if (e.content_block.type === 'tool_use') {
                 currentToolId = e.content_block.id ?? ''
-                // FIX: tool name is in .name, not .text
                 currentToolName = e.content_block.name ?? ''
                 currentToolInput = ''
               }
@@ -229,6 +275,12 @@ export async function POST(req: NextRequest) {
                   requiresApproval,
                 })
 
+                collectedToolCalls.push({
+                  id: currentToolId,
+                  name: currentToolName,
+                  input: parsedInput,
+                })
+
                 await DB.prepare(
                   `INSERT INTO tool_calls (id, task_id, user_id, tool_name, user_approved, created_at)
                    VALUES (?, ?, ?, ?, ?, unixepoch())`
@@ -248,7 +300,7 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // ── 9. Finalize ──
+        // ── 13. Finalize ──
         const totalTokens = totalInputTokens + totalOutputTokens
         const costUsd = calculateCost(totalInputTokens, totalOutputTokens)
         const latencyMs = Date.now() - startMs
@@ -259,6 +311,20 @@ export async function POST(req: NextRequest) {
           `UPDATE agent_tasks SET output = ?, status = 'complete', tokens_used = ?, cost_usd = ? WHERE id = ?`
         ).bind(fullResponse, totalTokens, costUsd, taskId).run()
 
+        // Persist assistant message [Sprint 17 v0.3.0]
+        await persistMessage(DB, {
+          chatId: chatId!,
+          userId: user.id,
+          role: 'assistant',
+          content: fullResponse,
+          toolCallsJson: collectedToolCalls.length > 0 ? JSON.stringify(collectedToolCalls) : null,
+          taskId,
+          modelId: 'claude-sonnet-4-5',
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          costUsd,
+        })
+
         await DB.prepare(
           `INSERT INTO ai_completions (id, agent_name, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at)
            VALUES (?, ?, ?, 'chat', ?, ?, ?, ?, 1, datetime('now'))`
@@ -267,13 +333,13 @@ export async function POST(req: NextRequest) {
         await DB.prepare(
           `INSERT INTO analytics_events (id, event_name, page_path, session_id, metadata_json, created_at)
            VALUES (?, 'agent_message', '/agent', ?, ?, datetime('now'))`
-        ).bind(crypto.randomUUID(), taskId, JSON.stringify({ agent: agentName, tokens: totalTokens, cost: costUsd })).run()
+        ).bind(crypto.randomUUID(), taskId, JSON.stringify({ agent: agentName, tokens: totalTokens, cost: costUsd, chat_id: chatId })).run()
 
         if (fullResponse.length > 100) {
           await captureTrainingData({ db: DB, agentName, instruction: message, response: fullResponse })
         }
 
-        send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId })
+        send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId, chatId })
 
       } catch (e) {
         console.error('[stream] stream error:', e)
