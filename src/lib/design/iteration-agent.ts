@@ -2,18 +2,16 @@
  * Design iteration agent — Sprint 16 v0.3.0.
  *
  * Programmatic Anthropic tool-use loop that lets the user refine a finished
- * design brief by chatting. The agent loads the brief's current edit state
- * (latest iteration's tokens + HTML), takes a user message, and may call
- * one or more tools per turn (max MAX_TOOL_HOPS) to mutate state.
+ * design brief by chatting.
  *
  * v0.3.0 MVP tools FULLY IMPLEMENTED:
- *   - update_design_tokens   patches the latest iteration's design_tokens_json
- *   - apply_token_to_html    re-renders page_html with current tokens, re-uploads R2
- *   - regenerate_section     re-runs COMPOSER for one section + re-stitches via ASSEMBLER
+ *   - update_design_tokens   patches tokens AND auto re-renders HTML + R2 preview
+ *   - apply_token_to_html    explicit re-render (kept for backward compat)
+ *   - regenerate_section     re-runs COMPOSER for one section + re-stitches
  *   - save_iteration         clones current state as a new design_iterations row
  *   - critique               re-scores the current HTML using CRITIC system prompt
  *
- * STUBBED tools (return descriptive "not implemented" results):
+ * STUBBED (return descriptive "not implemented" results):
  *   splice_section, assemble_html, add_section, remove_section,
  *   apply_preset, analyze_reference_url
  */
@@ -46,15 +44,11 @@ const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
 const MAX_TOOL_HOPS = 6
 
-// ───────────────────────────────────────────────────
-// Tool catalog
-// ───────────────────────────────────────────────────
-
 export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'update_design_tokens',
     description:
-      'Patch the current design tokens (palette, typography, spacing, motion). Use this for color, font, or spacing changes. The patch is merged into the existing tokens; only include keys you want to change. After calling this, call apply_token_to_html to push the changes into the rendered page so the preview reflects them.',
+      'Patch the design tokens (palette, typography, spacing, motion) AND immediately re-render the page HTML with the new tokens, then upload to R2 so the preview reflects the change. Use this for all color, font, or spacing changes. The patch is merged into the existing tokens; only include keys you want to change. This tool does the full propagation in one call — you do NOT need to also call apply_token_to_html after.',
     input_schema: {
       type: 'object',
       properties: {
@@ -73,7 +67,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'apply_token_to_html',
     description:
-      'Re-render the full page HTML using the current design tokens and existing section outputs, then save back to D1 and re-upload the preview to R2. Run after update_design_tokens so the preview URL reflects color/typography changes. Fast (deterministic, ~1s, $0 cost).',
+      'Force a full HTML re-render using the current design tokens (rarely needed — update_design_tokens already does this). Use only if you suspect the page_html is out of sync with the stored tokens.',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -102,7 +96,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'save_iteration',
     description:
-      'Commit the current edit state as a new design_iteration row (iteration_number + 1). Call this at the end of a coherent set of changes so the user has a stable preview URL and so the brief\'s history is clean.',
+      'Commit the current edit state as a new design_iteration row (iteration_number + 1). Call this at the end of a coherent set of changes so the brief\'s history is clean.',
     input_schema: {
       type: 'object',
       properties: {
@@ -117,7 +111,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'critique',
     description:
-      'Re-run CRITIC against the current HTML. Returns a 0–100 score plus strengths / issues / suggestions. Use this to validate before save_iteration or to give the user a quality check.',
+      'Re-run CRITIC against the current HTML. Returns a 0–100 score plus strengths / issues / suggestions.',
     input_schema: {
       type: 'object',
       properties: {
@@ -132,7 +126,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   // ───── stubbed for v0.3.0 ─────
   {
     name: 'splice_section',
-    description: 'Replace one section\'s HTML in the assembled page. v0.3.0 — not yet implemented; use regenerate_section instead.',
+    description: 'v0.3.0 — not yet implemented; use regenerate_section instead.',
     input_schema: {
       type: 'object',
       properties: {
@@ -145,13 +139,13 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'assemble_html',
-    description: 'Re-stitch all section HTML into final page. v0.3.0 — use apply_token_to_html for the same effect.',
+    description: 'v0.3.0 — not yet implemented (update_design_tokens auto-stitches).',
     input_schema: { type: 'object', properties: {} },
     uses_code_execution: true,
   },
   {
     name: 'add_section',
-    description: 'Add a new section after a target slug. v0.3.0 — not yet implemented.',
+    description: 'v0.3.0 — not yet implemented.',
     input_schema: {
       type: 'object',
       properties: {
@@ -164,7 +158,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'remove_section',
-    description: 'Remove a section slot. v0.3.0 — not yet implemented.',
+    description: 'v0.3.0 — not yet implemented.',
     input_schema: {
       type: 'object',
       properties: { section_slug: { type: 'string' } },
@@ -173,7 +167,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'apply_preset',
-    description: 'Apply a named visual preset (e.g. "more SaaS", "luxury"). v0.3.0 — not yet implemented.',
+    description: 'v0.3.0 — not yet implemented.',
     input_schema: {
       type: 'object',
       properties: { preset_name: { type: 'string' } },
@@ -182,8 +176,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'analyze_reference_url',
-    description:
-      'Use Playwright + vision to scrape a reference URL and extract design notes (tokens, layout, copy). v0.3.0 — not yet implemented.',
+    description: 'v0.3.0 — not yet implemented.',
     input_schema: {
       type: 'object',
       properties: {
@@ -195,10 +188,6 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
     requires_playwright: true,
   },
 ]
-
-// ───────────────────────────────────────────────────
-// System prompt
-// ───────────────────────────────────────────────────
 
 export function buildSystemPrompt(brief: DesignBriefRow, currentIter: DesignIterationRow | null): string {
   return `You are DESIGNER ITERATE, the design iteration agent for the LL Cockpit.
@@ -215,11 +204,10 @@ Current CRITIC score: ${currentIter?.critic_score ?? 'not yet scored'}
 
 Your job:
   • Listen to the user's refinement request.
-  • Use the available tools to make the change. Prefer the smallest tool that can do the job.
-  • For color/typography/spacing changes: update_design_tokens → apply_token_to_html. ALWAYS call apply_token_to_html in the same turn as update_design_tokens so the preview actually reflects the change.
-  • For copy or structural changes within a section: regenerate_section (auto-stitches; no need for apply_token_to_html after).
+  • Use the smallest tool that does the job. update_design_tokens handles ALL color/font changes (patches tokens AND re-renders HTML AND uploads R2 preview in one call). You do NOT need to call apply_token_to_html separately.
+  • For copy or structural changes within a section, use regenerate_section.
   • After a coherent set of changes, call save_iteration to commit a new iteration row.
-  • If the user asks for a quality check, call critique.
+  • IMPORTANT: Even if the user references a color you THINK is already applied, call update_design_tokens anyway when they ask for any change. The agent has no way to verify what the user is currently seeing; always make the change they asked for.
   • Keep replies concise. Don't repeat the brief back unless asked.
   • If a request is ambiguous, ask one clarifying question rather than guessing.
 
@@ -231,10 +219,6 @@ Design principles to enforce silently:
 
 Tone: direct, professional, no hedging.`
 }
-
-// ───────────────────────────────────────────────────
-// Tool dispatcher + implementations
-// ───────────────────────────────────────────────────
 
 interface ToolDeps {
   env: CloudflareEnv
@@ -284,6 +268,81 @@ export async function executeIterationTool(
   }
 }
 
+/**
+ * Helper: re-render full HTML from current tokens + COMPOSER section outputs,
+ * save to D1 + R2. Used by both update_design_tokens (auto) and
+ * apply_token_to_html (explicit).
+ */
+async function rerenderAndPersist(
+  deps: ToolDeps,
+  iter: DesignIterationRow,
+  tokens: DesignTokens,
+): Promise<{ ok: true; sections: number; htmlLength: number; r2Key: string }
+   | { ok: false; reason: string }> {
+  if (!iter.orchestrator_run_id) {
+    return { ok: false, reason: 'no orchestrator_run_id on iteration' }
+  }
+
+  const brief = await deps.env.DB
+    .prepare(
+      `SELECT client_name, business_description FROM design_briefs
+         WHERE id = ? AND user_id = ?`,
+    )
+    .bind(deps.briefId, deps.userId)
+    .first<{ client_name: string; business_description: string }>()
+  if (!brief) return { ok: false, reason: 'brief not found' }
+
+  const rows = await deps.env.DB
+    .prepare(
+      `SELECT short_id, title, output FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
+           AND status = 'done' AND output IS NOT NULL
+         ORDER BY short_id ASC`,
+    )
+    .bind(iter.orchestrator_run_id, deps.userId)
+    .all<{ short_id: string; title: string; output: string }>()
+
+  if (!rows.results || rows.results.length === 0) {
+    return { ok: false, reason: 'no COMPOSER section outputs found' }
+  }
+
+  const sections: DesignSection[] = rows.results.map((row) => {
+    const match = row.title.match(/Compose\s+(.+?)\s+section/i)
+    const name = match
+      ? match[1]
+      : row.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+    return { name, slug, html: extractSectionHtml(row.output) }
+  })
+
+  const newHtml = renderFullHtml({ brief, tokens, sections })
+
+  await deps.env.DB
+    .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
+    .bind(newHtml, iter.id)
+    .run()
+
+  const { r2Key } = await savePreviewToR2(
+    deps.env,
+    deps.briefId,
+    iter.iteration_number,
+    newHtml,
+  )
+
+  // Make sure the iteration knows its R2 key (older iterations may have NULL).
+  if (!iter.preview_r2_key) {
+    await deps.env.DB
+      .prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`)
+      .bind(r2Key, iter.id)
+      .run()
+  }
+
+  return { ok: true, sections: sections.length, htmlLength: newHtml.length, r2Key }
+}
+
 async function runUpdateDesignTokens(
   toolUse: DesignAssistantToolUse,
   deps: ToolDeps,
@@ -312,6 +371,9 @@ async function runUpdateDesignTokens(
     .bind(JSON.stringify(merged), iter.id)
     .run()
 
+  // AUTO re-render: tokens-only changes are useless without HTML propagation.
+  const rerender = await rerenderAndPersist(deps, iter, merged)
+
   return {
     type: 'tool_result',
     tool_use_id: toolUse.id,
@@ -319,111 +381,51 @@ async function runUpdateDesignTokens(
       ok: true,
       updated_keys: Object.keys(input.patch),
       tokens: merged,
-      next_step: 'Now call apply_token_to_html so the rendered preview reflects this change.',
+      rerender: rerender.ok
+        ? {
+            ok: true,
+            sections_re_rendered: rerender.sections,
+            r2_key: rerender.r2Key,
+          }
+        : { ok: false, reason: rerender.reason },
+      note: rerender.ok
+        ? 'Tokens patched and page re-rendered with the new values. Hard-refresh the preview tab to see the change.'
+        : `Tokens patched but auto re-render failed (${rerender.reason}). Preview still shows old colors.`,
     }),
   }
 }
 
-/**
- * Re-render the full page using current tokens + existing section HTML, then
- * persist to D1 and re-upload the preview blob in R2.
- *
- * This is the right behavior because the scaffold in renderFullHtml puts
- * colors inline in `tailwind.config = { ... }` (a script tag) and in inline
- * `<style>` rules, not in a `:root { --color-* }` block. A regex-and-replace
- * over a CSS variable block would catch ~10% of the references; a full
- * re-render catches all of them.
- */
 async function runApplyTokenToHtml(
   toolUse: DesignAssistantToolUse,
   deps: ToolDeps,
 ): Promise<DesignToolResult> {
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-  if (!iter.orchestrator_run_id) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'Iteration has no orchestrator_run_id — cannot locate section outputs to re-stitch.',
-      is_error: true,
-    }
-  }
 
   const tokens: DesignTokens = iter.design_tokens_json
     ? safeParse(iter.design_tokens_json) ?? emptyTokens()
     : emptyTokens()
 
-  const brief = await deps.env.DB
-    .prepare(
-      `SELECT client_name, business_description FROM design_briefs
-         WHERE id = ? AND user_id = ?`,
-    )
-    .bind(deps.briefId, deps.userId)
-    .first<{ client_name: string; business_description: string }>()
-  if (!brief) {
+  const rerender = await rerenderAndPersist(deps, iter, tokens)
+
+  if (!rerender.ok) {
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,
-      content: 'Brief not found.',
+      content: `Re-render failed: ${rerender.reason}`,
       is_error: true,
     }
   }
-
-  const rows = await deps.env.DB
-    .prepare(
-      `SELECT short_id, title, output FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
-           AND status = 'done' AND output IS NOT NULL
-         ORDER BY short_id ASC`,
-    )
-    .bind(iter.orchestrator_run_id, deps.userId)
-    .all<{ short_id: string; title: string; output: string }>()
-
-  if (!rows.results || rows.results.length === 0) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'No COMPOSER section outputs found for this run — cannot re-render.',
-      is_error: true,
-    }
-  }
-
-  const sections: DesignSection[] = rows.results.map((row) => {
-    const match = row.title.match(/Compose\s+(.+?)\s+section/i)
-    const name = match
-      ? match[1]
-      : row.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-    return { name, slug, html: extractSectionHtml(row.output) }
-  })
-
-  const newHtml = renderFullHtml({ brief, tokens, sections })
-
-  await deps.env.DB
-    .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-    .bind(newHtml, iter.id)
-    .run()
-
-  // Re-upload to the SAME R2 key so the preview URL serves the updated page.
-  const { r2Key } = await savePreviewToR2(
-    deps.env,
-    deps.briefId,
-    iter.iteration_number,
-    newHtml,
-  )
 
   return {
     type: 'tool_result',
     tool_use_id: toolUse.id,
     content: JSON.stringify({
       ok: true,
-      sections_re_rendered: sections.length,
-      new_html_length: newHtml.length,
-      r2_key: r2Key,
-      note: 'Page re-rendered with new tokens and saved to R2. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to bypass cache and see the update immediately.',
+      sections_re_rendered: rerender.sections,
+      html_length: rerender.htmlLength,
+      r2_key: rerender.r2Key,
+      note: 'Page re-rendered. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to see updates.',
     }),
   }
 }
@@ -591,9 +593,7 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
       .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
       .bind(result.output, iter.id)
       .run()
-    if (iter.preview_r2_key) {
-      await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
-    }
+    await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
   } catch (err) {
     assemblyError = err instanceof Error ? err.message : String(err)
   }
@@ -611,8 +611,8 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
       },
       assembly_warning: assemblyError,
       note: assemblyError
-        ? 'Section regenerated but full-page re-assembly failed. Section output saved; preview may not reflect change until save_iteration.'
-        : 'Section regenerated and page re-assembled. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to see the update.',
+        ? 'Section regenerated but full-page re-assembly failed. Run apply_token_to_html to retry.'
+        : 'Section regenerated and page re-assembled. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to see updates.',
     }),
   }
 }
@@ -648,7 +648,6 @@ async function runSaveIteration(
     )
     .run()
 
-  // Also save R2 preview for the new iteration so it has its own preview key.
   if (current.page_html) {
     const { r2Key } = await savePreviewToR2(
       deps.env,
@@ -750,10 +749,6 @@ function missingIteration(toolUse: DesignAssistantToolUse): DesignToolResult {
   }
 }
 
-// ───────────────────────────────────────────────────
-// Main agent loop
-// ───────────────────────────────────────────────────
-
 export interface IterationAgentResult {
   finalText: string
   toolHops: number
@@ -790,10 +785,19 @@ export async function runIterationAgent(args: {
     input_schema: t.input_schema,
   }))
 
-  const messages: AnthropicTurn[] = [
-    ...priorTurns,
-    { role: 'user', content: userMessage },
-  ]
+  // Build messages. If the last priorTurn is a user message, merge our new
+  // user content into it so we don't send two consecutive user turns.
+  const messages: AnthropicTurn[] = [...priorTurns]
+  const lastTurn = messages[messages.length - 1]
+  if (lastTurn && lastTurn.role === 'user') {
+    if (typeof lastTurn.content === 'string') {
+      lastTurn.content = `${lastTurn.content}\n\n${userMessage}`
+    } else {
+      lastTurn.content.push({ type: 'text', text: userMessage })
+    }
+  } else {
+    messages.push({ role: 'user', content: userMessage })
+  }
 
   let toolHops = 0
   let finalText = ''
@@ -893,10 +897,6 @@ export async function runIterationAgent(args: {
   }
 }
 
-// ───────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────
-
 async function loadLatestIteration(
   db: D1Database,
   briefId: string,
@@ -920,11 +920,6 @@ function safeParse<T = unknown>(raw: string): T | null {
   }
 }
 
-/**
- * Deep merge two JSON-shaped values. Accepts `unknown` to avoid fighting
- * TypeScript's index-signature constraint on typed object types like
- * DesignTokens. Caller casts the result back to the target type.
- */
 function deepMergeJson(target: unknown, source: unknown): unknown {
   if (
     target === null ||
