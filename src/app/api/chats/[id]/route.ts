@@ -19,7 +19,7 @@ export async function GET(
   }
 
   const { id } = await params
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
   const result = await getChatWithMessages(DB, id, user.id)
   if (!result) {
     return new Response(JSON.stringify({ error: 'Chat not found' }), { status: 404 })
@@ -41,7 +41,7 @@ export async function DELETE(
   }
 
   const { id } = await params
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
   const result = await deleteChat(DB, id, user.id)
   if (!result.deleted) {
     return new Response(JSON.stringify({ error: 'Chat not found' }), { status: 404 })

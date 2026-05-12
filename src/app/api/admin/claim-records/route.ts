@@ -1,9 +1,5 @@
 /**
- * GET /api/admin/claim-records
- *
- * One-time migration helper: reassigns historical rows to the currently
- * authenticated user. Permissive because ll-cockpit is currently single-user.
- * Pass ?dry=1 to preview. Otherwise applies.
+ * GET /api/admin/claim-records — reassign rows to current user (single-user app).
  */
 
 import { NextRequest } from 'next/server'
@@ -27,21 +23,13 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
   const dryRun = req.nextUrl.searchParams.get('dry') === '1'
 
-  const results: Array<{
-    table: string
-    to_migrate: number
-    migrated: number
-    error?: string
-  }> = []
+  const results: Array<{ table: string; to_migrate: number; migrated: number; error?: string }> = []
 
   for (const table of TABLES) {
     try {
@@ -81,8 +69,7 @@ export async function GET(req: NextRequest) {
         current_user_email: user.email,
         results,
       },
-      null,
-      2,
+      null, 2,
     ),
     { headers: { 'Content-Type': 'application/json' } },
   )

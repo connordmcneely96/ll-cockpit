@@ -13,15 +13,13 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
   const { id } = await ctx.params
-  const env = await getBindings()
+  const env = getBindings()
 
   const brief = await env.DB
     .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
@@ -32,9 +30,7 @@ export async function GET(
   }
 
   const iterations = await env.DB
-    .prepare(
-      `SELECT * FROM design_iterations WHERE brief_id = ? ORDER BY iteration_number DESC`,
-    )
+    .prepare(`SELECT * FROM design_iterations WHERE brief_id = ? ORDER BY iteration_number DESC`)
     .bind(id)
     .all<DesignIterationRow>()
 
@@ -46,13 +42,7 @@ export async function GET(
       .bind(brief.orchestrator_run_id)
       .first<OrchestratorRunRow>()
     if (run) {
-      finalization = await finalizeIterationIfReady(
-        env,
-        new URL(req.url).origin,
-        brief,
-        latest,
-        run,
-      )
+      finalization = await finalizeIterationIfReady(env, new URL(req.url).origin, brief, latest, run)
       if (finalization.finalized) {
         const refreshedIter = await env.DB
           .prepare(`SELECT * FROM design_iterations WHERE id = ?`)
@@ -76,19 +66,14 @@ export async function GET(
       .bind(brief.orchestrator_run_id)
       .first<OrchestratorRunRow>()
     const subtaskRows = await env.DB
-      .prepare(
-        `SELECT * FROM agent_subtasks WHERE pipeline_run_id = ? ORDER BY short_id ASC`,
-      )
+      .prepare(`SELECT * FROM agent_subtasks WHERE pipeline_run_id = ? ORDER BY short_id ASC`)
       .bind(brief.orchestrator_run_id)
       .all()
     subtasks = subtaskRows.results ?? []
   }
 
   return new Response(
-    JSON.stringify(
-      { brief, iterations: iterations.results ?? [], run, subtasks, finalization },
-      null, 2,
-    ),
+    JSON.stringify({ brief, iterations: iterations.results ?? [], run, subtasks, finalization }, null, 2),
     { headers: { 'Content-Type': 'application/json' } },
   )
 }

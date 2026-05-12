@@ -13,9 +13,7 @@ import type { DesignBriefInput } from '@/types'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
@@ -33,20 +31,14 @@ export async function POST(req: NextRequest) {
   ]
   for (const f of required) {
     if (!body[f] || (typeof body[f] === 'string' && !(body[f] as string).trim())) {
-      return new Response(
-        JSON.stringify({ error: `${f} is required` }),
-        { status: 400 },
-      )
+      return new Response(JSON.stringify({ error: `${f} is required` }), { status: 400 })
     }
   }
 
-  const env = await getBindings()
+  const env = getBindings()
   const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return new Response(
-      JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }),
-      { status: 500 },
-    )
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
   }
 
   const now = Math.floor(Date.now() / 1000)
@@ -59,17 +51,15 @@ export async function POST(req: NextRequest) {
       style_references, must_have_sections, brand_colors, constraints,
       status, current_iteration, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'building', 1, ?, ?)`,
-  )
-    .bind(
-      briefId, user.id, body.client_name, body.business_description,
-      body.target_audience, body.mood_tone,
-      body.style_references ? JSON.stringify(body.style_references) : null,
-      body.must_have_sections,
-      body.brand_colors ?? null,
-      body.constraints ?? null,
-      now, now,
-    )
-    .run()
+  ).bind(
+    briefId, user.id, body.client_name, body.business_description,
+    body.target_audience, body.mood_tone,
+    body.style_references ? JSON.stringify(body.style_references) : null,
+    body.must_have_sections,
+    body.brand_colors ?? null,
+    body.constraints ?? null,
+    now, now,
+  ).run()
 
   const decomposition = buildDesignBuildDAG(body, 1)
 
@@ -85,55 +75,42 @@ export async function POST(req: NextRequest) {
   })
 
   await env.DB.prepare(
-    `INSERT INTO design_iterations
-     (id, brief_id, iteration_number, orchestrator_run_id, status, created_at)
+    `INSERT INTO design_iterations (id, brief_id, iteration_number, orchestrator_run_id, status, created_at)
      VALUES (?, ?, 1, ?, 'building', ?)`,
-  )
-    .bind(iterationId, briefId, runId, now)
-    .run()
+  ).bind(iterationId, briefId, runId, now).run()
 
-  await env.DB.prepare(
-    `UPDATE design_briefs SET orchestrator_run_id = ?, updated_at = ? WHERE id = ?`,
-  )
-    .bind(runId, now, briefId)
-    .run()
+  await env.DB.prepare(`UPDATE design_briefs SET orchestrator_run_id = ?, updated_at = ? WHERE id = ?`)
+    .bind(runId, now, briefId).run()
 
   const waveResult = await runAutoWave(env, apiKey, user.id, runId, {
-    force: true,
-    maxWaves: 10,
-    maxParallel: 8,
+    force: true, maxWaves: 10, maxParallel: 8,
   })
 
   return new Response(
-    JSON.stringify(
-      {
-        ok: true,
-        brief_id: briefId,
-        iteration_id: iterationId,
-        orchestrator_run_id: runId,
-        decomposition_id: decompositionId,
-        summary: decomposition.summary,
-        subtask_count: decomposition.subtasks.length,
-        sections_detected: decomposition.subtasks.filter((s) => s.agent === 'COMPOSER').length,
-        wave: waveResult,
-        preview_url_when_ready: `${new URL(req.url).origin}/design/preview/${briefId}`,
-      },
-      null, 2,
-    ),
+    JSON.stringify({
+      ok: true,
+      brief_id: briefId,
+      iteration_id: iterationId,
+      orchestrator_run_id: runId,
+      decomposition_id: decompositionId,
+      summary: decomposition.summary,
+      subtask_count: decomposition.subtasks.length,
+      sections_detected: decomposition.subtasks.filter((s) => s.agent === 'COMPOSER').length,
+      wave: waveResult,
+      preview_url_when_ready: `${new URL(req.url).origin}/design/preview/${briefId}`,
+    }, null, 2),
     { headers: { 'Content-Type': 'application/json' } },
   )
 }
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
   const url = new URL(req.url)
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 30), 100)
   const status = url.searchParams.get('status')

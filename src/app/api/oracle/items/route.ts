@@ -1,9 +1,5 @@
 /**
  * GET /api/oracle/items — list recent items from research_queue for history view.
- *
- * Query params:
- *   limit (default 50, max 200)
- *   status (optional: pending | summarized | embedded | failed)
  */
 
 import { NextRequest } from 'next/server'
@@ -17,7 +13,7 @@ export async function GET(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
   const url = new URL(req.url)
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200)
   const status = url.searchParams.get('status')

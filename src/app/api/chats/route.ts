@@ -1,6 +1,5 @@
 /**
  * GET  /api/chats          — list user's chats (optional agent filter)
- * POST /api/chats          — not used (chats are created implicitly by /api/agent/stream)
  */
 
 import { NextRequest } from 'next/server'
@@ -15,7 +14,7 @@ export async function GET(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  const { DB } = await getBindings()
+  const { DB } = getBindings()
   const url = new URL(req.url)
   const agentName = url.searchParams.get('agent') ?? undefined
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200)

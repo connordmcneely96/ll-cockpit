@@ -5,62 +5,29 @@ import { getAgent } from '@/lib/agents'
 import { calculateCost, SESSION_TOKEN_LIMIT } from '@/lib/cost'
 import { captureTrainingData } from '@/lib/training'
 import {
-  loadChatHistory,
-  getChat,
-  createChat,
-  persistMessage,
-  type AnthropicMessage,
+  loadChatHistory, getChat, createChat, persistMessage, type AnthropicMessage,
 } from '@/lib/agent-chat'
 import type { SSEEvent } from '@/types'
 
 const encoder = new TextEncoder()
-
 function sseChunk(event: SSEEvent): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
 }
 
-interface AnthropicMessageStart {
-  type: 'message_start'
-  message: { usage: { input_tokens: number } }
-}
-interface AnthropicContentBlockStart {
-  type: 'content_block_start'
-  index: number
-  content_block: { type: string; id?: string; name?: string; text?: string }
-}
-interface AnthropicContentBlockDelta {
-  type: 'content_block_delta'
-  index: number
-  delta: { type: string; text?: string; partial_json?: string }
-}
-interface AnthropicMessageDelta {
-  type: 'message_delta'
-  delta: { stop_reason: string }
-  usage?: { output_tokens: number }
-}
-type AnthropicEvent =
-  | AnthropicMessageStart
-  | AnthropicContentBlockStart
-  | AnthropicContentBlockDelta
-  | AnthropicMessageDelta
-  | { type: string }
+interface AnthropicMessageStart { type: 'message_start'; message: { usage: { input_tokens: number } } }
+interface AnthropicContentBlockStart { type: 'content_block_start'; index: number; content_block: { type: string; id?: string; name?: string; text?: string } }
+interface AnthropicContentBlockDelta { type: 'content_block_delta'; index: number; delta: { type: string; text?: string; partial_json?: string } }
+interface AnthropicMessageDelta { type: 'message_delta'; delta: { stop_reason: string }; usage?: { output_tokens: number } }
+type AnthropicEvent = AnthropicMessageStart | AnthropicContentBlockStart | AnthropicContentBlockDelta | AnthropicMessageDelta | { type: string }
 
 export async function POST(req: NextRequest) {
-  // ── 1. Auth ──
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
-  }
+  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
 
-  // ── 2. Parse body ──
   let agentName: string, message: string, providedChatId: string | undefined
   try {
-    const body = await req.json() as {
-      agentName: string
-      message: string
-      chatId?: string
-    }
+    const body = await req.json() as { agentName: string; message: string; chatId?: string }
     agentName = body.agentName
     message = body.message
     providedChatId = body.chatId
@@ -68,94 +35,54 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
 
-  // ── 3. Agent permission check ──
   const { data: permission } = await supabase
     .from('user_agent_permissions')
     .select('can_access')
     .eq('user_id', user.id)
     .eq('agent_id', agentName.toUpperCase())
     .single()
-
   if (permission && !permission.can_access) {
-    return new Response(
-      JSON.stringify({ error: 'Agent access denied' }),
-      { status: 403, headers: { 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Agent access denied' }), { status: 403 })
   }
 
-  // ── 4. Load agent ──
   const agent = getAgent(agentName)
-  if (!agent) {
-    return new Response(JSON.stringify({ error: `Unknown agent: ${agentName}` }), { status: 404 })
-  }
+  if (!agent) return new Response(JSON.stringify({ error: `Unknown agent: ${agentName}` }), { status: 404 })
 
-  // ── 5. Get bindings ──
-  const { DB, KV, ANTHROPIC_API_KEY } = await getBindings()
+  const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
-  }
+  if (!apiKey) return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
 
-  // ── 6. Token budget check ──
   const kvKey = `session_tokens:${user.id}`
   const storedTokens = await KV.get(kvKey)
   const currentTokens = storedTokens ? parseInt(storedTokens, 10) : 0
   if (currentTokens >= SESSION_TOKEN_LIMIT) {
-    return new Response(
-      JSON.stringify({ error: 'Session token limit reached (100k). Start a new session.' }),
-      { status: 429 }
-    )
+    return new Response(JSON.stringify({ error: 'Session token limit reached (100k).' }), { status: 429 })
   }
 
-  // ── 7. Resolve or create chat thread ── [Sprint 17 v0.3.0]
   let chatId = providedChatId
   let priorMessages: AnthropicMessage[] = []
 
   if (chatId) {
     const existing = await getChat(DB, chatId, user.id)
-    if (!existing) {
-      return new Response(
-        JSON.stringify({ error: `Chat ${chatId} not found` }),
-        { status: 404 }
-      )
-    }
+    if (!existing) return new Response(JSON.stringify({ error: `Chat ${chatId} not found` }), { status: 404 })
     if (existing.agent_name !== agentName) {
-      return new Response(
-        JSON.stringify({ error: `Chat belongs to ${existing.agent_name}, not ${agentName}` }),
-        { status: 400 }
-      )
+      return new Response(JSON.stringify({ error: `Chat belongs to ${existing.agent_name}, not ${agentName}` }), { status: 400 })
     }
     priorMessages = await loadChatHistory(DB, chatId, user.id)
   } else {
-    chatId = await createChat(DB, {
-      userId: user.id,
-      agentName,
-      firstUserMessage: message,
-    })
+    chatId = await createChat(DB, { userId: user.id, agentName, firstUserMessage: message })
   }
 
-  // ── 8. Persist user message ──
-  await persistMessage(DB, {
-    chatId,
-    userId: user.id,
-    role: 'user',
-    content: message,
-  })
+  await persistMessage(DB, { chatId, userId: user.id, role: 'user', content: message })
 
-  // ── 9. Create task record ──
   const taskId = crypto.randomUUID()
   await DB.prepare(
     `INSERT INTO agent_tasks (id, user_id, agent_name, task_type, input, status, created_at)
      VALUES (?, ?, ?, 'chat', ?, 'running', unixepoch())`
   ).bind(taskId, user.id, agentName, message).run()
 
-  // ── 10. Build messages array (history + new turn) ──
-  const messages: AnthropicMessage[] = [
-    ...priorMessages,
-    { role: 'user', content: message },
-  ]
+  const messages: AnthropicMessage[] = [...priorMessages, { role: 'user', content: message }]
 
-  // ── 11. Call Anthropic ──
   const anthropicBody: Record<string, unknown> = {
     model: 'claude-sonnet-4-5',
     max_tokens: 8096,
@@ -165,46 +92,30 @@ export async function POST(req: NextRequest) {
   }
 
   if (agent.tools.length > 0) {
-    anthropicBody.tools = agent.tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.input_schema,
-    }))
+    anthropicBody.tools = agent.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }))
   }
 
   let anthropicRes: Response
   try {
     anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify(anthropicBody),
     })
   } catch (fetchErr) {
-    console.error('[stream] fetch to Anthropic failed:', fetchErr)
-    return new Response(
-      JSON.stringify({ error: 'Failed to reach Anthropic API' }),
-      { status: 502 }
-    )
+    console.error('[stream] fetch failed:', fetchErr)
+    return new Response(JSON.stringify({ error: 'Failed to reach Anthropic API' }), { status: 502 })
   }
 
   if (!anthropicRes.ok) {
     const errText = await anthropicRes.text()
-    console.error('[stream] Anthropic error response:', anthropicRes.status, errText)
-    return new Response(
-      JSON.stringify({ error: `Anthropic API error: ${anthropicRes.status}` }),
-      { status: 502 }
-    )
+    console.error('[stream] Anthropic error:', anthropicRes.status, errText)
+    return new Response(JSON.stringify({ error: `Anthropic API error: ${anthropicRes.status}` }), { status: 502 })
   }
 
-  // ── 12. Stream ──
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => controller.enqueue(sseChunk(event))
-
       let fullResponse = ''
       let totalInputTokens = 0
       let totalOutputTokens = 0
@@ -222,7 +133,6 @@ export async function POST(req: NextRequest) {
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-
           buffer += dec.decode(value, { stream: true })
           const lines = buffer.split('\n')
           buffer = lines.pop() ?? ''
@@ -233,16 +143,10 @@ export async function POST(req: NextRequest) {
             if (raw === '[DONE]') continue
 
             let evt: AnthropicEvent
-            try {
-              evt = JSON.parse(raw) as AnthropicEvent
-            } catch {
-              continue
-            }
+            try { evt = JSON.parse(raw) as AnthropicEvent } catch { continue }
 
             if (evt.type === 'message_start') {
-              const e = evt as AnthropicMessageStart
-              totalInputTokens = e.message.usage.input_tokens
-
+              totalInputTokens = (evt as AnthropicMessageStart).message.usage.input_tokens
             } else if (evt.type === 'content_block_start') {
               const e = evt as AnthropicContentBlockStart
               if (e.content_block.type === 'tool_use') {
@@ -250,7 +154,6 @@ export async function POST(req: NextRequest) {
                 currentToolName = e.content_block.name ?? ''
                 currentToolInput = ''
               }
-
             } else if (evt.type === 'content_block_delta') {
               const e = evt as AnthropicContentBlockDelta
               if (e.delta.type === 'text_delta' && e.delta.text) {
@@ -259,53 +162,33 @@ export async function POST(req: NextRequest) {
               } else if (e.delta.type === 'input_json_delta' && e.delta.partial_json) {
                 currentToolInput += e.delta.partial_json
               }
-
             } else if (evt.type === 'content_block_stop') {
               if (currentToolId && currentToolName) {
                 let parsedInput: Record<string, unknown> = {}
-                try { parsedInput = JSON.parse(currentToolInput) } catch { /* ok */ }
-
+                try { parsedInput = JSON.parse(currentToolInput) } catch {}
                 const requiresApproval = agent.permissions.requires_approval.includes(currentToolName)
-                send({
-                  type: 'tool_call',
-                  id: currentToolId,
-                  name: currentToolName,
-                  input: parsedInput,
-                  requiresApproval,
-                })
-
-                collectedToolCalls.push({
-                  id: currentToolId,
-                  name: currentToolName,
-                  input: parsedInput,
-                })
-
+                send({ type: 'tool_call', id: currentToolId, name: currentToolName, input: parsedInput, requiresApproval })
+                collectedToolCalls.push({ id: currentToolId, name: currentToolName, input: parsedInput })
                 await DB.prepare(
                   `INSERT INTO tool_calls (id, task_id, user_id, tool_name, user_approved, created_at)
                    VALUES (?, ?, ?, ?, ?, unixepoch())`
                 ).bind(currentToolId, taskId, user.id, currentToolName, requiresApproval ? 0 : 1).run()
-
                 currentToolId = ''
                 currentToolName = ''
                 currentToolInput = ''
               }
-
             } else if (evt.type === 'message_delta') {
               const e = evt as AnthropicMessageDelta
-              if (e.usage?.output_tokens) {
-                totalOutputTokens = e.usage.output_tokens
-              }
+              if (e.usage?.output_tokens) totalOutputTokens = e.usage.output_tokens
             }
           }
         }
 
-        // ── 13. Finalize ──
         const totalTokens = totalInputTokens + totalOutputTokens
         const costUsd = calculateCost(totalInputTokens, totalOutputTokens)
         const latencyMs = Date.now() - startMs
 
         await KV.put(kvKey, String(currentTokens + totalTokens), { expirationTtl: 86400 })
-
         await DB.prepare(
           `UPDATE agent_tasks SET output = ?, status = 'complete', tokens_used = ?, cost_usd = ? WHERE id = ?`
         ).bind(fullResponse, totalTokens, costUsd, taskId).run()
@@ -338,21 +221,15 @@ export async function POST(req: NextRequest) {
         }
 
         send({ type: 'done', tokensUsed: totalTokens, costUsd, taskId, chatId })
-
       } catch (e) {
-        console.error('[stream] stream error:', e)
-        const errMsg = e instanceof Error ? `${e.name}: ${e.message}` : 'Unknown streaming error'
+        console.error('[stream] error:', e)
+        const errMsg = e instanceof Error ? `${e.name}: ${e.message}` : 'Unknown'
         send({ type: 'error', message: errMsg })
-
         await DB.prepare(
           `INSERT INTO ai_completions (id, agent_name, model_key, task_type, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at)
            VALUES (?, ?, 'claude-sonnet-4-5', 'chat', 0, 0, 0, ?, 0, datetime('now'))`
         ).bind(crypto.randomUUID(), agentName, Date.now() - startMs).run().catch(() => {})
-
-        await DB.prepare(
-          `UPDATE agent_tasks SET status = 'error', error_log = ? WHERE id = ?`
-        ).bind(errMsg, taskId).run()
-
+        await DB.prepare(`UPDATE agent_tasks SET status = 'error', error_log = ? WHERE id = ?`).bind(errMsg, taskId).run()
       } finally {
         controller.close()
       }
