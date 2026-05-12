@@ -1,10 +1,7 @@
 /**
  * Orchestrator runtime — Sprint 13 v0.1 routed via LLM Router.
- * Sprint 16 v0.1.1 — per-agent max_tokens (COMPOSER gets full Sonnet budget).
- *
- * executeOneSubtask now calls route(agent_name, task_type='default') instead of
- * a hard-coded Anthropic fetch. SENTINEL reviews + DISPATCH packaging will
- * automatically drop to Haiku per the seeded routing policy.
+ * Sprint 16 v0.1.1 — per-agent max_tokens.
+ * Sprint 16 v0.2.0 — ASSEMBLER pseudo-agent special-case handler (deterministic, $0).
  */
 
 import type {
@@ -14,6 +11,7 @@ import type {
 import { getAgent } from './agents'
 import { cascadeReady, refreshRunAggregates } from './hermes'
 import { route } from './llm/router'
+import { executeAssembler } from './design/pipeline'
 
 export interface SubtaskExecutionResult {
   subtaskId: string
@@ -25,23 +23,21 @@ export interface SubtaskExecutionResult {
   modelId?: string
 }
 
-// Per-agent max_tokens — agents that produce large structured outputs need
-// more headroom. COMPOSER outputs a full HTML page so needs Sonnet's max (8192).
 const AGENT_MAX_TOKENS: Record<string, number> = {
-  composer: 8192,    // Full HTML page (was truncating at 2048)
-  forge: 8192,       // Code generation can be large
-  herald: 4096,      // Long-form content
-  critic: 4096,      // Detailed structured review
-  hermes: 4096,      // DAG decomposition
-  sentinel: 4096,    // Structured review with recommendations
-  dispatch: 4096,    // Packaging documents
-  builder: 8192,     // Multi-file app scaffolds
-  designer: 2048,    // Tight JSON token output
-  intake: 2048,      // Brief qualification
-  scout: 4096,       // Lead intel + proposals
-  atlas: 4096,       // Engineering calculations
-  anchor: 2048,      // MRR snapshots
-  reel: 4096,        // Video scripts
+  composer: 8192,
+  forge: 8192,
+  herald: 4096,
+  critic: 4096,
+  hermes: 4096,
+  sentinel: 4096,
+  dispatch: 4096,
+  builder: 8192,
+  designer: 2048,
+  intake: 2048,
+  scout: 4096,
+  atlas: 4096,
+  anchor: 2048,
+  reel: 4096,
 }
 const DEFAULT_MAX_TOKENS = 2048
 
@@ -155,7 +151,6 @@ export async function executeOneSubtask(
     .bind(startedAt, subtaskId)
     .run()
 
-  // Route the call via LLM router
   let output = ''
   let inputTokens = 0
   let outputTokens = 0
@@ -163,29 +158,44 @@ export async function executeOneSubtask(
   let failedReason: string | null = null
   let modelId: string | undefined
 
-  const userMessage = dependencyContext + subtask.task
-  const maxTokens = AGENT_MAX_TOKENS[subtask.agent_name] ?? DEFAULT_MAX_TOKENS
+  // ─── ASSEMBLER pseudo-agent: deterministic, no LLM call ───
+  if (subtask.agent_name === 'assembler') {
+    try {
+      const result = await executeAssembler(env, userId, subtask.pipeline_run_id)
+      output = result.output
+      inputTokens = 0
+      outputTokens = 0
+      costUsd = 0
+      modelId = 'design-build-assembler-v0.2.0'
+    } catch (err) {
+      failedReason = err instanceof Error ? err.message : String(err)
+    }
+  } else {
+    // ─── Standard LLM path ───
+    const userMessage = dependencyContext + subtask.task
+    const maxTokens = AGENT_MAX_TOKENS[subtask.agent_name] ?? DEFAULT_MAX_TOKENS
 
-  try {
-    const result: LLMCompletionResult = await route({
-      agentName: subtask.agent_name,
-      taskType: 'default',
-      systemPrompt: agent.systemPrompt,
-      userMessage,
-      maxTokens,
-      pipelineRunId: subtask.pipeline_run_id,
-      subtaskId,
-      userId,
-      env,
-      apiKey,
-    })
-    output = result.text
-    inputTokens = result.inputTokens
-    outputTokens = result.outputTokens
-    costUsd = result.costUsd
-    modelId = result.modelId
-  } catch (err) {
-    failedReason = err instanceof Error ? err.message : String(err)
+    try {
+      const result: LLMCompletionResult = await route({
+        agentName: subtask.agent_name,
+        taskType: 'default',
+        systemPrompt: agent.systemPrompt,
+        userMessage,
+        maxTokens,
+        pipelineRunId: subtask.pipeline_run_id,
+        subtaskId,
+        userId,
+        env,
+        apiKey,
+      })
+      output = result.text
+      inputTokens = result.inputTokens
+      outputTokens = result.outputTokens
+      costUsd = result.costUsd
+      modelId = result.modelId
+    } catch (err) {
+      failedReason = err instanceof Error ? err.message : String(err)
+    }
   }
 
   const completedAt = Math.floor(Date.now() / 1000)
@@ -230,8 +240,6 @@ export interface AutoWaveResult {
   stopped_reason: 'completed' | 'max_waves' | 'no_progress' | 'error'
 }
 
-// Dead code retained for reference — v0.2 used this in-Worker loop, v0.2.1
-// replaced with the self-tick pattern in /api/orchestrator/internal/process-subtask.
 export async function runAutoWave(
   env: CloudflareEnv,
   apiKey: string,

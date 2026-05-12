@@ -1,8 +1,8 @@
 /**
- * POST /api/design/briefs — Sprint 16 v0.1.2
- *   Reliable inline wave: runs the entire 3-subtask DAG synchronously in the
- *   dispatch handler using runAutoWave. Total wall-clock ~60-90s but 100%
- *   reliable. No dependence on waitUntil-fetch chains.
+ * POST /api/design/briefs — Sprint 16 v0.2.0
+ *   Per-section programmatic DAG — no HERMES decompose.
+ *   buildDesignBuildDAG → persistDecomposition → runAutoWave inline.
+ *   Each section gets its own 8192 output budget. ASSEMBLER stitches deterministically.
  *
  * GET /api/design/briefs — list user's briefs
  */
@@ -10,9 +10,9 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
-import { decomposeTask, persistDecomposition, HermesError } from '@/lib/hermes'
+import { persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
-import { buildBriefPrompt } from '@/lib/design/pipeline'
+import { buildDesignBuildDAG } from '@/lib/design/pipeline'
 import type { DesignBriefInput } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -75,30 +75,18 @@ export async function POST(req: NextRequest) {
     )
     .run()
 
-  const briefPrompt = buildBriefPrompt(body, 1)
-  let decompResult
-  try {
-    decompResult = await decomposeTask(env, apiKey, user.id, briefPrompt)
-  } catch (err) {
-    const msg = err instanceof HermesError ? err.message : err instanceof Error ? err.message : String(err)
-    await env.DB.prepare(`UPDATE design_briefs SET status = 'archived', updated_at = ? WHERE id = ?`)
-      .bind(Math.floor(Date.now() / 1000), briefId)
-      .run()
-    return new Response(
-      JSON.stringify({ error: 'HERMES decomposition failed', detail: msg }),
-      { status: 502 },
-    )
-  }
+  // === PROGRAMMATIC DAG (v0.2.0) — no HERMES call ===
+  const decomposition = buildDesignBuildDAG(body, 1)
 
   const { runId, decompositionId } = await persistDecomposition(env.DB, {
     userId: user.id,
-    originalTask: briefPrompt,
-    decomposition: decompResult.decomposition,
-    raw: decompResult.raw,
-    inputTokens: decompResult.inputTokens,
-    outputTokens: decompResult.outputTokens,
-    costUsd: decompResult.costUsd,
-    modelId: decompResult.modelId,
+    originalTask: `Design build: ${body.client_name}`,
+    decomposition,
+    raw: JSON.stringify(decomposition, null, 2),
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    modelId: 'design-build-dag-v0.2.0',
   })
 
   await env.DB.prepare(
@@ -115,14 +103,13 @@ export async function POST(req: NextRequest) {
     .bind(runId, now, briefId)
     .run()
 
-  // === RELIABLE INLINE WAVE (v0.1.2) ===
-  // Run the entire DAG synchronously. Total wall-clock ~60-90s for a 3-stage
-  // design build. Cloudflare paid Worker tier allows up to 5 minutes.
-  // No waitUntil-fetch chains — those proved unreliable in this codebase.
+  // === INLINE WAVE ===
+  // For a 6-section brief: DESIGNER (15s) → 6×COMPOSER parallel (~40s, batched) → ASSEMBLER (1s) → CRITIC (20s)
+  // Total: ~80–90s wall-clock. Paid Worker tier gives 5 minutes.
   const waveResult = await runAutoWave(env, apiKey, user.id, runId, {
     force: true,
     maxWaves: 10,
-    maxParallel: 4,
+    maxParallel: 8,    // allow all COMPOSERs in parallel
   })
 
   return new Response(
@@ -133,10 +120,9 @@ export async function POST(req: NextRequest) {
         iteration_id: iterationId,
         orchestrator_run_id: runId,
         decomposition_id: decompositionId,
-        summary: decompResult.decomposition.summary,
-        subtask_count: decompResult.decomposition.subtasks.length,
-        decomposition_cost_usd: decompResult.costUsd,
-        decomposition_model: decompResult.modelId,
+        summary: decomposition.summary,
+        subtask_count: decomposition.subtasks.length,
+        sections_detected: decomposition.subtasks.filter((s) => s.agent === 'COMPOSER').length,
         wave: waveResult,
         preview_url_when_ready: `${new URL(req.url).origin}/design/preview/${briefId}`,
       },
