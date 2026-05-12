@@ -1,5 +1,6 @@
 /**
  * Orchestrator runtime — Sprint 13 v0.1 routed via LLM Router.
+ * Sprint 16 v0.1.1 — per-agent max_tokens (COMPOSER gets full Sonnet budget).
  *
  * executeOneSubtask now calls route(agent_name, task_type='default') instead of
  * a hard-coded Anthropic fetch. SENTINEL reviews + DISPATCH packaging will
@@ -23,6 +24,26 @@ export interface SubtaskExecutionResult {
   dependency_context_chars: number
   modelId?: string
 }
+
+// Per-agent max_tokens — agents that produce large structured outputs need
+// more headroom. COMPOSER outputs a full HTML page so needs Sonnet's max (8192).
+const AGENT_MAX_TOKENS: Record<string, number> = {
+  composer: 8192,    // Full HTML page (was truncating at 2048)
+  forge: 8192,       // Code generation can be large
+  herald: 4096,      // Long-form content
+  critic: 4096,      // Detailed structured review
+  hermes: 4096,      // DAG decomposition
+  sentinel: 4096,    // Structured review with recommendations
+  dispatch: 4096,    // Packaging documents
+  builder: 8192,     // Multi-file app scaffolds
+  designer: 2048,    // Tight JSON token output
+  intake: 2048,      // Brief qualification
+  scout: 4096,       // Lead intel + proposals
+  atlas: 4096,       // Engineering calculations
+  anchor: 2048,      // MRR snapshots
+  reel: 4096,        // Video scripts
+}
+const DEFAULT_MAX_TOKENS = 2048
 
 export async function executeOneSubtask(
   env: CloudflareEnv,
@@ -143,6 +164,7 @@ export async function executeOneSubtask(
   let modelId: string | undefined
 
   const userMessage = dependencyContext + subtask.task
+  const maxTokens = AGENT_MAX_TOKENS[subtask.agent_name] ?? DEFAULT_MAX_TOKENS
 
   try {
     const result: LLMCompletionResult = await route({
@@ -150,7 +172,7 @@ export async function executeOneSubtask(
       taskType: 'default',
       systemPrompt: agent.systemPrompt,
       userMessage,
-      maxTokens: 2048,
+      maxTokens,
       pipelineRunId: subtask.pipeline_run_id,
       subtaskId,
       userId,
