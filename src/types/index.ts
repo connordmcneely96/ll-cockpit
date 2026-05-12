@@ -39,8 +39,6 @@ export interface AgentConfig {
   tools: AgentTool[]
 }
 
-// ── Message Types ──
-
 export type MessageRole = 'user' | 'assistant' | 'system'
 
 export interface ChatMessage {
@@ -62,13 +60,7 @@ export interface ToolCallEvent {
   requiresApproval: boolean
 }
 
-// ── SSE Event Types ──
-
-export interface SSETextEvent {
-  type: 'text'
-  content: string
-}
-
+export interface SSETextEvent { type: 'text'; content: string }
 export interface SSEToolCallEvent {
   type: 'tool_call'
   id: string
@@ -76,22 +68,14 @@ export interface SSEToolCallEvent {
   input: Record<string, unknown>
   requiresApproval: boolean
 }
-
 export interface SSEDoneEvent {
   type: 'done'
   tokensUsed: number
   costUsd: number
   taskId: string
 }
-
-export interface SSEErrorEvent {
-  type: 'error'
-  message: string
-}
-
+export interface SSEErrorEvent { type: 'error'; message: string }
 export type SSEEvent = SSETextEvent | SSEToolCallEvent | SSEDoneEvent | SSEErrorEvent
-
-// ── D1 Row Types ──
 
 export interface AgentTaskRow {
   id: string
@@ -131,21 +115,10 @@ export interface ToolCallRow {
 // ── Sprint 14: Orchestration Types ──
 
 export type OrchestratorRunStatus =
-  | 'planning'
-  | 'running'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
+  | 'planning' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 export type SubtaskStatus =
-  | 'pending'
-  | 'ready'
-  | 'running'
-  | 'done'
-  | 'failed'
-  | 'blocked'
-  | 'cancelled'
+  | 'pending' | 'ready' | 'running' | 'done' | 'failed' | 'blocked' | 'cancelled'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
 
@@ -176,7 +149,7 @@ export interface AgentSubtaskRow {
   agent_name: string
   title: string
   task: string
-  depends_on: string | null         // JSON array of short_ids
+  depends_on: string | null
   estimated_cost_usd: number | null
   estimated_duration_seconds: number | null
   risk_level: RiskLevel
@@ -193,11 +166,11 @@ export interface AgentSubtaskRow {
 }
 
 export interface DecomposedSubtask {
-  id: string                         // short_id assigned by HERMES (e.g. 'st_1')
-  agent: string                      // uppercase agent name (e.g. 'FORGE')
+  id: string
+  agent: string
   title: string
-  task: string                       // detailed instruction
-  depends_on: string[]               // array of short_ids
+  task: string
+  depends_on: string[]
   estimated_cost_usd: number
   estimated_duration_seconds: number
   risk_level: RiskLevel
@@ -211,33 +184,117 @@ export interface DecompositionResult {
   subtasks: DecomposedSubtask[]
 }
 
+// ── Sprint 13: LLM Router Types ──
+
+export type LLMProviderId = 'anthropic' | 'workers-ai' | 'openrouter' | 'ollama-local' | string
+export type ModelTier = 'premium' | 'standard' | 'cheap' | 'free'
+export type LLMTaskType =
+  | 'decompose' | 'review' | 'draft' | 'package' | 'qualify' | 'classify' | 'default' | string
+
+export interface LLMCompletionInput {
+  modelId: string
+  systemPrompt?: string
+  userMessage: string
+  maxTokens?: number
+  temperature?: number
+}
+
+export interface LLMCompletionResult {
+  text: string
+  inputTokens: number
+  outputTokens: number
+  costUsd: number
+  latencyMs: number
+  providerId: LLMProviderId
+  modelId: string
+}
+
+export interface LLMProvider {
+  id: LLMProviderId
+  complete(
+    input: LLMCompletionInput,
+    deps: { env: CloudflareEnv; apiKey?: string },
+  ): Promise<LLMCompletionResult>
+}
+
+export interface AIProviderRow {
+  id: string
+  display_name: string
+  api_base_url: string | null
+  auth_method: 'api_key' | 'binding' | 'none'
+  api_key_secret_name: string | null
+  enabled: number
+  created_at: number
+}
+
+export interface AIModelRow {
+  id: string
+  provider_id: string
+  display_name: string
+  model_string: string
+  context_window: number | null
+  max_output_tokens: number | null
+  cost_per_1k_input_usd: number
+  cost_per_1k_output_usd: number
+  tier: ModelTier
+  license: string | null
+  supports_tool_use: number
+  supports_vision: number
+  supports_json_mode: number
+  enabled: number
+  notes: string | null
+  created_at: number
+}
+
+export interface AIRoutingPolicyRow {
+  id: string
+  agent_name: string
+  task_type: string
+  primary_model_id: string
+  fallback_chain_json: string | null
+  priority: number
+  enabled: number
+  notes: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface AIRoutingDecisionRow {
+  id: string
+  user_id: string
+  pipeline_run_id: string | null
+  subtask_id: string | null
+  agent_name: string
+  task_type: string
+  policy_id: string | null
+  selected_model_id: string
+  attempted_models_json: string | null
+  used_fallback: number
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
+  latency_ms: number
+  success: number
+  error: string | null
+  created_at: number
+}
+
 // ── Cloudflare Env ──
-// Keep in sync with wrangler.toml bindings
 
 export interface CloudflareEnv {
-  // D1
   DB: D1Database
-  // KV
   KV: KVNamespace
-  // R2
   R2: R2Bucket
-  // Queues
   KNOWLEDGE_QUEUE: Queue
-  // Workers AI
   AI: Ai
-  // Vectorize
   KNOWLEDGE_VECTORIZE: VectorizeIndex
-  // Secrets
   ANTHROPIC_API_KEY: string
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
   SUPABASE_SERVICE_ROLE_KEY: string
-  // Assets
   ASSETS: Fetcher
   WORKER_SELF_REFERENCE?: Fetcher
 }
-
-// ── UI Types ──
 
 export interface CommandItem {
   id: string
