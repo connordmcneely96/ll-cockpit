@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 5. Get bindings ──
-  const { DB, KV, ANTHROPIC_API_KEY } = getBindings()
+  const { DB, KV, ANTHROPIC_API_KEY } = await getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
@@ -114,7 +114,6 @@ export async function POST(req: NextRequest) {
   if (chatId) {
     const existing = await getChat(DB, chatId, user.id)
     if (!existing) {
-      // chatId provided but not found / not owned — reject
       return new Response(
         JSON.stringify({ error: `Chat ${chatId} not found` }),
         { status: 404 }
@@ -135,7 +134,7 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // ── 8. Persist user message (before LLM call so we don't lose it on crash) ──
+  // ── 8. Persist user message ──
   await persistMessage(DB, {
     chatId,
     userId: user.id,
@@ -311,7 +310,6 @@ export async function POST(req: NextRequest) {
           `UPDATE agent_tasks SET output = ?, status = 'complete', tokens_used = ?, cost_usd = ? WHERE id = ?`
         ).bind(fullResponse, totalTokens, costUsd, taskId).run()
 
-        // Persist assistant message [Sprint 17 v0.3.0]
         await persistMessage(DB, {
           chatId: chatId!,
           userId: user.id,
