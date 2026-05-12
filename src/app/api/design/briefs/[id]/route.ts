@@ -8,7 +8,7 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
-import { finalizeIterationIfReady } from '@/lib/design/pipeline'
+import { finalizeIterationIfReady, type FinalizationResult } from '@/lib/design/pipeline'
 import type { DesignBriefRow, DesignIterationRow, OrchestratorRunRow } from '@/types'
 
 export async function GET(
@@ -43,7 +43,7 @@ export async function GET(
 
   // Lazy finalize the latest iteration if its run is complete
   const latest = iterations.results?.[0]
-  let finalization = null
+  let finalization: FinalizationResult | null = null
   if (latest && brief.orchestrator_run_id) {
     const run = await env.DB
       .prepare(`SELECT * FROM orchestrator_runs WHERE id = ?`)
