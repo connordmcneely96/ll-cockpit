@@ -2,17 +2,41 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { History, MessageSquare, Palette, Cpu, Trash2, ExternalLink, RefreshCw } from 'lucide-react'
+import { History, MessageSquare, Palette, Cpu, Brain, Trash2, ExternalLink, RefreshCw, FileText } from 'lucide-react'
 import { formatCost } from '@/lib/cost'
 import { AGENTS } from '@/lib/agents'
 import type { AgentChatRow, DesignBriefRow, OrchestratorRunRow } from '@/types'
 
-type Tab = 'chats' | 'design' | 'orchestrator'
+type Tab = 'chats' | 'design' | 'orchestrator' | 'oracle'
+
+interface OracleItem {
+  id: string
+  source_id: string
+  external_id: string | null
+  title: string | null
+  url: string
+  status: string
+  relevance_score: number
+  collected_at: number
+  processed_at: number | null
+  error_log: string | null
+}
+
+interface OracleDigest {
+  id: string
+  digest_date: string
+  item_count: number
+  item_ids: string
+  digest_markdown: string | null
+  delivered_at: number | null
+  created_at: number
+}
 
 const TABS: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chats', label: 'Agent Chats', icon: MessageSquare },
   { id: 'design', label: 'Design Briefs', icon: Palette },
   { id: 'orchestrator', label: 'Orchestrator Runs', icon: Cpu },
+  { id: 'oracle', label: 'Oracle Research', icon: Brain },
 ]
 
 function formatRelative(unixSeconds: number): string {
@@ -31,10 +55,13 @@ function statusColor(status: string): string {
     case 'preview_ready':
     case 'shipped':
     case 'ready':
+    case 'embedded':
+    case 'summarized':
       return 'text-green border-green/30 bg-green/10'
     case 'building':
     case 'running':
     case 'planning':
+    case 'pending':
       return 'text-blue-bright border-blue/30 bg-blue/10'
     case 'failed':
     case 'error':
@@ -47,11 +74,18 @@ function statusColor(status: string): string {
   }
 }
 
+function hostnameOf(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, '') }
+  catch { return url.slice(0, 30) }
+}
+
 export function HistoryClient() {
   const [tab, setTab] = useState<Tab>('chats')
   const [chats, setChats] = useState<AgentChatRow[]>([])
   const [briefs, setBriefs] = useState<DesignBriefRow[]>([])
   const [runs, setRuns] = useState<OrchestratorRunRow[]>([])
+  const [oracleItems, setOracleItems] = useState<OracleItem[]>([])
+  const [oracleDigests, setOracleDigests] = useState<OracleDigest[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -59,10 +93,12 @@ export function HistoryClient() {
     setLoading(true)
     setError(null)
     try {
-      const [chatsRes, briefsRes, runsRes] = await Promise.all([
+      const [chatsRes, briefsRes, runsRes, oracleItemsRes, oracleDigestsRes] = await Promise.all([
         fetch('/api/chats?limit=100'),
         fetch('/api/design/briefs?limit=100'),
         fetch('/api/orchestrator/runs?limit=100'),
+        fetch('/api/oracle/items?limit=200'),
+        fetch('/api/oracle/digests'),
       ])
       if (chatsRes.ok) {
         const d = (await chatsRes.json()) as { chats: AgentChatRow[] }
@@ -75,6 +111,14 @@ export function HistoryClient() {
       if (runsRes.ok) {
         const d = (await runsRes.json()) as { runs: OrchestratorRunRow[] }
         setRuns(d.runs ?? [])
+      }
+      if (oracleItemsRes.ok) {
+        const d = (await oracleItemsRes.json()) as { items: OracleItem[] }
+        setOracleItems(d.items ?? [])
+      }
+      if (oracleDigestsRes.ok) {
+        const d = (await oracleDigestsRes.json()) as { ok: boolean; digests: OracleDigest[] }
+        setOracleDigests(d.digests ?? [])
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load history')
@@ -97,6 +141,8 @@ export function HistoryClient() {
     }
   }
 
+  const oracleCount = oracleItems.length + oracleDigests.length
+
   return (
     <div className="flex flex-col h-full bg-base text-text1">
       {/* Header */}
@@ -104,7 +150,7 @@ export function HistoryClient() {
         <div className="flex items-center gap-3">
           <History size={18} className="text-text2" />
           <h1 className="font-condensed font-bold text-base uppercase tracking-wider">History</h1>
-          <span className="text-text3 font-mono text-xs">All your runs, briefs, and conversations</span>
+          <span className="text-text3 font-mono text-xs">All your runs, briefs, conversations, and research</span>
         </div>
         <button
           onClick={loadAll}
@@ -120,7 +166,10 @@ export function HistoryClient() {
       <div className="flex bg-base-2 border-b border-white/[0.06] px-6 shrink-0">
         {TABS.map(({ id, label, icon: Icon }) => {
           const count =
-            id === 'chats' ? chats.length : id === 'design' ? briefs.length : runs.length
+            id === 'chats' ? chats.length :
+            id === 'design' ? briefs.length :
+            id === 'orchestrator' ? runs.length :
+            oracleCount
           return (
             <button
               key={id}
@@ -330,6 +379,108 @@ export function HistoryClient() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {tab === 'oracle' && (
+          <div className="space-y-4">
+            {oracleDigests.length > 0 && (
+              <div>
+                <h3 className="text-text3 font-mono text-[10px] uppercase tracking-wider mb-2 px-1">
+                  Digests ({oracleDigests.length})
+                </h3>
+                <div className="space-y-2">
+                  {oracleDigests.map((d) => (
+                    <div
+                      key={d.id}
+                      className="flex items-center gap-4 px-4 py-3 rounded-lg bg-base-2 border border-white/[0.06] hover:border-blue/30 transition-all"
+                    >
+                      <FileText size={14} className="text-cyan shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <span className="text-text1 font-mono text-sm">
+                            Digest for {d.digest_date}
+                          </span>
+                          <span className="text-text3 font-mono text-[10px]">
+                            {d.item_count} items
+                          </span>
+                        </div>
+                        <p className="text-text3 font-mono text-xs mt-1">
+                          {d.delivered_at
+                            ? `Delivered ${formatRelative(d.delivered_at)}`
+                            : `Created ${formatRelative(d.created_at)}`}
+                        </p>
+                      </div>
+                      <Link
+                        href={`/oracle?digest=${d.id}`}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue/20 hover:bg-blue/30 text-blue-bright text-[10px] font-mono"
+                      >
+                        <ExternalLink size={11} />
+                        View
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <h3 className="text-text3 font-mono text-[10px] uppercase tracking-wider mb-2 px-1">
+                Research items ({oracleItems.length})
+              </h3>
+              <div className="space-y-2">
+                {oracleItems.length === 0 && !loading && (
+                  <div className="text-center py-12 text-text3 font-mono text-sm">
+                    No research items yet. Run the Oracle pipeline to collect.
+                  </div>
+                )}
+                {oracleItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-4 px-4 py-3 rounded-lg bg-base-2 border border-white/[0.06] hover:border-blue/30 transition-all"
+                  >
+                    <Brain size={14} className="text-cyan shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3">
+                        <span className="text-text1 font-mono text-sm truncate">
+                          {item.title ?? '(untitled)'}
+                        </span>
+                        <span
+                          className={[
+                            'px-2 py-0.5 rounded-full border text-[10px] font-mono uppercase tracking-wider shrink-0',
+                            statusColor(item.status),
+                          ].join(' ')}
+                        >
+                          {item.status}
+                        </span>
+                      </div>
+                      <p className="text-text3 font-mono text-xs mt-1 truncate">
+                        {hostnameOf(item.url)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
+                      {item.relevance_score > 0 && (
+                        <span className="text-text3 font-mono text-[10px]">
+                          rel {item.relevance_score.toFixed(2)}
+                        </span>
+                      )}
+                      <span className="text-text3 font-mono text-[10px] w-16 text-right">
+                        {formatRelative(item.collected_at)}
+                      </span>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue/20 hover:bg-blue/30 text-blue-bright text-[10px] font-mono"
+                      >
+                        <ExternalLink size={11} />
+                        Open
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
