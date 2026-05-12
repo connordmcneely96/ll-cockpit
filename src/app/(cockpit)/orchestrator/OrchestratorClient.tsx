@@ -135,12 +135,11 @@ export default function OrchestratorClient() {
     }
   }
 
-  async function executeSubtask(subtaskId: string, runId: string) {
+  async function executeSubtask(subtaskId: string, runId: string, force = false) {
     setExecutingId(subtaskId)
     try {
-      const res = await fetch(`/api/orchestrator/subtasks/${subtaskId}/execute`, {
-        method: 'POST',
-      })
+      const url = `/api/orchestrator/subtasks/${subtaskId}/execute${force ? '?force=true' : ''}`
+      const res = await fetch(url, { method: 'POST' })
       await res.json().catch(() => null)
     } finally {
       setExecutingId(null)
@@ -253,7 +252,7 @@ export default function OrchestratorClient() {
                   run={run}
                   subtasks={subtasksByRun[run.id] ?? []}
                   executingId={executingId}
-                  onExecute={(stId) => executeSubtask(stId, run.id)}
+                  onExecute={(stId, force) => executeSubtask(stId, run.id, force)}
                 />
               )}
             </div>
@@ -273,7 +272,7 @@ function RunDetail({
   run: RunRow
   subtasks: SubtaskRow[]
   executingId: string | null
-  onExecute: (subtaskId: string) => void
+  onExecute: (subtaskId: string, force: boolean) => void
 }) {
   return (
     <div className="border-t border-slate-700 p-4 flex flex-col gap-3 bg-slate-950/60">
@@ -288,9 +287,23 @@ function RunDetail({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {subtasks.map((st) => {
           const deps: string[] = st.depends_on ? JSON.parse(st.depends_on) : []
-          const canExecute = st.status === 'ready' && st.human_required === 0
+          const isHitl = st.human_required === 1
+          const canExecute = st.status === 'ready'
           const isExecuting = executingId === st.id
           const agentColor = AGENT_COLOR[st.agent_name] ?? 'border-slate-600 text-slate-400'
+
+          const btnBg = canExecute && !isExecuting
+            ? (isHitl ? '#d97706' : '#0891b2')   // amber for force, cyan for normal
+            : '#1e293b'
+          const btnColor = canExecute && !isExecuting
+            ? (isHitl ? '#020617' : '#f1f5f9')
+            : '#64748b'
+          const btnLabel = isExecuting
+            ? '⏳ Running...'
+            : isHitl
+            ? '⚠ Force Execute (HITL)'
+            : '▶ Execute'
+
           return (
             <div
               key={st.id}
@@ -306,7 +319,7 @@ function RunDetail({
                   >
                     {st.agent_name}
                   </span>
-                  {st.human_required === 1 && (
+                  {isHitl && (
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-900/40 text-amber-300 border border-amber-700">
                       HITL
                     </span>
@@ -337,16 +350,16 @@ function RunDetail({
                     : ''}
                 </div>
                 <button
-                  onClick={() => onExecute(st.id)}
+                  onClick={() => onExecute(st.id, isHitl)}
                   disabled={!canExecute || isExecuting}
                   style={{
-                    backgroundColor: canExecute && !isExecuting ? '#0891b2' : '#1e293b',
-                    color: canExecute && !isExecuting ? '#f1f5f9' : '#64748b',
+                    backgroundColor: btnBg,
+                    color: btnColor,
                     cursor: canExecute && !isExecuting ? 'pointer' : 'not-allowed',
                   }}
-                  className="rounded text-xs font-mono uppercase tracking-wider px-3 py-1.5 transition hover:brightness-110"
+                  className="rounded text-xs font-mono uppercase tracking-wider px-3 py-1.5 transition hover:brightness-110 font-semibold"
                 >
-                  {isExecuting ? '⏳ Running...' : '▶ Execute'}
+                  {btnLabel}
                 </button>
               </div>
 
