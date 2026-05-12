@@ -2,17 +2,15 @@ import type { CloudflareEnv } from '@/types'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 /**
- * Returns Cloudflare bindings (D1, KV, R2, secrets) synchronously.
+ * Returns Cloudflare bindings (D1, KV, R2, secrets) — ASYNC.
  *
- * In @opennextjs/cloudflare v1.x, plain getCloudflareContext() is async-only and
- * will throw when called sync in a Next.js route handler. We must opt out of the
- * default behavior with the synchronous flag.
+ * In @opennextjs/cloudflare v1.x, getCloudflareContext() is async-only.
+ * Callers MUST await this: `const { DB } = await getBindings()`.
  *
- * This is safe to call inside a route handler — by the time the handler runs,
- * the context has been initialized by the OpenNext runtime.
+ * Legacy non-awaited callers will get a Promise and crash on destructure.
+ * Migration: every route that imports getBindings has been updated to await.
  */
-export function getBindings(): CloudflareEnv {
-  // getCloudflareContext({ async: false }) returns sync context if available.
-  // If a future version drops sync entirely, switch callers to `await getBindings()`.
-  return getCloudflareContext().env as unknown as CloudflareEnv
+export async function getBindings(): Promise<CloudflareEnv> {
+  const ctx = await getCloudflareContext({ async: true })
+  return ctx.env as unknown as CloudflareEnv
 }
