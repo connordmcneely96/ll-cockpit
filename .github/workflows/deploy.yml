@@ -10,6 +10,10 @@
 #
 # The Anthropic API key is set on the Worker as a runtime secret via
 # `wrangler secret put ANTHROPIC_API_KEY` and is NOT touched by this workflow.
+#
+# Install strategy: try `npm ci` first (fast + strict), fall back to `npm install`
+# if the lockfile drifts out of sync with package.json. This keeps the workflow
+# robust for remote-only development (no local `npm install` step required).
 
 name: Deploy to Cloudflare
 
@@ -26,7 +30,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # needed if we end up auto-committing a regenerated lockfile
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -41,8 +45,31 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies (with lockfile fallback)
+        run: |
+          echo "Trying npm ci (strict lockfile)..."
+          if npm ci --no-audit --no-fund; then
+            echo "✓ npm ci succeeded"
+          else
+            echo "⚠ npm ci failed — lockfile out of sync. Falling back to npm install..."
+            npm install --no-audit --no-fund
+            echo "✓ npm install completed (lockfile regenerated)"
+            echo "LOCKFILE_REGENERATED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Commit regenerated lockfile
+        if: env.LOCKFILE_REGENERATED == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "No lockfile changes to commit"
+          else
+            git commit -m "chore: regenerate package-lock.json [skip ci]"
+            git push
+            echo "✓ Lockfile committed back to main"
+          fi
 
       - name: Apply D1 migrations (remote)
         run: npx wrangler d1 migrations apply ll-cockpit-db --remote
@@ -60,3 +87,6 @@ jobs:
           echo "- Actor: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- Branch: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Worker URL: https://ll-cockpit.connorpattern.workers.dev" >> $GITHUB_STEP_SUMMARY
+          if [ "${LOCKFILE_REGENERATED}" = "true" ]; then
+            echo "- ⚠ Lockfile was out of sync and has been regenerated + committed" >> $GITHUB_STEP_SUMMARY
+          fi
