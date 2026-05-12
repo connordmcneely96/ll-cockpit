@@ -1,26 +1,23 @@
 # GitHub Actions — Cloudflare deploy on push to main
 #
-# Triggers on every push to `main`. Applies any pending D1 migrations, then
-# deploys the worker via `npm run deploy` (which runs @opennextjs/cloudflare build
-# + wrangler deploy).
+# Triggers on every push to `main`. Writes NEXT_PUBLIC_* env vars to .env.production
+# (Next.js auto-loads this at build time), applies any pending D1 migrations, then
+# deploys the worker via `npm run deploy`.
 #
 # Required GitHub repo secrets:
-#   - CLOUDFLARE_API_TOKEN  (token with: Workers Scripts:Edit, D1:Edit, Account Settings:Read)
-#   - CLOUDFLARE_ACCOUNT_ID (your Cloudflare account id)
+#   - CLOUDFLARE_API_TOKEN            (Workers Scripts + KV + R2 + AI + Queues + Vectorize + D1 Edit + Account Settings:Read)
+#   - CLOUDFLARE_ACCOUNT_ID
+#   - NEXT_PUBLIC_SUPABASE_URL        (bundled into the build, used by createClient)
+#   - NEXT_PUBLIC_SUPABASE_ANON_KEY   (bundled into the build, used by createClient)
 #
-# The Anthropic API key is set on the Worker as a runtime secret via
-# `wrangler secret put ANTHROPIC_API_KEY` and is NOT touched by this workflow.
-#
-# Install strategy: try `npm ci` first (fast + strict), fall back to `npm install`
-# if the lockfile drifts out of sync with package.json. This keeps the workflow
-# robust for remote-only development (no local `npm install` step required).
+# ANTHROPIC_API_KEY stays as a runtime worker secret (wrangler secret put).
 
 name: Deploy to Cloudflare
 
 on:
   push:
     branches: [main]
-  workflow_dispatch: # manual trigger from Actions tab
+  workflow_dispatch:
 
 concurrency:
   group: deploy-main
@@ -30,7 +27,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # needed if we end up auto-committing a regenerated lockfile
+      contents: write
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -69,6 +66,21 @@ jobs:
             git commit -m "chore: regenerate package-lock.json [skip ci]"
             git push
             echo "✓ Lockfile committed back to main"
+          fi
+
+      - name: Write build-time env vars
+        run: |
+          echo "NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" >> .env.production
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" >> .env.production
+          echo "✓ Wrote .env.production with $(wc -l < .env.production) vars"
+          # Sanity check that secrets weren't empty (don't print values)
+          if [ -z "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" ]; then
+            echo "::error::NEXT_PUBLIC_SUPABASE_URL secret is empty"
+            exit 1
+          fi
+          if [ -z "${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" ]; then
+            echo "::error::NEXT_PUBLIC_SUPABASE_ANON_KEY secret is empty"
+            exit 1
           fi
 
       - name: Apply D1 migrations (remote)
