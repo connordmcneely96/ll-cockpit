@@ -1,6 +1,6 @@
 /**
  * Seed default providers, models, and routing policy on first call.
- * Sprint 13 v0.1 + Sprint 16 v0.1 additions (DESIGNER, COMPOSER, CRITIC routing).
+ * Sprint 13 v0.1 + Sprint 16 v0.1 + v0.2 (compose_section / assemble_page).
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -46,42 +46,34 @@ export async function seedDefaults(db: D1Database): Promise<{
   const opusFallbacks = JSON.stringify(['claude-sonnet-4-5', 'claude-haiku-4-5'])
 
   const policies = [
-    // HERMES — reasoning critical for DAG planning
     { agent: 'hermes', task: 'decompose', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'DAG planning' },
     { agent: 'hermes', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Default for HERMES' },
-    // SENTINEL — structured JSON, Haiku
     { agent: 'sentinel', task: 'review', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Structured review' },
     { agent: 'sentinel', task: 'default', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Default for SENTINEL' },
-    // HERALD — creative quality
     { agent: 'herald', task: 'draft', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Content drafting' },
     { agent: 'herald', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Default for HERALD' },
-    // DISPATCH — mechanical packaging
     { agent: 'dispatch', task: 'package', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Packaging' },
     { agent: 'dispatch', task: 'default', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Default for DISPATCH' },
-    // INTAKE — structured qualification
     { agent: 'intake', task: 'qualify', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Lead qualification' },
     { agent: 'intake', task: 'default', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Default for INTAKE' },
-    // FORGE, BUILDER — code
     { agent: 'forge', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: codeFallbacks, notes: 'Code generation' },
     { agent: 'builder', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: codeFallbacks, notes: 'App building' },
-    // ATLAS — engineering accuracy
     { agent: 'atlas', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Engineering calculations' },
-    // REEL
     { agent: 'reel', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Video scripts' },
-    // ANCHOR — cheap reports
     { agent: 'anchor', task: 'default', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'MRR reports' },
-    // SCOUT — proposal quality
     { agent: 'scout', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Proposals' },
-    // NEXUS
     { agent: 'nexus', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Orchestration' },
     // Sprint 16 — Design Build agents
     { agent: 'designer', task: 'design_language', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Design token generation — judgment matters' },
     { agent: 'designer', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Default for DESIGNER' },
-    { agent: 'composer', task: 'compose_page', primary: 'claude-sonnet-4-5', fallbacks: opusFallbacks, notes: 'HTML page generation — quality critical, fallback to Opus if Sonnet fails' },
+    { agent: 'composer', task: 'compose_page', primary: 'claude-sonnet-4-5', fallbacks: opusFallbacks, notes: 'Full HTML page (legacy single-shot mode)' },
+    { agent: 'composer', task: 'compose_section', primary: 'claude-sonnet-4-5', fallbacks: opusFallbacks, notes: 'Single section HTML — v0.2 per-section mode' },
     { agent: 'composer', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: opusFallbacks, notes: 'Default for COMPOSER' },
     { agent: 'critic', task: 'critique_design', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Structured JSON critique' },
     { agent: 'critic', task: 'default', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Default for CRITIC' },
-    // Global wildcard
+    // ASSEMBLER — pseudo-agent, no LLM call, placeholder policy in case lookup falls through
+    { agent: 'assembler', task: 'assemble_page', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Pseudo-agent — deterministic, no LLM call (placeholder)' },
+    { agent: 'assembler', task: 'default', primary: 'claude-haiku-4-5', fallbacks: haikuFallbacks, notes: 'Default for ASSEMBLER (pseudo-agent)' },
     { agent: '*', task: 'default', primary: 'claude-sonnet-4-5', fallbacks: sonnetFallbacks, notes: 'Wildcard fallback' },
   ]
   for (const p of policies) {

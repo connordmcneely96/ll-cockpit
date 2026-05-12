@@ -16,6 +16,7 @@ export type AgentName =
   | 'designer'
   | 'composer'
   | 'critic'
+  | 'assembler'
 
 export interface AgentPermissions {
   can_deploy: boolean
@@ -193,7 +194,7 @@ export type LLMProviderId = 'anthropic' | 'workers-ai' | 'openrouter' | 'ollama-
 export type ModelTier = 'premium' | 'standard' | 'cheap' | 'free'
 export type LLMTaskType =
   | 'decompose' | 'review' | 'draft' | 'package' | 'qualify' | 'classify'
-  | 'design_language' | 'compose_page' | 'critique_design'
+  | 'design_language' | 'compose_page' | 'compose_section' | 'assemble_page' | 'critique_design'
   | 'default' | string
 
 export interface LLMCompletionInput {
@@ -369,6 +370,12 @@ export interface DesignTokens {
     easing?: string
   }
   rationale?: string
+}
+
+export interface DesignSection {
+  slug: string         // url-safe identifier, e.g. 'hero', 'products_grid'
+  name: string         // display name, e.g. 'Hero', 'Products Grid'
+  html: string         // section markup (just <section>...</section>, no html/head/body)
 }
 
 // ── Cloudflare Env ──
