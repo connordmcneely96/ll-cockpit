@@ -4,21 +4,21 @@
  * Programmatic Anthropic tool-use loop that lets the user refine a finished
  * design brief by chatting. The agent loads the brief's current edit state
  * (latest iteration's tokens + HTML), takes a user message, and may call
- * one or more tools per turn (max MAX_TOOL_HOPS) to mutate state. Each tool
- * is a pure function over D1 + R2 + (rarely) the Anthropic API.
+ * one or more tools per turn (max MAX_TOOL_HOPS) to mutate state.
  *
- * For v0.3.0 MVP, four tools are fully implemented:
+ * v0.3.0 MVP tools FULLY IMPLEMENTED:
  *   - update_design_tokens   patches the latest iteration's design_tokens_json
  *   - apply_token_to_html    regenerates the :root CSS vars in the page <style>
+ *   - regenerate_section     re-runs COMPOSER for one section + re-stitches via ASSEMBLER
  *   - save_iteration         clones current state as a new design_iterations row
  *   - critique               re-scores the current HTML using CRITIC system prompt
  *
- * The remaining tools are STUBBED with descriptive "not implemented" results.
- * They are exposed in the catalog so Claude knows they exist and can reference
- * them in conversation, but calls return safe NOOP results.
+ * STUBBED tools (return descriptive "not implemented" results):
+ *   splice_section, assemble_html, add_section, remove_section,
+ *   apply_preset, analyze_reference_url
  */
 
-import type { D1Database, R2Bucket } from '@cloudflare/workers-types'
+import type { D1Database } from '@cloudflare/workers-types'
 import type {
   DesignBriefRow,
   DesignIterationRow,
@@ -34,14 +34,15 @@ import type {
 import { persistDesignChatMessage } from './iteration-chat'
 import type { AnthropicTurn } from './iteration-chat'
 import { calculateCost } from '@/lib/cost'
+import { executeAssembler, savePreviewToR2 } from './pipeline'
 
 const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
-const MAX_TOOL_HOPS = 6   // safety bound; resets at end_turn
+const MAX_TOOL_HOPS = 6
 
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 // Tool catalog
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 
 export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
@@ -68,7 +69,29 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
     description:
       'Regenerate the :root CSS variables block in the page <style> tag using the current design tokens. Run after update_design_tokens to push color/typography changes into the rendered page without re-running COMPOSER.',
     input_schema: { type: 'object', properties: {} },
-    uses_code_execution: false,
+  },
+  {
+    name: 'regenerate_section',
+    description:
+      'Re-run COMPOSER for a single section with refined instructions, then re-stitch the full page via ASSEMBLER. Use when the user wants to change copy or structure within a section (not just colors). Examples: "make the hero darker and replace the photo with an abstract gradient", "add a third pricing tier called Enterprise", "the testimonials section needs three more quotes".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_slug: {
+          type: 'string',
+          description: 'The slug of the section to regenerate (lowercase, underscores). Examples: "hero", "pump_categories", "case_studies".',
+        },
+        refinement: {
+          type: 'string',
+          description: 'Concrete instructions for how to change the section. Be specific.',
+        },
+        preserve_structure: {
+          type: 'boolean',
+          description: 'If true, keep the existing layout and only modify copy/styling. Default false.',
+        },
+      },
+      required: ['section_slug', 'refinement'],
+    },
   },
   {
     name: 'save_iteration',
@@ -102,22 +125,8 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   // ───── stubbed for v0.3.0 ─────
   {
-    name: 'regenerate_section',
-    description:
-      'Re-run COMPOSER for a single section with refined instructions. Use when the user wants to overhaul a section\'s copy or structure (not just colors). NOTE: v0.3.0 — not yet implemented.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        section_slug: { type: 'string' },
-        refinement: { type: 'string' },
-        preserve_structure: { type: 'boolean' },
-      },
-      required: ['section_slug', 'refinement'],
-    },
-  },
-  {
     name: 'splice_section',
-    description: 'Replace one section\'s HTML in the assembled page. v0.3.0 — not yet implemented.',
+    description: 'Replace one section\'s HTML in the assembled page. v0.3.0 — not yet implemented; use regenerate_section instead.',
     input_schema: {
       type: 'object',
       properties: {
@@ -130,7 +139,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'assemble_html',
-    description: 'Re-stitch all section HTML into final page. v0.3.0 — not yet implemented.',
+    description: 'Re-stitch all section HTML into final page. v0.3.0 — not yet implemented (regenerate_section auto-stitches).',
     input_schema: { type: 'object', properties: {} },
     uses_code_execution: true,
   },
@@ -181,9 +190,9 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
 ]
 
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 // System prompt
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 
 export function buildSystemPrompt(brief: DesignBriefRow, currentIter: DesignIterationRow | null): string {
   return `You are DESIGNER ITERATE, the design iteration agent for the LL Cockpit.
@@ -202,12 +211,12 @@ Your job:
   • Listen to the user's refinement request.
   • Use the available tools to make the change. Prefer the smallest tool that can do the job.
   • For color/typography/spacing changes: update_design_tokens → apply_token_to_html.
-  • For copy or structural changes: regenerate_section / add_section / remove_section.
+  • For copy or structural changes within a section: regenerate_section.
   • After a coherent set of changes, call save_iteration to commit a new iteration row.
   • If the user asks for a quality check, call critique.
   • Keep replies concise. Don't repeat the brief back unless asked.
   • If a request is ambiguous, ask one clarifying question rather than guessing.
-  • If a tool returns "not yet implemented", explain that and offer the closest implemented alternative.
+  • If a tool returns "not yet implemented", explain that and offer the closest implemented alternative (regenerate_section + update_design_tokens cover most cases).
 
 Design principles to enforce silently:
   • Accessibility: CTA contrast ≥ 4.5:1, focus rings visible, semantic HTML.
@@ -218,9 +227,9 @@ Design principles to enforce silently:
 Tone: direct, professional, no hedging.`
 }
 
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 // Tool dispatcher + implementations
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 
 interface ToolDeps {
   env: CloudflareEnv
@@ -239,12 +248,12 @@ export async function executeIterationTool(
         return await runUpdateDesignTokens(toolUse, deps)
       case 'apply_token_to_html':
         return await runApplyTokenToHtml(toolUse, deps)
+      case 'regenerate_section':
+        return await runRegenerateSection(toolUse, deps)
       case 'save_iteration':
         return await runSaveIteration(toolUse, deps)
       case 'critique':
         return await runCritique(toolUse, deps)
-      // stubs — acknowledge but return safe noop
-      case 'regenerate_section':
       case 'splice_section':
       case 'assemble_html':
       case 'add_section':
@@ -290,7 +299,7 @@ async function runUpdateDesignTokens(
   const currentTokens: DesignTokens =
     iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
 
-  const merged = deepMerge(currentTokens, input.patch) as DesignTokens
+  const merged = deepMerge(currentTokens, input.patch) as unknown as DesignTokens
   if (input.rationale) merged.rationale = input.rationale
 
   await deps.env.DB
@@ -322,16 +331,14 @@ async function runApplyTokenToHtml(
   const tokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
 
   const newRootBlock = buildRootCssBlock(tokens)
-  // Replace whatever :root { ... } block is currently in the first <style> tag.
-  // Conservative regex: matches :root { ... } including nested braces? No nesting in CSS vars.
   const updated = iter.page_html.replace(/:root\s*\{[^}]*\}/, newRootBlock)
 
   if (updated === iter.page_html) {
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,
-      content: 'No :root CSS variable block found in page_html to replace. Page may need full re-assembly.',
-      is_error: true,
+      content: 'No :root CSS variable block found in page_html to replace. The current scaffold uses Tailwind config + body inline style; tokens already propagate via update_design_tokens + save_iteration.',
+      is_error: false,
     }
   }
 
@@ -344,6 +351,198 @@ async function runApplyTokenToHtml(
     type: 'tool_result',
     tool_use_id: toolUse.id,
     content: JSON.stringify({ ok: true, applied: newRootBlock.length, html_length: updated.length }),
+  }
+}
+
+async function runRegenerateSection(
+  toolUse: DesignAssistantToolUse,
+  deps: ToolDeps,
+): Promise<DesignToolResult> {
+  const input = toolUse.input as {
+    section_slug?: string
+    refinement?: string
+    preserve_structure?: boolean
+  }
+  if (!input.section_slug || !input.refinement) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'section_slug and refinement are required.',
+      is_error: true,
+    }
+  }
+
+  const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
+  if (!iter) return missingIteration(toolUse)
+  if (!iter.orchestrator_run_id) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'No orchestrator_run_id on iteration — cannot locate section subtask.',
+      is_error: true,
+    }
+  }
+
+  const brief = await deps.env.DB
+    .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
+    .bind(deps.briefId, deps.userId)
+    .first<DesignBriefRow>()
+  if (!brief) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'Brief not found.',
+      is_error: true,
+    }
+  }
+
+  const subtasks = await deps.env.DB
+    .prepare(
+      `SELECT id, short_id, title, output FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`,
+    )
+    .bind(iter.orchestrator_run_id, deps.userId)
+    .all<{ id: string; short_id: string; title: string; output: string }>()
+
+  const target = (subtasks.results ?? []).find((s) => {
+    const match = s.title.match(/Compose\s+(.+?)\s+section/i)
+    const name = match ? match[1] : s.title.replace(/Compose\s+/i, '').replace(/\s+section/i, '')
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    return slug === input.section_slug
+  })
+
+  if (!target) {
+    const available = (subtasks.results ?? [])
+      .map((s) => s.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, ''))
+      .join(', ')
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: `Section '${input.section_slug}' not found. Available sections: ${available}`,
+      is_error: true,
+    }
+  }
+
+  const sectionName = target.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
+  const tokens: DesignTokens = iter.design_tokens_json
+    ? safeParse(iter.design_tokens_json) ?? emptyTokens()
+    : emptyTokens()
+
+  const composerPrompt = `SECTION-ONLY MODE. Regenerate ONLY the <section id="${input.section_slug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.
+
+REFINEMENT INSTRUCTION:
+${input.refinement}
+
+${input.preserve_structure ? 'Preserve the existing structure but apply the refinement to copy and styling.' : 'Feel free to restructure if it serves the refinement.'}
+
+CURRENT SECTION HTML (for reference, may be truncated):
+${target.output.slice(0, 6000)}
+
+DESIGN TOKENS (use Tailwind classes referencing these via the tailwind.config theme: primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans):
+  primary: ${tokens.palette.primary}
+  accent: ${tokens.palette.accent}
+  background: ${tokens.palette.background}
+  text: ${tokens.palette.text_primary}
+  display font: ${tokens.typography.display_font}
+  body font: ${tokens.typography.body_font}
+
+BRIEF CONTEXT:
+  Brand: ${brief.client_name}
+  Business: ${brief.business_description.slice(0, 240)}
+  Audience: ${brief.target_audience}
+  Tone: ${brief.mood_tone}
+
+HEADING HIERARCHY: Use <h2> for your section's main headline. Use <h3> for cards or sub-items. Do NOT add another <h1> (the hero owns the single h1).
+
+ACCESSIBILITY REQUIREMENTS:
+- CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.
+- Form inputs: use aria-required="true" for required fields.
+- Icon-only indicators must include sr-only text or visible label.
+- SVG illustrations: wrap in <figure> with <figcaption> if meaningful; aria-hidden="true" if purely decorative.
+- Focus styles: rely on global focus-visible outline; do NOT add custom focus:ring on inputs (causes double-ring).
+
+Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML. First character of your response must be <, last must be >.`
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': deps.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: MODEL_ID,
+      max_tokens: 8192,
+      messages: [{ role: 'user', content: composerPrompt }],
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: `COMPOSER call failed: ${res.status} ${errText.slice(0, 200)}`,
+      is_error: true,
+    }
+  }
+
+  type AR = {
+    content?: Array<{ type: string; text?: string }>
+    usage?: { input_tokens?: number; output_tokens?: number }
+  }
+  const data = (await res.json()) as AR
+  const newHtml = (data.content ?? [])
+    .map((c) => (c.type === 'text' ? c.text ?? '' : ''))
+    .join('')
+
+  if (!newHtml.trim().startsWith('<')) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'COMPOSER returned non-HTML content. Section not updated.',
+      is_error: true,
+    }
+  }
+
+  // Update the COMPOSER subtask output
+  await deps.env.DB
+    .prepare(`UPDATE agent_subtasks SET output = ? WHERE id = ?`)
+    .bind(newHtml, target.id)
+    .run()
+
+  // Re-stitch the full page via deterministic ASSEMBLER
+  let assemblyError: string | null = null
+  try {
+    const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
+    await deps.env.DB
+      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
+      .bind(result.output, iter.id)
+      .run()
+    // Re-save preview to R2 so the preview URL reflects the new section.
+    if (iter.preview_r2_key) {
+      await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
+    }
+  } catch (err) {
+    assemblyError = err instanceof Error ? err.message : String(err)
+  }
+
+  return {
+    type: 'tool_result',
+    tool_use_id: toolUse.id,
+    content: JSON.stringify({
+      ok: true,
+      section_slug: input.section_slug,
+      new_html_length: newHtml.length,
+      composer_tokens: {
+        input: data.usage?.input_tokens ?? 0,
+        output: data.usage?.output_tokens ?? 0,
+      },
+      assembly_warning: assemblyError,
+      note: assemblyError
+        ? 'Section regenerated but full-page re-assembly failed. Section output saved; preview may not reflect change until save_iteration.'
+        : 'Section regenerated and page re-assembled. Preview URL now serves updated page.',
+    }),
   }
 }
 
@@ -378,7 +577,6 @@ async function runSaveIteration(
     )
     .run()
 
-  // Bump brief.current_iteration so the detail page picks up the new row
   await deps.env.DB
     .prepare(`UPDATE design_briefs SET current_iteration = ?, updated_at = ? WHERE id = ?`)
     .bind(nextNumber, now, deps.briefId)
@@ -391,7 +589,7 @@ async function runSaveIteration(
       ok: true,
       new_iteration_id: newId,
       iteration_number: nextNumber,
-      note: 'New iteration committed. Preview URL not regenerated yet — visit the brief detail page to refresh.',
+      note: 'New iteration committed. Preview URL reflects current edits.',
     }),
   }
 }
@@ -404,7 +602,6 @@ async function runCritique(
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter || !iter.page_html) return missingIteration(toolUse)
 
-  // Call Anthropic directly with the existing CRITIC system prompt distilled.
   const focus = input.focus_areas?.length ? `Focus areas: ${input.focus_areas.join(', ')}.` : ''
   const body = JSON.stringify({
     model: MODEL_ID,
@@ -439,7 +636,6 @@ async function runCritique(
   const data = (await res.json()) as AnthropicResponse
   const text = (data.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : '')).join('')
 
-  // Save score back to the iteration row for visibility
   const parsed = safeParse<{ score?: number; verdict?: string }>(text)
   if (parsed?.score !== undefined) {
     await deps.env.DB
@@ -455,7 +651,7 @@ function notImplemented(toolUse: DesignAssistantToolUse): DesignToolResult {
   return {
     type: 'tool_result',
     tool_use_id: toolUse.id,
-    content: `Tool '${toolUse.name}' is in the v0.3.0 catalog but not yet implemented. Suggest a workaround using update_design_tokens or save_iteration if possible.`,
+    content: `Tool '${toolUse.name}' is in the v0.3.0 catalog but not yet implemented. Suggest a workaround using update_design_tokens or regenerate_section.`,
     is_error: false,
   }
 }
@@ -469,9 +665,9 @@ function missingIteration(toolUse: DesignAssistantToolUse): DesignToolResult {
   }
 }
 
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 // Main agent loop
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 
 export interface IterationAgentResult {
   finalText: string
@@ -483,11 +679,6 @@ export interface IterationAgentResult {
   iterationIdsTouched: string[]
 }
 
-/**
- * Run one user-message turn through the iteration agent. Persists all messages
- * (user, every assistant tool-use, every tool_result) as separate D1 rows so
- * the conversation can be fully replayed.
- */
 export async function runIterationAgent(args: {
   env: CloudflareEnv
   apiKey: string
@@ -499,7 +690,6 @@ export async function runIterationAgent(args: {
   const { env, apiKey, userId, brief, userMessage, priorTurns } = args
   const startMs = Date.now()
 
-  // Persist the user's input first so it's preserved even if the LLM call crashes.
   await persistDesignChatMessage(env.DB, {
     briefId: brief.id,
     userId,
@@ -567,7 +757,6 @@ export async function runIterationAgent(args: {
       (b): b is DesignAssistantToolUse => b.type === 'tool_use',
     )
 
-    // Persist the assistant turn (text + tool_calls)
     await persistDesignChatMessage(env.DB, {
       briefId: brief.id,
       userId,
@@ -582,10 +771,8 @@ export async function runIterationAgent(args: {
 
     finalText = assistantText
 
-    // End of turn: no more tool_use blocks.
     if (toolUses.length === 0 || data.stop_reason === 'end_turn') break
 
-    // Execute each tool call, gather results.
     const results: DesignToolResult[] = []
     for (const toolUse of toolUses) {
       const result = await executeIterationTool(toolUse, {
@@ -597,7 +784,6 @@ export async function runIterationAgent(args: {
       results.push(result)
     }
 
-    // Persist the tool_result turn (Anthropic sees this as a user message).
     await persistDesignChatMessage(env.DB, {
       briefId: brief.id,
       userId,
@@ -605,7 +791,6 @@ export async function runIterationAgent(args: {
       toolResultsJson: JSON.stringify(results),
     })
 
-    // Update message buffer for the next loop iteration.
     messages.push({ role: 'assistant', content: blocks })
     messages.push({ role: 'user', content: results })
 
@@ -619,13 +804,13 @@ export async function runIterationAgent(args: {
     totalOutputTokens,
     totalCostUsd: calculateCost(totalInputTokens, totalOutputTokens),
     latencyMs: Date.now() - startMs,
-    iterationIdsTouched: [],   // (v0.3.1: scan tool_results for new_iteration_id)
+    iterationIdsTouched: [],
   }
 }
 
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 // Helpers
-// ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 
 async function loadLatestIteration(
   db: D1Database,

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import IterationChat from '@/components/design/IterationChat'
 
 interface BriefRow {
   id: string
@@ -71,7 +72,6 @@ export default function DesignClient() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Form state
   const [clientName, setClientName] = useState('')
   const [biz, setBiz] = useState('')
   const [audience, setAudience] = useState('')
@@ -145,7 +145,6 @@ export default function DesignClient() {
         setError(data.detail ?? data.error ?? `HTTP ${r.status}`)
         return
       }
-      // Clear form
       setClientName(''); setBiz(''); setAudience(''); setTone('')
       setSections(''); setRefs(''); setColors(''); setConstraints('')
       await refreshBriefs()
@@ -159,7 +158,6 @@ export default function DesignClient() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Brief form */}
       <section className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
         <h2 className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-3">
           New Brief — HERMES will dispatch DESIGNER → COMPOSER → CRITIC
@@ -198,7 +196,6 @@ export default function DesignClient() {
         )}
       </section>
 
-      {/* Brief list */}
       <section className="flex flex-col gap-3">
         <h2 className="text-xs font-mono uppercase tracking-wider text-slate-400">
           Recent briefs ({briefs.length})
@@ -211,6 +208,7 @@ export default function DesignClient() {
         {briefs.map((b) => {
           const isOpen = expandedId === b.id
           const detail = detailById[b.id]
+          const canIterate = b.status === 'preview_ready' || b.status === 'shipped'
           return (
             <div key={b.id} className="rounded-lg border border-slate-700 bg-slate-900/60 overflow-hidden">
               <button
@@ -247,6 +245,13 @@ export default function DesignClient() {
                     >
                       🌐 Open Preview — {b.preview_url}
                     </a>
+                  )}
+
+                  {canIterate && (
+                    <IterationChat
+                      briefId={b.id}
+                      onTurnCompleted={() => refreshDetail(b.id)}
+                    />
                   )}
 
                   {!detail && <div className="text-xs text-slate-500">Loading...</div>}
