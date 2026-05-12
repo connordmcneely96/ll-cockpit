@@ -299,7 +299,7 @@ async function runUpdateDesignTokens(
   const currentTokens: DesignTokens =
     iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
 
-  const merged = deepMerge(currentTokens, input.patch) as unknown as DesignTokens
+  const merged = deepMergeJson(currentTokens, input.patch) as DesignTokens
   if (input.rationale) merged.rationale = input.rationale
 
   await deps.env.DB
@@ -505,13 +505,11 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
     }
   }
 
-  // Update the COMPOSER subtask output
   await deps.env.DB
     .prepare(`UPDATE agent_subtasks SET output = ? WHERE id = ?`)
     .bind(newHtml, target.id)
     .run()
 
-  // Re-stitch the full page via deterministic ASSEMBLER
   let assemblyError: string | null = null
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
@@ -519,7 +517,6 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
       .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
       .bind(result.output, iter.id)
       .run()
-    // Re-save preview to R2 so the preview URL reflects the new section.
     if (iter.preview_r2_key) {
       await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
     }
@@ -835,23 +832,41 @@ function safeParse<T = unknown>(raw: string): T | null {
   }
 }
 
-function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
-  const result: Record<string, unknown> = { ...target }
-  for (const [k, v] of Object.entries(source)) {
+/**
+ * Deep merge two JSON-shaped values. Accepts `unknown` to avoid fighting
+ * TypeScript's index-signature constraint on typed object types like
+ * DesignTokens. Caller casts the result back to the target type.
+ */
+function deepMergeJson(target: unknown, source: unknown): unknown {
+  if (
+    target === null ||
+    typeof target !== 'object' ||
+    Array.isArray(target) ||
+    source === null ||
+    typeof source !== 'object' ||
+    Array.isArray(source)
+  ) {
+    return source === undefined ? target : source
+  }
+  const t = target as Record<string, unknown>
+  const s = source as Record<string, unknown>
+  const result: Record<string, unknown> = { ...t }
+  for (const [k, v] of Object.entries(s)) {
+    const existing = result[k]
     if (
       v !== null &&
       typeof v === 'object' &&
       !Array.isArray(v) &&
-      typeof result[k] === 'object' &&
-      result[k] !== null &&
-      !Array.isArray(result[k])
+      existing !== null &&
+      typeof existing === 'object' &&
+      !Array.isArray(existing)
     ) {
-      result[k] = deepMerge(result[k] as Record<string, unknown>, v as Record<string, unknown>)
+      result[k] = deepMergeJson(existing, v)
     } else {
       result[k] = v
     }
   }
-  return result as T
+  return result
 }
 
 function emptyTokens(): DesignTokens {

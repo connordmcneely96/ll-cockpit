@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 
 interface ChatMessageRow {
   id: string
@@ -118,7 +119,7 @@ export default function IterationChat({ briefId, onTurnCompleted }: Props) {
     }
   }
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       void send()
@@ -229,7 +230,6 @@ function MessageRow({ message }: { message: ChatMessageRow }) {
     )
   }
 
-  // assistant
   const toolUses: ToolUseSummary[] = safeParseArray(message.tool_calls_json)
   return (
     <div className="flex justify-start flex-col gap-1">
