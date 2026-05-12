@@ -60,6 +60,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 export default function OrchestratorClient() {
   const [task, setTask] = useState('')
+  const [autoExecute, setAutoExecute] = useState(true)
   const [dispatching, setDispatching] = useState(false)
   const [dispatchError, setDispatchError] = useState<string | null>(null)
   const [runs, setRuns] = useState<RunRow[]>([])
@@ -91,7 +92,7 @@ export default function OrchestratorClient() {
 
   useEffect(() => {
     void refreshRuns()
-    const i = setInterval(refreshRuns, 5000)
+    const i = setInterval(refreshRuns, 3000)
     return () => clearInterval(i)
   }, [refreshRuns])
 
@@ -100,8 +101,8 @@ export default function OrchestratorClient() {
     void refreshRunDetail(expandedRunId)
     const run = runs.find((r) => r.id === expandedRunId)
     if (!run) return
-    if (run.status !== 'running') return
-    const i = setInterval(() => refreshRunDetail(expandedRunId), 3000)
+    if (run.status !== 'running' && run.status !== 'planning') return
+    const i = setInterval(() => refreshRunDetail(expandedRunId), 2000)
     return () => clearInterval(i)
   }, [expandedRunId, runs, refreshRunDetail])
 
@@ -113,7 +114,11 @@ export default function OrchestratorClient() {
       const res = await fetch('/api/orchestrator/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: task.trim() }),
+        body: JSON.stringify({
+          task: task.trim(),
+          auto_execute: autoExecute,
+          force_hitl: autoExecute, // bypass HITL during v0.1 testing when auto is on
+        }),
       })
       const data = (await res.json()) as {
         ok?: boolean
@@ -165,9 +170,23 @@ export default function OrchestratorClient() {
           maxLength={4000}
           className="w-full rounded-md bg-slate-950 border border-slate-700 text-slate-200 px-3 py-2 text-sm font-mono resize-y focus:outline-none focus:border-cyan-500"
         />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="text-xs text-slate-500 font-mono">
-            {task.length} / 4000
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-4">
+            <div className="text-xs text-slate-500 font-mono">
+              {task.length} / 4000
+            </div>
+            <label className="flex items-center gap-2 text-xs font-mono text-slate-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoExecute}
+                onChange={(e) => setAutoExecute(e.target.checked)}
+                className="w-4 h-4 accent-cyan-500"
+              />
+              <span>
+                Auto-execute after planning{' '}
+                <span className="text-slate-500">(forces HITL · v0.2)</span>
+              </span>
+            </label>
           </div>
           <button
             onClick={dispatch}
@@ -293,7 +312,7 @@ function RunDetail({
           const agentColor = AGENT_COLOR[st.agent_name] ?? 'border-slate-600 text-slate-400'
 
           const btnBg = canExecute && !isExecuting
-            ? (isHitl ? '#d97706' : '#0891b2')   // amber for force, cyan for normal
+            ? (isHitl ? '#d97706' : '#0891b2')
             : '#1e293b'
           const btnColor = canExecute && !isExecuting
             ? (isHitl ? '#020617' : '#f1f5f9')
