@@ -13,6 +13,9 @@ export type AgentName =
   | 'sentinel'
   | 'dispatch'
   | 'anchor'
+  | 'designer'
+  | 'composer'
+  | 'critic'
 
 export interface AgentPermissions {
   can_deploy: boolean
@@ -189,7 +192,9 @@ export interface DecompositionResult {
 export type LLMProviderId = 'anthropic' | 'workers-ai' | 'openrouter' | 'ollama-local' | string
 export type ModelTier = 'premium' | 'standard' | 'cheap' | 'free'
 export type LLMTaskType =
-  | 'decompose' | 'review' | 'draft' | 'package' | 'qualify' | 'classify' | 'default' | string
+  | 'decompose' | 'review' | 'draft' | 'package' | 'qualify' | 'classify'
+  | 'design_language' | 'compose_page' | 'critique_design'
+  | 'default' | string
 
 export interface LLMCompletionInput {
   modelId: string
@@ -277,6 +282,93 @@ export interface AIRoutingDecisionRow {
   success: number
   error: string | null
   created_at: number
+}
+
+// ── Sprint 16: Design Build Types ──
+
+export type DesignBriefStatus = 'draft' | 'building' | 'preview_ready' | 'shipped' | 'archived'
+export type DesignIterationStatus = 'building' | 'ready' | 'failed'
+
+export interface DesignBriefInput {
+  client_name: string
+  business_description: string
+  target_audience: string
+  mood_tone: string
+  style_references?: string[]
+  must_have_sections: string
+  brand_colors?: string
+  constraints?: string
+}
+
+export interface DesignBriefRow {
+  id: string
+  user_id: string
+  client_name: string
+  business_description: string
+  target_audience: string
+  mood_tone: string
+  style_references: string | null
+  must_have_sections: string
+  brand_colors: string | null
+  constraints: string | null
+  status: DesignBriefStatus
+  orchestrator_run_id: string | null
+  current_iteration: number
+  preview_url: string | null
+  repo_url: string | null
+  pages_deployment_url: string | null
+  total_cost_usd: number
+  total_tokens: number
+  created_at: number
+  updated_at: number
+}
+
+export interface DesignIterationRow {
+  id: string
+  brief_id: string
+  iteration_number: number
+  orchestrator_run_id: string
+  client_feedback: string | null
+  design_tokens_json: string | null
+  page_html: string | null
+  critic_score: number | null
+  critic_feedback: string | null
+  preview_r2_key: string | null
+  preview_url: string | null
+  status: DesignIterationStatus
+  cost_usd: number
+  tokens: number
+  created_at: number
+  completed_at: number | null
+}
+
+export interface DesignTokens {
+  palette: {
+    primary: string
+    primary_dark?: string
+    primary_light?: string
+    accent: string
+    background: string
+    surface?: string
+    text_primary: string
+    text_secondary?: string
+    border?: string
+  }
+  typography: {
+    display_font: string
+    body_font: string
+    scale?: Record<string, string>
+  }
+  spacing?: {
+    scale?: 'tight' | 'comfortable' | 'generous'
+    container_max_width?: string
+    section_padding?: string
+  }
+  motion?: {
+    transition_speed?: 'fast' | 'normal' | 'slow'
+    easing?: string
+  }
+  rationale?: string
 }
 
 // ── Cloudflare Env ──
