@@ -11,7 +11,6 @@
  *   updates the design_iteration + design_brief rows. Idempotent.
  */
 
-import type { D1Database, R2Bucket } from '@cloudflare/workers-types'
 import type {
   CloudflareEnv,
   DesignBriefInput,
@@ -91,13 +90,13 @@ export function extractJson(text: string): unknown | null {
 }
 
 export async function savePreviewToR2(
-  r2: R2Bucket,
+  env: CloudflareEnv,
   briefId: string,
   iterationNumber: number,
   html: string,
 ): Promise<{ r2Key: string }> {
   const r2Key = `design/${briefId}/iteration-${iterationNumber}.html`
-  await r2.put(r2Key, html, {
+  await env.R2.put(r2Key, html, {
     httpMetadata: { contentType: 'text/html; charset=utf-8' },
     customMetadata: {
       brief_id: briefId,
@@ -167,7 +166,7 @@ export async function finalizeIterationIfReady(
   }
 
   // Save to R2
-  const { r2Key } = await savePreviewToR2(env.R2, brief.id, iteration.iteration_number, html)
+  const { r2Key } = await savePreviewToR2(env, brief.id, iteration.iteration_number, html)
   const previewUrl = `${origin}/design/preview/${brief.id}`
 
   // Pull DESIGNER tokens + CRITIC feedback if present
