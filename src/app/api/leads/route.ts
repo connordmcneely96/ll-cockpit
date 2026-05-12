@@ -1,13 +1,6 @@
 /**
- * POST /api/leads — Pipeline 1 entrypoint
- *
- * Captures a lead and runs it through SCOUT → INTAKE inline.
- * Writes audit trail to agent_messages for the full hop.
- *
- * Body: LeadInput (see src/lib/pipeline.ts)
- * Returns: { lead, pipeline_run, qualification, messages: [agent_message ids] }
- *
- * GET /api/leads — list user's leads, newest first, with optional ?stage= and ?status= filters
+ * POST /api/leads — Pipeline 1 entrypoint (Sprint 13 v0.1 routed via LLM Router)
+ * GET /api/leads — list user's leads
  */
 
 import { NextRequest } from 'next/server'
@@ -22,7 +15,6 @@ import {
 } from '@/lib/pipeline'
 
 export async function POST(req: NextRequest) {
-  // ── Auth ──
   const supabase = await createClient()
   const {
     data: { user },
@@ -31,7 +23,6 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  // ── Parse + validate input ──
   let input: LeadInput
   try {
     input = (await req.json()) as LeadInput
@@ -48,22 +39,21 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── Bindings + secrets ──
-  const { DB, ANTHROPIC_API_KEY } = getBindings()
-  const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
+  const env = getBindings()
+  const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(
       JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }),
       { status: 500 },
     )
   }
+  const DB = env.DB
 
   const now = Math.floor(Date.now() / 1000)
   const leadId = crypto.randomUUID()
   const pipelineRunId = crypto.randomUUID()
   const conversationId = crypto.randomUUID()
 
-  // ── 1. Insert lead (stage = captured) ──
   await DB.prepare(
     `INSERT INTO leads
      (id, user_id, name, email, phone, company, title, linkedin_url, website,
@@ -90,7 +80,6 @@ export async function POST(req: NextRequest) {
     )
     .run()
 
-  // ── 2. Open pipeline_run ──
   await DB.prepare(
     `INSERT INTO pipeline_runs
      (id, user_id, lead_id, pipeline_type, current_stage, status,
@@ -107,7 +96,6 @@ export async function POST(req: NextRequest) {
     )
     .run()
 
-  // ── 3. SCOUT → INTAKE handoff via NEXUS ──
   const scoutToIntakeMsgId = await routeMessage(DB, {
     userId: user.id,
     conversationId,
@@ -121,24 +109,29 @@ export async function POST(req: NextRequest) {
     pipelineStage: 'scout_to_intake',
   })
 
-  // ── 4. INTAKE processes: mark lead qualifying, call Claude, write result ──
   await DB.prepare(`UPDATE leads SET pipeline_stage = 'qualifying', updated_at = ? WHERE id = ?`)
     .bind(now, leadId)
     .run()
 
   let qualResult
   try {
-    qualResult = await qualifyLead(apiKey, {
-      name: input.name,
-      company: input.company,
-      email: input.email,
-      title: input.title,
-      linkedin_url: input.linkedin_url,
-      website: input.website,
-      source: input.source,
-      raw_notes: input.raw_notes,
-      source_metadata: input.source_metadata,
-    })
+    qualResult = await qualifyLead(
+      env,
+      apiKey,
+      user.id,
+      {
+        name: input.name,
+        company: input.company,
+        email: input.email,
+        title: input.title,
+        linkedin_url: input.linkedin_url,
+        website: input.website,
+        source: input.source,
+        raw_notes: input.raw_notes,
+        source_metadata: input.source_metadata,
+      },
+      pipelineRunId,
+    )
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
     await completeMessage(DB, scoutToIntakeMsgId, 'failed', errMsg)
@@ -154,9 +147,8 @@ export async function POST(req: NextRequest) {
   }
 
   const qualifiedAt = Math.floor(Date.now() / 1000)
-  const { qualification, tokens, costUsd } = qualResult
+  const { qualification, tokens, costUsd, modelId } = qualResult
 
-  // ── 5. Write qualification back to lead ──
   await DB.prepare(
     `UPDATE leads SET
        pipeline_stage = 'qualified',
@@ -183,17 +175,15 @@ export async function POST(req: NextRequest) {
     )
     .run()
 
-  // ── 6. Close the SCOUT→INTAKE message ──
   await completeMessage(DB, scoutToIntakeMsgId, 'done')
 
-  // ── 7. Append stage history + bump pipeline_run totals ──
   await appendStageHistory(DB, pipelineRunId, {
     stage: 'intake_qualified',
     entered_at: qualifiedAt,
     agent: 'INTAKE',
     message_id: scoutToIntakeMsgId,
     cost_usd: costUsd,
-    notes: `score=${qualification.score} prob=${qualification.probability}`,
+    notes: `score=${qualification.score} prob=${qualification.probability} model=${modelId}`,
   })
   await DB.prepare(
     `UPDATE pipeline_runs SET
@@ -204,7 +194,6 @@ export async function POST(req: NextRequest) {
     .bind(costUsd, tokens, pipelineRunId)
     .run()
 
-  // ── 8. Read back final state for response ──
   const finalLead = await DB.prepare(`SELECT * FROM leads WHERE id = ?`)
     .bind(leadId)
     .first()
@@ -228,6 +217,7 @@ export async function POST(req: NextRequest) {
         messages: messages.results ?? [],
         cost_usd: costUsd,
         tokens,
+        model_id: modelId,
       },
       null,
       2,

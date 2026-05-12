@@ -1,17 +1,17 @@
 /**
- * Pipeline 1 orchestration helpers.
+ * Pipeline 1 orchestration helpers — Sprint 13 v0.1 routed via LLM Router.
  *
- * Design principles (from NEXUS spec):
- * - Agents NEVER talk to each other directly. All messages route through NEXUS.
- * - Every cross-agent step is recorded in agent_messages for audit/replay.
- * - Stage transitions update both leads.pipeline_stage AND pipeline_runs.current_stage.
- * - Stage history is append-only JSON on pipeline_runs.
+ * qualifyLead now calls route(agent='intake', task='qualify') instead of
+ * hard-coded Sonnet. Per the seeded policy, INTAKE defaults to Haiku 4.5 for
+ * ~75% cost savings on structured JSON output.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
-import { calculateCost } from './cost'
-
-// ── Types ────────────────────────────────────────────────────────────────────
+import type {
+  CloudflareEnv,
+  LLMCompletionResult,
+} from '@/types'
+import { route } from './llm/router'
 
 export interface LeadInput {
   name?: string
@@ -28,30 +28,20 @@ export interface LeadInput {
 }
 
 export interface Qualification {
-  score: number              // 1-10
+  score: number
   summary: string
   red_flags: string[]
   next_step: string
   estimated_value_usd: number | null
-  probability: number        // 0.0-1.0
+  probability: number
 }
 
 export type PipelineStage =
-  | 'captured'
-  | 'qualifying'
-  | 'qualified'
-  | 'proposal_drafting'
-  | 'proposal_sent'
-  | 'contract_drafting'
-  | 'contract_sent'
-  | 'deposit_pending'
-  | 'deposit_paid'
-  | 'kickoff_scheduled'
-  | 'active'
-  | 'lost'
-  | 'dormant'
-
-// ── NEXUS routing: insert + advance an agent_message ─────────────────────────
+  | 'captured' | 'qualifying' | 'qualified'
+  | 'proposal_drafting' | 'proposal_sent'
+  | 'contract_drafting' | 'contract_sent'
+  | 'deposit_pending' | 'deposit_paid'
+  | 'kickoff_scheduled' | 'active' | 'lost' | 'dormant'
 
 export async function routeMessage(
   db: D1Database,
@@ -74,7 +64,6 @@ export async function routeMessage(
   const now = Math.floor(Date.now() / 1000)
   const payloadJson = args.payload ? JSON.stringify(args.payload) : null
 
-  // Insert as queued
   await db
     .prepare(
       `INSERT INTO agent_messages
@@ -106,8 +95,6 @@ export async function routeMessage(
   return id
 }
 
-// ── Mark message processed (called when recipient agent finishes handling) ──
-
 export async function completeMessage(
   db: D1Database,
   messageId: string,
@@ -129,8 +116,6 @@ export async function completeMessage(
       .run()
   }
 }
-
-// ── Append a stage entry to pipeline_runs.stage_history ──────────────────────
 
 interface StageHistoryEntry {
   stage: string
@@ -161,8 +146,6 @@ export async function appendStageHistory(
     .run()
 }
 
-// ── INTAKE qualification: call Claude, parse JSON response ───────────────────
-
 const INTAKE_QUALIFY_PROMPT = `You are INTAKE, the client onboarding specialist for Leadership Legacy Digital (LL).
 
 LL positions as a premium technical partner offering: engineering services (API 610/682 pump design, ASME calcs), AI/full-stack development (Cloudflare Workers, Next.js, agents), CAD services, brand/creative.
@@ -181,40 +164,39 @@ Return ONLY valid JSON matching this exact schema, no other text:
 }`
 
 export async function qualifyLead(
+  env: CloudflareEnv,
   apiKey: string,
+  userId: string,
   lead: Record<string, unknown>,
-): Promise<{ qualification: Qualification; tokens: number; costUsd: number }> {
+  pipelineRunId?: string,
+): Promise<{
+  qualification: Qualification
+  tokens: number
+  costUsd: number
+  modelId: string
+}> {
   const userMessage = `Lead to qualify:\n\n${JSON.stringify(lead, null, 2)}`
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1024,
-      system: INTAKE_QUALIFY_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
-    }),
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`Anthropic API ${res.status}: ${errText}`)
+  let result: LLMCompletionResult
+  try {
+    result = await route({
+      agentName: 'intake',
+      taskType: 'qualify',
+      systemPrompt: INTAKE_QUALIFY_PROMPT,
+      userMessage,
+      maxTokens: 1024,
+      pipelineRunId,
+      userId,
+      env,
+      apiKey,
+    })
+  } catch (err) {
+    throw new Error(
+      `Router failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
 
-  const data = (await res.json()) as {
-    content: Array<{ type: string; text?: string }>
-    usage: { input_tokens: number; output_tokens: number }
-  }
-
-  const textBlock = data.content.find((c) => c.type === 'text')?.text ?? ''
-  // Strip code fences if present
-  const cleaned = textBlock.replace(/```json|```/g, '').trim()
-
+  const cleaned = result.text.replace(/```json|```/g, '').trim()
   let qualification: Qualification
   try {
     qualification = JSON.parse(cleaned)
@@ -222,8 +204,10 @@ export async function qualifyLead(
     throw new Error(`INTAKE returned invalid JSON: ${cleaned.slice(0, 200)}`)
   }
 
-  const tokens = data.usage.input_tokens + data.usage.output_tokens
-  const costUsd = calculateCost(data.usage.input_tokens, data.usage.output_tokens)
-
-  return { qualification, tokens, costUsd }
+  return {
+    qualification,
+    tokens: result.inputTokens + result.outputTokens,
+    costUsd: result.costUsd,
+    modelId: result.modelId,
+  }
 }

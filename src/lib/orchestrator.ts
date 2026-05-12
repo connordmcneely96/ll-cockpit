@@ -1,21 +1,18 @@
 /**
- * Orchestrator runtime — shared logic for executing subtasks and running auto-waves.
+ * Orchestrator runtime — Sprint 13 v0.1 routed via LLM Router.
  *
- * Used by:
- *   - POST /api/orchestrator/subtasks/[id]/execute  (single manual or force)
- *   - POST /api/orchestrator/dispatch               (auto-wave after decomposition)
- *
- * Design:
- *   - executeOneSubtask runs a single subtask end-to-end (pull deps as context, call Claude,
- *     persist, cascade dependents, refresh run aggregates).
- *   - runAutoWave loops: select all 'ready' subtasks for a run → execute in parallel
- *     → cascade → repeat until no 'ready' remain. Skips HITL by default.
+ * executeOneSubtask now calls route(agent_name, task_type='default') instead of
+ * a hard-coded Anthropic fetch. SENTINEL reviews + DISPATCH packaging will
+ * automatically drop to Haiku per the seeded routing policy.
  */
 
-import type { D1Database } from '@cloudflare/workers-types'
+import type {
+  CloudflareEnv,
+  LLMCompletionResult,
+} from '@/types'
 import { getAgent } from './agents'
-import { calculateCost } from './cost'
 import { cascadeReady, refreshRunAggregates } from './hermes'
+import { route } from './llm/router'
 
 export interface SubtaskExecutionResult {
   subtaskId: string
@@ -24,24 +21,18 @@ export interface SubtaskExecutionResult {
   tokens: number
   error?: string
   dependency_context_chars: number
+  modelId?: string
 }
 
-/**
- * Execute a single subtask:
- *  1. Verify it's in 'ready' status (and HITL bypass if needed)
- *  2. Pull dependency outputs from D1
- *  3. Call Claude with agent system prompt + dependency context + task
- *  4. Persist output (status='done') or error (status='failed')
- *  5. Cascade pending → ready for unblocked dependents
- *  6. Refresh orchestrator_run aggregates
- */
 export async function executeOneSubtask(
-  db: D1Database,
+  env: CloudflareEnv,
   apiKey: string,
   userId: string,
   subtaskId: string,
   opts: { force?: boolean } = {},
 ): Promise<SubtaskExecutionResult> {
+  const db = env.DB
+
   const subtask = await db
     .prepare(`SELECT * FROM agent_subtasks WHERE id = ? AND user_id = ?`)
     .bind(subtaskId, userId)
@@ -101,7 +92,7 @@ export async function executeOneSubtask(
     }
   }
 
-  // Pull dependency outputs
+  // Pull dependency outputs as context
   let dependencyContext = ''
   const depShortIds: string[] = subtask.depends_on ? JSON.parse(subtask.depends_on) : []
   if (depShortIds.length > 0) {
@@ -143,47 +134,38 @@ export async function executeOneSubtask(
     .bind(startedAt, subtaskId)
     .run()
 
-  // Call Claude
+  // Route the call via LLM router
   let output = ''
   let inputTokens = 0
   let outputTokens = 0
   let costUsd = 0
   let failedReason: string | null = null
+  let modelId: string | undefined
 
   const userMessage = dependencyContext + subtask.task
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 2048,
-        system: agent.systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      }),
+    const result: LLMCompletionResult = await route({
+      agentName: subtask.agent_name,
+      taskType: 'default',
+      systemPrompt: agent.systemPrompt,
+      userMessage,
+      maxTokens: 2048,
+      pipelineRunId: subtask.pipeline_run_id,
+      subtaskId,
+      userId,
+      env,
+      apiKey,
     })
-    if (!res.ok) {
-      failedReason = `Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`
-    } else {
-      const data = (await res.json()) as {
-        content: Array<{ type: string; text?: string }>
-        usage: { input_tokens: number; output_tokens: number }
-      }
-      output = data.content.find((c) => c.type === 'text')?.text ?? ''
-      inputTokens = data.usage.input_tokens
-      outputTokens = data.usage.output_tokens
-      costUsd = calculateCost(inputTokens, outputTokens)
-    }
+    output = result.text
+    inputTokens = result.inputTokens
+    outputTokens = result.outputTokens
+    costUsd = result.costUsd
+    modelId = result.modelId
   } catch (err) {
     failedReason = err instanceof Error ? err.message : String(err)
   }
 
-  // Persist outcome
   const completedAt = Math.floor(Date.now() / 1000)
   if (failedReason) {
     await db
@@ -211,6 +193,7 @@ export async function executeOneSubtask(
     tokens: inputTokens + outputTokens,
     error: failedReason ?? undefined,
     dependency_context_chars: dependencyContext.length,
+    modelId,
   }
 }
 
@@ -225,26 +208,16 @@ export interface AutoWaveResult {
   stopped_reason: 'completed' | 'max_waves' | 'no_progress' | 'error'
 }
 
-/**
- * Autonomous wave runner — keeps executing ready subtasks in parallel until none remain.
- *
- *   while there are 'ready' subtasks:
- *     execute them all in parallel
- *     cascade pending → ready
- *     loop
- *
- * Safety rails:
- *   - opts.force: pass-through to executeOneSubtask (default false; HITL subtasks skipped)
- *   - opts.maxWaves: hard cap on iterations (default 20)
- *   - opts.maxParallel: cap on parallel executions per wave (default 8)
- */
+// Dead code retained for reference — v0.2 used this in-Worker loop, v0.2.1
+// replaced with the self-tick pattern in /api/orchestrator/internal/process-subtask.
 export async function runAutoWave(
-  db: D1Database,
+  env: CloudflareEnv,
   apiKey: string,
   userId: string,
   runId: string,
   opts: { force?: boolean; maxWaves?: number; maxParallel?: number } = {},
 ): Promise<AutoWaveResult> {
+  const db = env.DB
   const maxWaves = opts.maxWaves ?? 20
   const maxParallel = opts.maxParallel ?? 8
   let waves = 0
@@ -257,29 +230,23 @@ export async function runAutoWave(
 
   while (waves < maxWaves) {
     waves++
-
-    // Find ready subtasks. If force=false, exclude HITL so we don't wedge on them.
     const readyQuery = opts.force
       ? `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' ORDER BY short_id ASC LIMIT ?`
       : `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' AND human_required = 0 ORDER BY short_id ASC LIMIT ?`
-
     const ready = await db
       .prepare(readyQuery)
       .bind(runId, userId, maxParallel)
       .all<{ id: string }>()
-
     const batch = ready.results ?? []
     if (batch.length === 0) {
       stoppedReason = 'completed'
       break
     }
-
     const results = await Promise.all(
       batch.map((row) =>
-        executeOneSubtask(db, apiKey, userId, row.id, { force: opts.force }),
+        executeOneSubtask(env, apiKey, userId, row.id, { force: opts.force }),
       ),
     )
-
     let madeProgress = false
     for (const r of results) {
       if (r.status === 'done') {
@@ -294,7 +261,6 @@ export async function runAutoWave(
         skipped++
       }
     }
-
     if (!madeProgress) {
       stoppedReason = 'no_progress'
       break

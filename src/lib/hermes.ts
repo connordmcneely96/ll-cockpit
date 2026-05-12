@@ -1,22 +1,21 @@
 /**
- * HERMES decomposer — Sprint 14 v0.1
+ * HERMES decomposer — Sprint 13 v0.1 routed via LLM Router.
  *
- * Takes a complex task and produces a DAG of subtasks via Claude.
- * Writes decomposition + subtasks to D1; opens orchestrator_run.
- *
- * Returns the run id and the parsed decomposition for immediate UI display.
+ * Calls route() with (agent='hermes', task='decompose') instead of hard-coded Sonnet.
+ * The router resolves policy from D1 and falls back to alternates on failure.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
 import type {
+  CloudflareEnv,
   DecompositionResult,
   DecomposedSubtask,
+  LLMCompletionResult,
   RiskLevel,
 } from '@/types'
 import { AGENTS } from './agents'
-import { calculateCost } from './cost'
+import { route } from './llm/router'
 
-// Allowed agents for HERMES to assign to (uppercase forms, matching prompt + JSON output)
 const ALLOWED_AGENTS = new Set(
   Object.values(AGENTS)
     .filter((a) => a.name !== 'nexus' && a.name !== 'hermes')
@@ -35,11 +34,10 @@ export class HermesError extends Error {
   }
 }
 
-/**
- * Call Claude with HERMES system prompt, parse + validate decomposition JSON.
- */
 export async function decomposeTask(
+  env: CloudflareEnv,
   apiKey: string,
+  userId: string,
   originalTask: string,
 ): Promise<{
   decomposition: DecompositionResult
@@ -47,6 +45,7 @@ export async function decomposeTask(
   inputTokens: number
   outputTokens: number
   costUsd: number
+  modelId: string
 }> {
   const hermes = AGENTS.hermes
   if (!hermes) {
@@ -55,35 +54,25 @@ export async function decomposeTask(
 
   const userMessage = `Decompose this task into a DAG of subtasks. Return ONLY valid JSON per the schema. Do not include any prose, code fences, or commentary.\n\nTASK:\n${originalTask}`
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 2048,
-      system: hermes.systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    }),
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new HermesError(`Anthropic API ${res.status}`, errText)
+  let result: LLMCompletionResult
+  try {
+    result = await route({
+      agentName: 'hermes',
+      taskType: 'decompose',
+      systemPrompt: hermes.systemPrompt,
+      userMessage,
+      maxTokens: 2048,
+      userId,
+      env,
+      apiKey,
+    })
+  } catch (err) {
+    throw new HermesError(
+      `Router failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
 
-  const data = (await res.json()) as {
-    content: Array<{ type: string; text?: string }>
-    usage: { input_tokens: number; output_tokens: number }
-  }
-
-  const textBlock = data.content.find((c) => c.type === 'text')?.text ?? ''
-  // Robust strip: remove ```json / ``` fences and any leading/trailing prose
-  const cleaned = stripJsonFences(textBlock).trim()
-
+  const cleaned = stripJsonFences(result.text).trim()
   let decomposition: DecompositionResult
   try {
     decomposition = JSON.parse(cleaned) as DecompositionResult
@@ -96,21 +85,19 @@ export async function decomposeTask(
 
   validateDecomposition(decomposition)
 
-  const costUsd = calculateCost(data.usage.input_tokens, data.usage.output_tokens)
   return {
     decomposition,
-    raw: textBlock,
-    inputTokens: data.usage.input_tokens,
-    outputTokens: data.usage.output_tokens,
-    costUsd,
+    raw: result.text,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    costUsd: result.costUsd,
+    modelId: result.modelId,
   }
 }
 
 function stripJsonFences(s: string): string {
-  // pull out the first JSON object if HERMES wrapped it in fences or prose
   const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
   if (fenced) return fenced[1]
-  // look for first { ... } object span
   const first = s.indexOf('{')
   const last = s.lastIndexOf('}')
   if (first !== -1 && last !== -1 && last > first) {
@@ -148,7 +135,6 @@ function validateDecomposition(d: DecompositionResult): void {
       throw new HermesError(`Subtask ${st.id} invalid risk_level: ${st.risk_level}`)
     }
   }
-  // Validate edges + acyclicity
   for (const st of d.subtasks) {
     for (const dep of st.depends_on) {
       if (!ids.has(dep)) {
@@ -192,11 +178,6 @@ function hasCycle(subtasks: DecomposedSubtask[]): boolean {
   return false
 }
 
-/**
- * Persist a decomposition + its subtasks to D1.
- * Subtasks with no dependencies start as 'ready'; others as 'pending'.
- * Returns the inserted run id.
- */
 export async function persistDecomposition(
   db: D1Database,
   args: {
@@ -207,6 +188,7 @@ export async function persistDecomposition(
     inputTokens: number
     outputTokens: number
     costUsd: number
+    modelId: string
   },
 ): Promise<{ runId: string; decompositionId: string }> {
   const now = Math.floor(Date.now() / 1000)
@@ -214,7 +196,6 @@ export async function persistDecomposition(
   const decompositionId = crypto.randomUUID()
   const { decomposition, originalTask, userId } = args
 
-  // 1. orchestrator_runs
   await db
     .prepare(
       `INSERT INTO orchestrator_runs
@@ -237,7 +218,6 @@ export async function persistDecomposition(
     )
     .run()
 
-  // 2. decompositions audit row
   await db
     .prepare(
       `INSERT INTO decompositions
@@ -255,7 +235,7 @@ export async function persistDecomposition(
       decomposition.subtasks.length,
       decomposition.estimated_total_cost_usd ?? null,
       args.raw,
-      'claude-sonnet-4-5',
+      args.modelId,
       args.inputTokens,
       args.outputTokens,
       args.costUsd,
@@ -263,7 +243,6 @@ export async function persistDecomposition(
     )
     .run()
 
-  // 3. each subtask
   for (const st of decomposition.subtasks) {
     const id = crypto.randomUUID()
     const status = st.depends_on.length === 0 ? 'ready' : 'pending'
@@ -297,10 +276,6 @@ export async function persistDecomposition(
   return { runId, decompositionId }
 }
 
-/**
- * Promote any pending subtasks whose dependencies are all now 'done' to 'ready'.
- * Returns count promoted.
- */
 export async function cascadeReady(db: D1Database, runId: string): Promise<number> {
   const rows = await db
     .prepare(
@@ -333,9 +308,6 @@ export async function cascadeReady(db: D1Database, runId: string): Promise<numbe
   return promoted
 }
 
-/**
- * Recompute and update orchestrator_runs aggregates (counts + status + last_active_at).
- */
 export async function refreshRunAggregates(
   db: D1Database,
   runId: string,

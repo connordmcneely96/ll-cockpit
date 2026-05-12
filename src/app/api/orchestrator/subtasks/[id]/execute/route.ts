@@ -1,10 +1,5 @@
 /**
- * POST /api/orchestrator/subtasks/[id]/execute — Sprint 14 v0.2
- *
- * Thin wrapper around executeOneSubtask from src/lib/orchestrator.ts.
- * Used by the UI for manual execution (and Force Execute on HITL subtasks).
- *
- * Query: ?force=true bypasses HITL check.
+ * POST /api/orchestrator/subtasks/[id]/execute — Sprint 13 v0.1 routed via LLM Router.
  */
 
 import { NextRequest } from 'next/server'
@@ -28,8 +23,8 @@ export async function POST(
   const url = new URL(req.url)
   const force = url.searchParams.get('force') === 'true'
 
-  const { DB, ANTHROPIC_API_KEY } = getBindings()
-  const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
+  const env = getBindings()
+  const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(
       JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }),
@@ -37,7 +32,7 @@ export async function POST(
     )
   }
 
-  const result = await executeOneSubtask(DB, apiKey, user.id, id, { force })
+  const result = await executeOneSubtask(env, apiKey, user.id, id, { force })
 
   const statusCode =
     result.status === 'failed'

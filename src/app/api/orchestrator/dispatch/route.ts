@@ -1,21 +1,5 @@
 /**
- * POST /api/orchestrator/dispatch — Sprint 14 v0.2.1 entry point
- *
- * Body:
- *   {
- *     task: string,
- *     auto_execute?: boolean,  // default true — fire self-tick fan-out after planning
- *     force_hitl?: boolean,    // default true when auto_execute — bypass HITL for v0.1 testing
- *   }
- *
- * Flow:
- *   1. auth
- *   2. HERMES decompose
- *   3. persist run + subtasks + audit to D1
- *   4. if auto_execute: fan-out via fetch to /internal/process-subtask for each ready subtask
- *      — each call is a FRESH Worker invocation with its own ~30s budget (avoids the
- *        ctx.waitUntil time-limit bug from v0.2)
- *   5. return run state immediately — UI polling animates progress
+ * POST /api/orchestrator/dispatch — Sprint 13 v0.1 routed via LLM Router.
  */
 
 import { NextRequest } from 'next/server'
@@ -57,8 +41,8 @@ export async function POST(req: NextRequest) {
   const autoExecute = body.auto_execute !== false
   const forceHitl = body.force_hitl !== false
 
-  const { DB, ANTHROPIC_API_KEY } = getBindings()
-  const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
+  const env = getBindings()
+  const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(
       JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }),
@@ -68,7 +52,7 @@ export async function POST(req: NextRequest) {
 
   let result
   try {
-    result = await decomposeTask(apiKey, task)
+    result = await decomposeTask(env, apiKey, user.id, task)
   } catch (err) {
     if (err instanceof HermesError) {
       return new Response(
@@ -79,7 +63,7 @@ export async function POST(req: NextRequest) {
     throw err
   }
 
-  const { runId, decompositionId } = await persistDecomposition(DB, {
+  const { runId, decompositionId } = await persistDecomposition(env.DB, {
     userId: user.id,
     originalTask: task,
     decomposition: result.decomposition,
@@ -87,10 +71,9 @@ export async function POST(req: NextRequest) {
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
     costUsd: result.costUsd,
+    modelId: result.modelId,
   })
 
-  // Fan out to self-tick endpoint. Each call is a fresh Worker invocation
-  // with its own ~30s ctx.waitUntil budget.
   if (autoExecute) {
     const origin = new URL(req.url).origin
     const cookieHeader = req.headers.get('cookie') ?? ''
@@ -102,14 +85,11 @@ export async function POST(req: NextRequest) {
           const readyQuery = forceHitl
             ? `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' ORDER BY short_id ASC LIMIT 10`
             : `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' AND human_required = 0 ORDER BY short_id ASC LIMIT 10`
-
-          const ready = await DB.prepare(readyQuery)
+          const ready = await env.DB.prepare(readyQuery)
             .bind(runId, user.id)
             .all<{ id: string }>()
-
           const ids = (ready.results ?? []).map((r) => r.id)
           if (ids.length === 0) return
-
           await Promise.all(
             ids.map((id) =>
               fetch(`${origin}/api/orchestrator/internal/process-subtask`, {
@@ -119,9 +99,7 @@ export async function POST(req: NextRequest) {
                   Cookie: cookieHeader,
                 },
                 body: JSON.stringify({ subtaskId: id, runId, force: forceHitl }),
-              }).catch(() => {
-                /* best-effort */
-              }),
+              }).catch(() => {}),
             ),
           )
         } catch {
@@ -142,6 +120,7 @@ export async function POST(req: NextRequest) {
         estimated_cost_usd: result.decomposition.estimated_total_cost_usd,
         estimated_duration_minutes: result.decomposition.estimated_duration_minutes,
         decomposition_cost_usd: result.costUsd,
+        decomposition_model: result.modelId,
         auto_execute: autoExecute,
         force_hitl: forceHitl,
       },
