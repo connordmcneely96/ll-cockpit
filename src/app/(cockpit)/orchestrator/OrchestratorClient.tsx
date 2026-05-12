@@ -89,14 +89,12 @@ export default function OrchestratorClient() {
     }
   }, [])
 
-  // Initial + periodic refresh of runs list
   useEffect(() => {
     void refreshRuns()
     const i = setInterval(refreshRuns, 5000)
     return () => clearInterval(i)
   }, [refreshRuns])
 
-  // Poll expanded run detail every 3s while a run is open and active
   useEffect(() => {
     if (!expandedRunId) return
     void refreshRunDetail(expandedRunId)
@@ -151,6 +149,8 @@ export default function OrchestratorClient() {
     }
   }
 
+  const canDispatch = !dispatching && task.trim().length > 0
+
   return (
     <div className="flex flex-col gap-6">
       {/* Dispatch form */}
@@ -162,20 +162,25 @@ export default function OrchestratorClient() {
           value={task}
           onChange={(e) => setTask(e.target.value)}
           placeholder="e.g. Build a Stripe integration with tests, deploy it, and write a LinkedIn post about it."
-          rows={3}
+          rows={4}
           maxLength={4000}
           className="w-full rounded-md bg-slate-950 border border-slate-700 text-slate-200 px-3 py-2 text-sm font-mono resize-y focus:outline-none focus:border-cyan-500"
         />
-        <div className="mt-2 flex items-center justify-between gap-3">
+        <div className="mt-3 flex items-center justify-between gap-3">
           <div className="text-xs text-slate-500 font-mono">
             {task.length} / 4000
           </div>
           <button
             onClick={dispatch}
-            disabled={dispatching || !task.trim()}
-            className="rounded-md bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-slate-950 font-mono text-xs uppercase tracking-wider px-4 py-2 transition"
+            disabled={!canDispatch}
+            style={{
+              backgroundColor: canDispatch ? '#06b6d4' : '#334155',
+              color: canDispatch ? '#020617' : '#64748b',
+              cursor: canDispatch ? 'pointer' : 'not-allowed',
+            }}
+            className="rounded-md font-mono text-sm uppercase tracking-wider px-6 py-3 transition hover:brightness-110 font-bold shadow-lg"
           >
-            {dispatching ? 'HERMES is planning...' : 'Dispatch to HERMES'}
+            {dispatching ? '⏳ HERMES is planning...' : '▶ Dispatch to HERMES'}
           </button>
         </div>
         {dispatchError && (
@@ -334,9 +339,14 @@ function RunDetail({
                 <button
                   onClick={() => onExecute(st.id)}
                   disabled={!canExecute || isExecuting}
-                  className="rounded bg-cyan-700 hover:bg-cyan-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-100 text-[11px] font-mono uppercase tracking-wider px-2 py-1 transition"
+                  style={{
+                    backgroundColor: canExecute && !isExecuting ? '#0891b2' : '#1e293b',
+                    color: canExecute && !isExecuting ? '#f1f5f9' : '#64748b',
+                    cursor: canExecute && !isExecuting ? 'pointer' : 'not-allowed',
+                  }}
+                  className="rounded text-xs font-mono uppercase tracking-wider px-3 py-1.5 transition hover:brightness-110"
                 >
-                  {isExecuting ? 'Running...' : 'Execute'}
+                  {isExecuting ? '⏳ Running...' : '▶ Execute'}
                 </button>
               </div>
 
