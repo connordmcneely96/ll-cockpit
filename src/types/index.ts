@@ -2,6 +2,7 @@
 
 export type AgentName =
   | 'nexus'
+  | 'hermes'
   | 'scout'
   | 'intake'
   | 'forge'
@@ -125,6 +126,89 @@ export interface ToolCallRow {
   tool_output: string | null
   user_approved: number
   created_at: number
+}
+
+// ── Sprint 14: Orchestration Types ──
+
+export type OrchestratorRunStatus =
+  | 'planning'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type SubtaskStatus =
+  | 'pending'
+  | 'ready'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'blocked'
+  | 'cancelled'
+
+export type RiskLevel = 'low' | 'medium' | 'high'
+
+export interface OrchestratorRunRow {
+  id: string
+  user_id: string
+  original_task: string
+  summary: string | null
+  status: OrchestratorRunStatus
+  subtask_count: number
+  subtasks_completed: number
+  subtasks_failed: number
+  estimated_cost_usd: number | null
+  estimated_duration_minutes: number | null
+  actual_cost_usd: number
+  tokens: number
+  decomposition_id: string | null
+  started_at: number
+  last_active_at: number
+  completed_at: number | null
+}
+
+export interface AgentSubtaskRow {
+  id: string
+  pipeline_run_id: string
+  user_id: string
+  short_id: string
+  agent_name: string
+  title: string
+  task: string
+  depends_on: string | null         // JSON array of short_ids
+  estimated_cost_usd: number | null
+  estimated_duration_seconds: number | null
+  risk_level: RiskLevel
+  human_required: number
+  status: SubtaskStatus
+  output: string | null
+  error_log: string | null
+  task_id: string | null
+  cost_usd: number
+  tokens: number
+  started_at: number | null
+  completed_at: number | null
+  created_at: number
+}
+
+export interface DecomposedSubtask {
+  id: string                         // short_id assigned by HERMES (e.g. 'st_1')
+  agent: string                      // uppercase agent name (e.g. 'FORGE')
+  title: string
+  task: string                       // detailed instruction
+  depends_on: string[]               // array of short_ids
+  estimated_cost_usd: number
+  estimated_duration_seconds: number
+  risk_level: RiskLevel
+  human_required: boolean
+}
+
+export interface DecompositionResult {
+  summary: string
+  estimated_total_cost_usd: number
+  estimated_duration_minutes: number
+  subtasks: DecomposedSubtask[]
 }
 
 // ── Cloudflare Env ──
