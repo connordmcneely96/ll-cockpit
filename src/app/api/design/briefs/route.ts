@@ -1,17 +1,17 @@
 /**
- * POST /api/design/briefs — Sprint 16 v0.1.1
- *   Robust wave kick: inline-execute st_1 SYNC (guarantees wave starts),
- *   then waitUntil(fetch /internal/process-subtask) for st_2 to chain via self-tick.
+ * POST /api/design/briefs — Sprint 16 v0.1.2
+ *   Reliable inline wave: runs the entire 3-subtask DAG synchronously in the
+ *   dispatch handler using runAutoWave. Total wall-clock ~60-90s but 100%
+ *   reliable. No dependence on waitUntil-fetch chains.
  *
  * GET /api/design/briefs — list user's briefs
  */
 
 import { NextRequest } from 'next/server'
-import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { decomposeTask, persistDecomposition, HermesError } from '@/lib/hermes'
-import { executeOneSubtask } from '@/lib/orchestrator'
+import { runAutoWave } from '@/lib/orchestrator'
 import { buildBriefPrompt } from '@/lib/design/pipeline'
 import type { DesignBriefInput } from '@/types'
 
@@ -115,66 +115,15 @@ export async function POST(req: NextRequest) {
     .bind(runId, now, briefId)
     .run()
 
-  // === ROBUST WAVE KICK (v0.1.1) ===
-  // The previous waitUntil-only approach didn't reliably fire — the dispatch
-  // would return but the wave never started. Now we inline-execute the first
-  // ready subtask (DESIGNER, ~6-15s) before returning the response, then chain
-  // via /internal/process-subtask for dependents using the proven self-tick.
-  const origin = new URL(req.url).origin
-  const cookieHeader = req.headers.get('cookie') ?? ''
-  const { ctx } = getCloudflareContext()
-
-  // Find first ready subtask (should be st_1 / DESIGNER for design build pipelines)
-  const firstReady = await env.DB.prepare(
-    `SELECT id FROM agent_subtasks
-       WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready'
-       ORDER BY short_id ASC LIMIT 1`,
-  )
-    .bind(runId, user.id)
-    .first<{ id: string }>()
-
-  let inlineExecuted = false
-  if (firstReady) {
-    try {
-      const inlineResult = await executeOneSubtask(env, apiKey, user.id, firstReady.id, {
-        force: true,
-      })
-      inlineExecuted = inlineResult.status === 'done'
-    } catch {
-      /* if inline fails, the chain below will still try to pick it up */
-    }
-  }
-
-  // Chain: fan out anything now ready (st_2 after st_1 done, plus any other parallel st_1s)
-  ctx.waitUntil(
-    (async () => {
-      try {
-        const ready = await env.DB.prepare(
-          `SELECT id FROM agent_subtasks
-             WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready'
-             ORDER BY short_id ASC LIMIT 10`,
-        )
-          .bind(runId, user.id)
-          .all<{ id: string }>()
-        const ids = (ready.results ?? []).map((r) => r.id)
-        if (ids.length === 0) return
-        await Promise.all(
-          ids.map((id) =>
-            fetch(`${origin}/api/orchestrator/internal/process-subtask`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Cookie: cookieHeader,
-              },
-              body: JSON.stringify({ subtaskId: id, runId, force: true }),
-            }).catch(() => {}),
-          ),
-        )
-      } catch {
-        /* best-effort */
-      }
-    })(),
-  )
+  // === RELIABLE INLINE WAVE (v0.1.2) ===
+  // Run the entire DAG synchronously. Total wall-clock ~60-90s for a 3-stage
+  // design build. Cloudflare paid Worker tier allows up to 5 minutes.
+  // No waitUntil-fetch chains — those proved unreliable in this codebase.
+  const waveResult = await runAutoWave(env, apiKey, user.id, runId, {
+    force: true,
+    maxWaves: 10,
+    maxParallel: 4,
+  })
 
   return new Response(
     JSON.stringify(
@@ -188,8 +137,8 @@ export async function POST(req: NextRequest) {
         subtask_count: decompResult.decomposition.subtasks.length,
         decomposition_cost_usd: decompResult.costUsd,
         decomposition_model: decompResult.modelId,
-        inline_executed: inlineExecuted,
-        preview_url_when_ready: `${origin}/design/preview/${briefId}`,
+        wave: waveResult,
+        preview_url_when_ready: `${new URL(req.url).origin}/design/preview/${briefId}`,
       },
       null, 2,
     ),
