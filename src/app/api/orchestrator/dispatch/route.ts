@@ -1,20 +1,20 @@
 /**
- * POST /api/orchestrator/dispatch — Sprint 14 v0.2 entry point
+ * POST /api/orchestrator/dispatch — Sprint 14 v0.2.1 entry point
  *
  * Body:
  *   {
  *     task: string,
- *     auto_execute?: boolean,    // default true — kick off runAutoWave after planning
- *     force_hitl?: boolean,      // default true when auto_execute — bypass HITL for v0.1 testing
- *     max_waves?: number,
- *     max_parallel?: number
+ *     auto_execute?: boolean,  // default true — fire self-tick fan-out after planning
+ *     force_hitl?: boolean,    // default true when auto_execute — bypass HITL for v0.1 testing
  *   }
  *
  * Flow:
  *   1. auth
  *   2. HERMES decompose
  *   3. persist run + subtasks + audit to D1
- *   4. if auto_execute: kick off runAutoWave via ctx.waitUntil (fire and forget)
+ *   4. if auto_execute: fan-out via fetch to /internal/process-subtask for each ready subtask
+ *      — each call is a FRESH Worker invocation with its own ~30s budget (avoids the
+ *        ctx.waitUntil time-limit bug from v0.2)
  *   5. return run state immediately — UI polling animates progress
  */
 
@@ -23,7 +23,6 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { decomposeTask, persistDecomposition, HermesError } from '@/lib/hermes'
-import { runAutoWave } from '@/lib/orchestrator'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -38,8 +37,6 @@ export async function POST(req: NextRequest) {
     task?: string
     auto_execute?: boolean
     force_hitl?: boolean
-    max_waves?: number
-    max_parallel?: number
   }
   try {
     body = (await req.json()) as typeof body
@@ -59,8 +56,6 @@ export async function POST(req: NextRequest) {
 
   const autoExecute = body.auto_execute !== false
   const forceHitl = body.force_hitl !== false
-  const maxWaves = body.max_waves ?? 20
-  const maxParallel = body.max_parallel ?? 8
 
   const { DB, ANTHROPIC_API_KEY } = getBindings()
   const apiKey = ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
@@ -94,17 +89,45 @@ export async function POST(req: NextRequest) {
     costUsd: result.costUsd,
   })
 
-  // Kick off the auto-wave in the background. UI polling will animate progress.
+  // Fan out to self-tick endpoint. Each call is a fresh Worker invocation
+  // with its own ~30s ctx.waitUntil budget.
   if (autoExecute) {
+    const origin = new URL(req.url).origin
+    const cookieHeader = req.headers.get('cookie') ?? ''
     const { ctx } = getCloudflareContext()
+
     ctx.waitUntil(
-      runAutoWave(DB, apiKey, user.id, runId, {
-        force: forceHitl,
-        maxWaves,
-        maxParallel,
-      }).catch(() => {
-        // best-effort; failures surface in D1 status
-      }),
+      (async () => {
+        try {
+          const readyQuery = forceHitl
+            ? `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' ORDER BY short_id ASC LIMIT 10`
+            : `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' AND human_required = 0 ORDER BY short_id ASC LIMIT 10`
+
+          const ready = await DB.prepare(readyQuery)
+            .bind(runId, user.id)
+            .all<{ id: string }>()
+
+          const ids = (ready.results ?? []).map((r) => r.id)
+          if (ids.length === 0) return
+
+          await Promise.all(
+            ids.map((id) =>
+              fetch(`${origin}/api/orchestrator/internal/process-subtask`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Cookie: cookieHeader,
+                },
+                body: JSON.stringify({ subtaskId: id, runId, force: forceHitl }),
+              }).catch(() => {
+                /* best-effort */
+              }),
+            ),
+          )
+        } catch {
+          /* best-effort */
+        }
+      })(),
     )
   }
 
