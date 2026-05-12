@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Code2, Globe, TerminalSquare,
-  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette,
+  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { icon: Bot,             label: 'AI Providers',  href: '/ai-providers' },
   { icon: Cpu,             label: 'Orchestrator',  href: '/orchestrator' },
   { icon: Palette,         label: 'Design Build',  href: '/design' },
+  { icon: History,         label: 'History',       href: '/history' },
 ]
 
 export function ActivityRail() {

@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useAgentStore } from '@/stores/agentStore'
 import { useAgentStream } from '@/hooks/useAgentStream'
 import { AgentMessage } from './AgentMessage'
 import { PermissionGate } from './PermissionGate'
 import { formatCost } from '@/lib/cost'
-import type { AgentConfig } from '@/types'
+import type { AgentConfig, ChatMessage, AgentChatMessageRow } from '@/types'
 
 interface AgentChatProps {
   agent: AgentConfig
@@ -34,7 +35,10 @@ export function AgentChat({ agent }: AgentChatProps) {
   const [input, setInput] = useState('')
   const [tab, setTab] = useState<Tab>('chat')
   const [taskId] = useState(() => crypto.randomUUID())
+  const [hydrating, setHydrating] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const searchParams = useSearchParams()
+  const chatIdParam = searchParams.get('chat')
 
   const rawMessages = useAgentStore((s) => s.sessions[agent.name])
   const messages = rawMessages ?? EMPTY_MESSAGES
@@ -42,6 +46,9 @@ export function AgentChat({ agent }: AgentChatProps) {
   const isStreaming = useAgentStore((s) => s.isStreaming)
   const tokens = useAgentStore((s) => s.sessionTokens[agent.name] ?? 0)
   const cost = useAgentStore((s) => s.sessionCost[agent.name] ?? 0)
+  const currentChatId = useAgentStore((s) => s.chatIds[agent.name] ?? null)
+  const loadChat = useAgentStore((s) => s.loadChat)
+  const clearSession = useAgentStore((s) => s.clearSession)
 
   const { sendMessage } = useAgentStream(agent.name)
 
@@ -49,6 +56,46 @@ export function AgentChat({ agent }: AgentChatProps) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messageCount])
+
+  // Sprint 17 v0.3.0 — hydrate from ?chat= query param
+  useEffect(() => {
+    if (!chatIdParam || chatIdParam === currentChatId) return
+    let cancelled = false
+    setHydrating(true)
+    fetch(`/api/chats/${chatIdParam}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Chat not found or access denied')
+        const data = (await res.json()) as {
+          chat: { id: string; agent_name: string }
+          messages: AgentChatMessageRow[]
+        }
+        if (cancelled) return
+        if (data.chat.agent_name !== agent.name) {
+          // Chat belongs to a different agent
+          alert(`This chat belongs to ${data.chat.agent_name.toUpperCase()}.`)
+          return
+        }
+        const hydrated: ChatMessage[] = data.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: m.created_at * 1000,
+          tokens: m.input_tokens + m.output_tokens,
+          costUsd: m.cost_usd,
+        }))
+        loadChat(agent.name, data.chat.id, hydrated)
+      })
+      .catch((e) => {
+        console.error('Failed to hydrate chat:', e)
+      })
+      .finally(() => {
+        if (!cancelled) setHydrating(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatIdParam, agent.name])
 
   const handleSubmit = async () => {
     const trimmed = input.trim()
@@ -62,6 +109,14 @@ export function AgentChat({ agent }: AgentChatProps) {
       e.preventDefault()
       handleSubmit()
     }
+  }
+
+  const handleNewChat = () => {
+    if (isStreaming) return
+    if (messages.length > 0 && !confirm('Start a new chat? Current messages will clear from this view (they remain saved in History).')) {
+      return
+    }
+    clearSession(agent.name)
   }
 
   return (
@@ -82,6 +137,14 @@ export function AgentChat({ agent }: AgentChatProps) {
             </span>
             <span className="ml-2 text-text3 font-mono text-xs">{agent.role}</span>
           </div>
+          {currentChatId && (
+            <span className="text-text3 font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue/10 border border-blue/20">
+              thread: {currentChatId.slice(0, 8)}
+            </span>
+          )}
+          {hydrating && (
+            <span className="text-text3 font-mono text-[10px]">loading history…</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {agent.permissions.can_deploy && (
@@ -104,6 +167,14 @@ export function AgentChat({ agent }: AgentChatProps) {
               {tokens.toLocaleString()} tok · {formatCost(cost)}
             </span>
           )}
+          <button
+            onClick={handleNewChat}
+            disabled={isStreaming}
+            title="Start new chat"
+            className="px-2 py-0.5 rounded-full bg-base-3 border border-white/[0.08] text-text2 hover:text-text1 hover:border-blue/30 font-mono text-[10px] transition-all disabled:opacity-40"
+          >
+            + NEW
+          </button>
         </div>
       </div>
 
