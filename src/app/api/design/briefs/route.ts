@@ -1,16 +1,9 @@
 /**
- * POST /api/design/briefs — Sprint 16 v0.1
- * GET /api/design/briefs — list user's briefs
+ * POST /api/design/briefs — Sprint 16 v0.1.1
+ *   Robust wave kick: inline-execute st_1 SYNC (guarantees wave starts),
+ *   then waitUntil(fetch /internal/process-subtask) for st_2 to chain via self-tick.
  *
- * POST flow:
- *   1. auth
- *   2. validate brief input
- *   3. insert design_briefs row (status='building')
- *   4. HERMES decompose with rich brief prompt → persistDecomposition opens orchestrator_run
- *   5. insert design_iterations row (iteration_number=1)
- *   6. update design_briefs with orchestrator_run_id
- *   7. fan out via fetch to /api/orchestrator/internal/process-subtask (same auto-wave pattern as orchestrator)
- *   8. return brief
+ * GET /api/design/briefs — list user's briefs
  */
 
 import { NextRequest } from 'next/server'
@@ -18,6 +11,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { decomposeTask, persistDecomposition, HermesError } from '@/lib/hermes'
+import { executeOneSubtask } from '@/lib/orchestrator'
 import { buildBriefPrompt } from '@/lib/design/pipeline'
 import type { DesignBriefInput } from '@/types'
 
@@ -37,7 +31,6 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
 
-  // Validate required fields
   const required: Array<keyof DesignBriefInput> = [
     'client_name', 'business_description', 'target_audience',
     'mood_tone', 'must_have_sections',
@@ -64,7 +57,6 @@ export async function POST(req: NextRequest) {
   const briefId = crypto.randomUUID()
   const iterationId = crypto.randomUUID()
 
-  // 1. Insert design_briefs (status='building', no run yet)
   await env.DB.prepare(
     `INSERT INTO design_briefs
      (id, user_id, client_name, business_description, target_audience, mood_tone,
@@ -83,7 +75,6 @@ export async function POST(req: NextRequest) {
     )
     .run()
 
-  // 2. HERMES decompose
   const briefPrompt = buildBriefPrompt(body, 1)
   let decompResult
   try {
@@ -99,7 +90,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // 3. Persist decomposition (creates orchestrator_runs + agent_subtasks rows)
   const { runId, decompositionId } = await persistDecomposition(env.DB, {
     userId: user.id,
     originalTask: briefPrompt,
@@ -111,7 +101,6 @@ export async function POST(req: NextRequest) {
     modelId: decompResult.modelId,
   })
 
-  // 4. Insert design_iterations row
   await env.DB.prepare(
     `INSERT INTO design_iterations
      (id, brief_id, iteration_number, orchestrator_run_id, status, created_at)
@@ -120,22 +109,50 @@ export async function POST(req: NextRequest) {
     .bind(iterationId, briefId, runId, now)
     .run()
 
-  // 5. Update brief with run id
   await env.DB.prepare(
     `UPDATE design_briefs SET orchestrator_run_id = ?, updated_at = ? WHERE id = ?`,
   )
     .bind(runId, now, briefId)
     .run()
 
-  // 6. Fan out the autonomous wave (same pattern as orchestrator dispatch)
+  // === ROBUST WAVE KICK (v0.1.1) ===
+  // The previous waitUntil-only approach didn't reliably fire — the dispatch
+  // would return but the wave never started. Now we inline-execute the first
+  // ready subtask (DESIGNER, ~6-15s) before returning the response, then chain
+  // via /internal/process-subtask for dependents using the proven self-tick.
   const origin = new URL(req.url).origin
   const cookieHeader = req.headers.get('cookie') ?? ''
   const { ctx } = getCloudflareContext()
+
+  // Find first ready subtask (should be st_1 / DESIGNER for design build pipelines)
+  const firstReady = await env.DB.prepare(
+    `SELECT id FROM agent_subtasks
+       WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready'
+       ORDER BY short_id ASC LIMIT 1`,
+  )
+    .bind(runId, user.id)
+    .first<{ id: string }>()
+
+  let inlineExecuted = false
+  if (firstReady) {
+    try {
+      const inlineResult = await executeOneSubtask(env, apiKey, user.id, firstReady.id, {
+        force: true,
+      })
+      inlineExecuted = inlineResult.status === 'done'
+    } catch {
+      /* if inline fails, the chain below will still try to pick it up */
+    }
+  }
+
+  // Chain: fan out anything now ready (st_2 after st_1 done, plus any other parallel st_1s)
   ctx.waitUntil(
     (async () => {
       try {
         const ready = await env.DB.prepare(
-          `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' ORDER BY short_id ASC LIMIT 10`,
+          `SELECT id FROM agent_subtasks
+             WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready'
+             ORDER BY short_id ASC LIMIT 10`,
         )
           .bind(runId, user.id)
           .all<{ id: string }>()
@@ -171,6 +188,7 @@ export async function POST(req: NextRequest) {
         subtask_count: decompResult.decomposition.subtasks.length,
         decomposition_cost_usd: decompResult.costUsd,
         decomposition_model: decompResult.modelId,
+        inline_executed: inlineExecuted,
         preview_url_when_ready: `${origin}/design/preview/${briefId}`,
       },
       null, 2,
