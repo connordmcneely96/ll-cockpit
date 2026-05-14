@@ -1,19 +1,42 @@
 /**
  * POST /api/design/briefs — Sprint 16 v0.2.1
  * GET /api/design/briefs — list user's briefs
+ *
+ * Both endpoints support two auth methods:
+ * 1. Cookie-based (Supabase SSR) — used by ll-cockpit browser sessions
+ * 2. Bearer token (Authorization header) — used by design Worker server components
  */
 
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { getBindings } from '@/lib/cloudflare'
 import { persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
 import { buildDesignBuildDAG } from '@/lib/design/pipeline'
 import type { DesignBriefInput } from '@/types'
 
-export async function POST(req: NextRequest) {
+async function getUser(req: NextRequest) {
+  // Method 1: Bearer token in Authorization header (design Worker → hub calls)
+  const authHeader = req.headers.get('Authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    const supabase = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    )
+    const { data, error } = await supabase.auth.getUser(token)
+    if (!error && data.user) return data.user
+  }
+
+  // Method 2: Cookie-based SSR (browser sessions on ll-cockpit)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
+  return user ?? null
+}
+
+export async function POST(req: NextRequest) {
+  const user = await getUser(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
@@ -104,8 +127,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getUser(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
