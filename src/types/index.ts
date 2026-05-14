@@ -185,6 +185,7 @@ export interface AgentSubtaskRow {
   agent_name: string
   title: string
   task: string
+  task_type: string | null   // Sprint 18F — model tiering per subtask
   depends_on: string | null
   estimated_cost_usd: number | null
   estimated_duration_seconds: number | null
@@ -206,6 +207,7 @@ export interface DecomposedSubtask {
   agent: string
   title: string
   task: string
+  task_type?: string        // Sprint 18F — override default model routing per subtask
   depends_on: string[]
   estimated_cost_usd: number
   estimated_duration_seconds: number
@@ -226,7 +228,8 @@ export type LLMProviderId = 'anthropic' | 'workers-ai' | 'openrouter' | 'ollama-
 export type ModelTier = 'premium' | 'standard' | 'cheap' | 'free'
 export type LLMTaskType =
   | 'decompose' | 'review' | 'draft' | 'package' | 'qualify' | 'classify'
-  | 'design_language' | 'compose_page' | 'compose_section' | 'assemble_page' | 'critique_design'
+  | 'design_language' | 'compose_page' | 'compose_section' | 'compose_simple' | 'compose_complex'
+  | 'assemble_page' | 'critique_design'
   | 'default' | string
 
 export interface LLMCompletionInput {
