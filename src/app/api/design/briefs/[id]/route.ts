@@ -1,5 +1,9 @@
 /**
  * GET /api/design/briefs/[id] — brief detail + iterations + lazy finalization
+ *
+ * Accepts auth via:
+ * - Authorization: Bearer {token} (from design Worker cross-calls)
+ * - @supabase/ssr session cookie (from direct Cockpit browser access)
  */
 
 import { NextRequest } from 'next/server'
@@ -7,13 +11,26 @@ import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { finalizeIterationIfReady, type FinalizationResult } from '@/lib/design/pipeline'
 import type { DesignBriefRow, DesignIterationRow, OrchestratorRunRow } from '@/types'
+import type { User } from '@supabase/supabase-js'
+
+async function getUserFromRequest(req: NextRequest): Promise<User | null> {
+  const authHeader = req.headers.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser(token)
+    return user ?? null
+  }
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user ?? null
+}
 
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getUserFromRequest(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
