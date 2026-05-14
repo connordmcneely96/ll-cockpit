@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { icon: Brain,           label: 'ORACLE',        href: '/oracle' },
   { icon: Bot,             label: 'AI Providers',  href: '/ai-providers' },
   { icon: Cpu,             label: 'Orchestrator',  href: '/orchestrator' },
-  { icon: Palette,         label: 'Design Build',  href: '/design' },
+  { icon: Palette,         label: 'Design Build',  href: '/api/design/launch' },
   { icon: History,         label: 'History',       href: '/history' },
 ]
 
