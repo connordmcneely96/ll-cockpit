@@ -2,6 +2,8 @@
  * Orchestrator runtime — Sprint 13 v0.1 routed via LLM Router.
  * Sprint 16 v0.1.1 — per-agent max_tokens.
  * Sprint 16 v0.2.0 — ASSEMBLER pseudo-agent special-case handler (deterministic, $0).
+ * Sprint 18F      — reads agent_subtasks.task_type and passes to router so
+ *                   different subtasks of the same agent can use different models.
  */
 
 import type {
@@ -59,6 +61,7 @@ export async function executeOneSubtask(
       agent_name: string
       title: string
       task: string
+      task_type: string | null   // Sprint 18F — new column
       depends_on: string | null
       status: string
       human_required: number
@@ -175,10 +178,15 @@ export async function executeOneSubtask(
     const userMessage = dependencyContext + subtask.task
     const maxTokens = AGENT_MAX_TOKENS[subtask.agent_name] ?? DEFAULT_MAX_TOKENS
 
+    // Sprint 18F: use the per-subtask task_type if set, otherwise 'default'
+    const taskType = subtask.task_type && subtask.task_type !== 'default'
+      ? subtask.task_type
+      : 'default'
+
     try {
       const result: LLMCompletionResult = await route({
         agentName: subtask.agent_name,
-        taskType: 'default',
+        taskType,
         systemPrompt: agent.systemPrompt,
         userMessage,
         maxTokens,
