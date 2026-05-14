@@ -3,6 +3,10 @@
  *
  * Calls route() with (agent='hermes', task='decompose') instead of hard-coded Sonnet.
  * The router resolves policy from D1 and falls back to alternates on failure.
+ *
+ * Sprint 18F: persistDecomposition now persists optional task_type per subtask
+ * so the orchestrator can route different subtasks of the same agent to
+ * different models.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -250,9 +254,9 @@ export async function persistDecomposition(
       .prepare(
         `INSERT INTO agent_subtasks
          (id, pipeline_run_id, user_id, short_id, agent_name, title, task,
-          depends_on, estimated_cost_usd, estimated_duration_seconds,
+          task_type, depends_on, estimated_cost_usd, estimated_duration_seconds,
           risk_level, human_required, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -262,6 +266,7 @@ export async function persistDecomposition(
         st.agent.toLowerCase(),
         st.title,
         st.task,
+        st.task_type ?? 'default',
         JSON.stringify(st.depends_on),
         st.estimated_cost_usd ?? null,
         st.estimated_duration_seconds ?? null,
