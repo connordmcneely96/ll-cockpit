@@ -7,8 +7,9 @@
  * Request:  { message: string }
  * Response: { ok, final_text, tool_hops, cost_usd, tokens, latency_ms }
  *
- * Note: non-streaming for v0.3.0 — the iteration loop is short enough that
- * full-response JSON is fine. Streaming can be added in v0.3.1 if needed.
+ * Accepts auth via:
+ * - Authorization: Bearer {token} (from design Worker cross-calls)
+ * - @supabase/ssr session cookie (from direct Cockpit browser access)
  */
 
 import { NextRequest } from 'next/server'
@@ -17,13 +18,26 @@ import { getBindings } from '@/lib/cloudflare'
 import { runIterationAgent } from '@/lib/design/iteration-agent'
 import { loadDesignChatHistory, listDesignChatMessages } from '@/lib/design/iteration-chat'
 import type { DesignBriefRow } from '@/types'
+import type { User } from '@supabase/supabase-js'
+
+async function getUserFromRequest(req: NextRequest): Promise<User | null> {
+  const authHeader = req.headers.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser(token)
+    return user ?? null
+  }
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user ?? null
+}
 
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getUserFromRequest(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
@@ -80,6 +94,8 @@ export async function POST(
         {
           ok: true,
           final_text: result.finalText,
+          reply: result.finalText,
+          agent: 'DESIGNER',
           tool_hops: result.toolHops,
           cost_usd: result.totalCostUsd,
           input_tokens: result.totalInputTokens,
@@ -104,14 +120,12 @@ export async function POST(
 
 /**
  * GET /api/design/briefs/[id]/chat — list prior chat messages for the brief.
- * Used by the iteration chat UI on initial load.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getUserFromRequest(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
