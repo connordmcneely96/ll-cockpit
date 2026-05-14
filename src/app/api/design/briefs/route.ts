@@ -1,6 +1,10 @@
 /**
  * POST /api/design/briefs — Sprint 16 v0.2.1
  * GET /api/design/briefs — list user's briefs
+ *
+ * Accepts auth via:
+ * - Authorization: Bearer {token} (from design Worker cross-calls)
+ * - @supabase/ssr session cookie (from direct Cockpit browser access)
  */
 
 import { NextRequest } from 'next/server'
@@ -10,10 +14,24 @@ import { persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
 import { buildDesignBuildDAG } from '@/lib/design/pipeline'
 import type { DesignBriefInput } from '@/types'
+import type { User } from '@supabase/supabase-js'
 
-export async function POST(req: NextRequest) {
+async function getUserFromRequest(req: NextRequest): Promise<User | null> {
+  const authHeader = req.headers.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser(token)
+    return user ?? null
+  }
+  // Fall back to SSR session cookie
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
+  return user ?? null
+}
+
+export async function POST(req: NextRequest) {
+  const user = await getUserFromRequest(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
@@ -104,8 +122,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getUserFromRequest(req)
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
