@@ -6,9 +6,14 @@
  * (tenant_id IS NULL) plus the authenticated user's own systems.
  *
  * AUTO-SEED: If the system-wide library is empty when GET is called,
- * the seeder runs automatically before returning results. This keeps
- * deployment fully automated — no DevTools commands required.
- * Seeding is idempotent so concurrent first-loads are safe.
+ * the seeder kicks off in the BACKGROUND via ctx.waitUntil (Cloudflare
+ * workers pattern that lets work continue after the response returns).
+ * The first GET returns { systems: [], seeding: true } immediately so
+ * the UI knows to poll. Subsequent GETs return populated data once seed
+ * completes (~30-60s).
+ *
+ * In-progress seeds are guarded by an idempotency check at the start of
+ * seedDesignSystems — concurrent firings are safe.
  *
  * Query params:
  *   ?category=fintech    Filter by category
@@ -18,11 +23,11 @@
 
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { getBindings } from '@/lib/cloudflare'
 import { seedDesignSystems } from '@/lib/design/design-systems-seeder'
 import type { User } from '@supabase/supabase-js'
 
-// Locked: only Connor's user_id can manually re-seed.
 const ADMIN_USER_ID = '579acc61-b896-4a0e-bcee-6c369ee5f303'
 
 async function getUserFromRequest(req: NextRequest): Promise<User | null> {
@@ -46,28 +51,38 @@ export async function GET(req: NextRequest) {
 
   const env = getBindings()
 
-  // Sprint 18E auto-seed: if the system-wide library is empty, seed it now.
-  // This is idempotent and self-healing — first GET after deploy populates
-  // the library. No admin command needed.
+  // Sprint 18E auto-seed: if the system-wide library is empty, kick off
+  // the seed in the background. Return current (likely empty) state to
+  // caller immediately. UI polls every few seconds until populated.
+  let seedingInProgress = false
   try {
     const existing = await env.DB
       .prepare(`SELECT COUNT(*) as cnt FROM design_systems WHERE tenant_id IS NULL`)
       .first<{ cnt: number }>()
 
     if ((existing?.cnt ?? 0) === 0) {
-      console.log('[design-systems] library empty — auto-seeding from VoltAgent…')
-      const seedResult = await seedDesignSystems(env)
-      console.log(
-        `[design-systems] auto-seed complete: ${seedResult.seeded} seeded, ${seedResult.skipped} skipped, ${seedResult.failed} failed`,
-      )
-      if (seedResult.errors.length > 0) {
-        console.error('[design-systems] seed errors:', seedResult.errors.slice(0, 5))
+      console.log('[design-systems] library empty — kicking off background seed')
+      seedingInProgress = true
+      try {
+        const ctx = getCloudflareContext().ctx
+        ctx.waitUntil(
+          seedDesignSystems(env)
+            .then((r) =>
+              console.log(
+                `[design-systems] background seed complete: ${r.seeded} seeded, ${r.skipped} skipped, ${r.failed} failed`,
+              ),
+            )
+            .catch((err) => console.error('[design-systems] background seed failed:', err)),
+        )
+      } catch (err) {
+        // If ctx isn't available for some reason, fall back to inline seed (slow).
+        console.error('[design-systems] waitUntil not available, running inline:', err)
+        await seedDesignSystems(env)
+        seedingInProgress = false
       }
     }
   } catch (err) {
-    // Auto-seed failures are non-fatal — fall through to return whatever's in D1.
-    // Errors get logged so we can debug if the library is permanently empty.
-    console.error('[design-systems] auto-seed exception:', err)
+    console.error('[design-systems] auto-seed setup exception:', err)
   }
 
   const url = new URL(req.url)
@@ -75,7 +90,6 @@ export async function GET(req: NextRequest) {
   const tag = url.searchParams.get('tag')
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 100), 200)
 
-  // System-wide (tenant_id IS NULL) plus user's own systems
   let sql = `SELECT id, slug, name, description, category, primary_color, tags, source_url
              FROM design_systems
              WHERE (tenant_id IS NULL OR user_id = ?)`
@@ -115,9 +129,10 @@ export async function GET(req: NextRequest) {
     systems = systems.filter((s) => s.tags.includes(tag))
   }
 
-  return new Response(JSON.stringify({ systems, count: systems.length }, null, 2), {
-    headers: { 'Content-Type': 'application/json' },
-  })
+  return new Response(
+    JSON.stringify({ systems, count: systems.length, seeding: seedingInProgress }, null, 2),
+    { headers: { 'Content-Type': 'application/json' } },
+  )
 }
 
 /**
@@ -125,8 +140,8 @@ export async function GET(req: NextRequest) {
  *
  * Body: { action: 'seed' }
  *
- * GET auto-seeds on first empty hit so this is rarely needed. Use it to
- * force a re-fetch if VoltAgent adds new brands (rerun is idempotent).
+ * GET auto-seeds on first empty hit (in background) so this is rarely
+ * needed. Use it to force re-fetch if VoltAgent adds new brands.
  */
 export async function POST(req: NextRequest) {
   const user = await getUserFromRequest(req)
