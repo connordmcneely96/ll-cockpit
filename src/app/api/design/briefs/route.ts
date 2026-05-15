@@ -2,6 +2,11 @@
  * POST /api/design/briefs — Sprint 16 v0.2.1
  * GET /api/design/briefs — list user's briefs
  *
+ * Sprint 18G: maxParallel reduced from 8 to 4 to avoid Anthropic per-org
+ * rate limit (10k output tokens/min on Haiku). Combined with retry logic
+ * in anthropic.ts provider, this prevents the cascading rate-limit failures
+ * observed in the Test Coffee Co. brief.
+ *
  * Accepts auth via:
  * - Authorization: Bearer {token} (from design Worker cross-calls)
  * - @supabase/ssr session cookie (from direct Cockpit browser access)
@@ -24,7 +29,6 @@ async function getUserFromRequest(req: NextRequest): Promise<User | null> {
     const { data: { user } } = await supabase.auth.getUser(token)
     return user ?? null
   }
-  // Fall back to SSR session cookie
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   return user ?? null
@@ -100,8 +104,10 @@ export async function POST(req: NextRequest) {
   await env.DB.prepare(`UPDATE design_briefs SET orchestrator_run_id = ?, updated_at = ? WHERE id = ?`)
     .bind(runId, now, briefId).run()
 
+  // Sprint 18G — explicit maxParallel: 4 (was 8) to stay under Anthropic
+  // rate limits. Retry logic in anthropic.ts handles transient 429/529.
   const waveResult = await runAutoWave(env, apiKey, user.id, runId, {
-    force: true, maxWaves: 10, maxParallel: 8,
+    force: true, maxWaves: 10, maxParallel: 4,
   })
 
   return new Response(
