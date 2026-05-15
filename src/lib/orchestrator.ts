@@ -6,16 +6,25 @@
  *                   different subtasks of the same agent can use different models.
  * Sprint 18G      — maxParallel reduced to 4 by default for Anthropic rate-limit safety;
  *                   added inter-wave delay (1s) so retries from prior wave can clear.
+ * Sprint 18H      — auto-finalize design iterations when wave completes.
+ *                   Closes the gap where ASSEMBLER's HTML was sitting in
+ *                   agent_subtasks.output but never propagated to
+ *                   design_iterations.page_html because finalize() was only
+ *                   triggered by the hub's GET /api/design/briefs/[id] route,
+ *                   which the design Worker's /detail polling never calls.
  */
 
 import type {
   CloudflareEnv,
   LLMCompletionResult,
+  DesignBriefRow,
+  DesignIterationRow,
+  OrchestratorRunRow,
 } from '@/types'
 import { getAgent } from './agents'
 import { cascadeReady, refreshRunAggregates } from './hermes'
 import { route } from './llm/router'
-import { executeAssembler } from './design/pipeline'
+import { executeAssembler, finalizeIterationIfReady } from './design/pipeline'
 
 export interface SubtaskExecutionResult {
   subtaskId: string
@@ -45,11 +54,6 @@ const AGENT_MAX_TOKENS: Record<string, number> = {
 }
 const DEFAULT_MAX_TOKENS = 2048
 
-// Sprint 18G — Anthropic's per-org rate limit is ~10k output tokens/min on Haiku.
-// At 8192 max_tokens per COMPOSER, 4 parallel = 32k peak burst. That's tight
-// but Anthropic generally allows brief bursts above limit, and our new retry
-// logic in anthropic.ts handles 429s. Wave delay gives Anthropic's tokenizer
-// buckets time to refill between waves.
 const DEFAULT_MAX_PARALLEL = 4
 const INTER_WAVE_DELAY_MS = 1000
 
@@ -126,7 +130,6 @@ export async function executeOneSubtask(
     }
   }
 
-  // Pull dependency outputs as context
   let dependencyContext = ''
   const depShortIds: string[] = subtask.depends_on ? JSON.parse(subtask.depends_on) : []
   if (depShortIds.length > 0) {
@@ -159,7 +162,6 @@ export async function executeOneSubtask(
     }
   }
 
-  // Mark running
   const startedAt = Math.floor(Date.now() / 1000)
   await db
     .prepare(
@@ -175,7 +177,6 @@ export async function executeOneSubtask(
   let failedReason: string | null = null
   let modelId: string | undefined
 
-  // ─── ASSEMBLER pseudo-agent: deterministic, no LLM call ───
   if (subtask.agent_name === 'assembler') {
     try {
       const result = await executeAssembler(env, userId, subtask.pipeline_run_id)
@@ -188,7 +189,6 @@ export async function executeOneSubtask(
       failedReason = err instanceof Error ? err.message : String(err)
     }
   } else {
-    // ─── Standard LLM path ───
     const userMessage = dependencyContext + subtask.task
     const maxTokens = AGENT_MAX_TOKENS[subtask.agent_name] ?? DEFAULT_MAX_TOKENS
     const taskType = subtask.task_type && subtask.task_type !== 'default'
@@ -259,6 +259,74 @@ export interface AutoWaveResult {
   total_cost_usd: number
   total_tokens: number
   stopped_reason: 'completed' | 'max_waves' | 'no_progress' | 'error'
+  // Sprint 18H — surface finalization info so callers know if preview is ready
+  finalized?: boolean
+  preview_url?: string
+}
+
+/**
+ * Sprint 18H — Auto-finalize design iterations after wave completion.
+ *
+ * Looks up the brief associated with this orchestrator run and, if it's a
+ * design build with a ready ASSEMBLER output, copies ASSEMBLER's HTML into
+ * design_iterations.page_html, saves to R2, and flips the brief to
+ * preview_ready. Returns the result so the caller can surface preview_url.
+ *
+ * Idempotent: finalizeIterationIfReady returns {finalized: false} if the
+ * iteration is already finalized.
+ *
+ * Tenant-scoped: looks up brief by orchestrator_run_id which is bound to
+ * the user_id at create time, so no cross-tenant data exposure.
+ */
+async function maybeFinalizeDesignBrief(
+  env: CloudflareEnv,
+  origin: string,
+  runId: string,
+): Promise<{ finalized: boolean; preview_url?: string }> {
+  const db = env.DB
+
+  // Find the brief tied to this run (if any — non-design runs return null)
+  const brief = await db
+    .prepare(`SELECT * FROM design_briefs WHERE orchestrator_run_id = ? LIMIT 1`)
+    .bind(runId)
+    .first<DesignBriefRow>()
+  if (!brief) {
+    return { finalized: false }
+  }
+
+  // Find the latest iteration for this brief
+  const iteration = await db
+    .prepare(
+      `SELECT * FROM design_iterations
+       WHERE brief_id = ?
+       ORDER BY iteration_number DESC
+       LIMIT 1`,
+    )
+    .bind(brief.id)
+    .first<DesignIterationRow>()
+  if (!iteration) {
+    return { finalized: false }
+  }
+
+  // Find the orchestrator run row
+  const run = await db
+    .prepare(`SELECT * FROM orchestrator_runs WHERE id = ?`)
+    .bind(runId)
+    .first<OrchestratorRunRow>()
+  if (!run) {
+    return { finalized: false }
+  }
+
+  try {
+    const result = await finalizeIterationIfReady(env, origin, brief, iteration, run)
+    return {
+      finalized: result.finalized,
+      preview_url: result.preview_url,
+    }
+  } catch (err) {
+    console.error(`Sprint 18H auto-finalize failed for run ${runId}:`, err)
+    return { finalized: false }
+  }
 }
 
 export async function runAutoWave(
@@ -266,14 +334,19 @@ export async function runAutoWave(
   apiKey: string,
   userId: string,
   runId: string,
-  opts: { force?: boolean; maxWaves?: number; maxParallel?: number } = {},
+  opts: {
+    force?: boolean
+    maxWaves?: number
+    maxParallel?: number
+    // Sprint 18H — caller passes its origin so finalize can set preview_url.
+    // Defaults to ll-cockpit.connorpattern.workers.dev hub URL (where preview routes live).
+    origin?: string
+  } = {},
 ): Promise<AutoWaveResult> {
   const db = env.DB
   const maxWaves = opts.maxWaves ?? 20
-  // Sprint 18G — cap parallelism at DEFAULT_MAX_PARALLEL (4) unless explicitly overridden.
-  // This stays well under Anthropic's per-org output-tokens/min limit when
-  // running 8+ COMPOSER subtasks. Previous default (8) hit 429s on Haiku.
   const maxParallel = opts.maxParallel ?? DEFAULT_MAX_PARALLEL
+  const finalizeOrigin = opts.origin ?? 'https://ll-cockpit.connorpattern.workers.dev'
   let waves = 0
   let executed = 0
   let failed = 0
@@ -322,14 +395,18 @@ export async function runAutoWave(
       break
     }
 
-    // Sprint 18G — brief pause between waves so Anthropic rate-limit buckets
-    // can refill. Only delay if more work is likely (we executed something).
     if (executed > 0) {
       await sleep(INTER_WAVE_DELAY_MS)
     }
   }
 
   if (waves >= maxWaves) stoppedReason = 'max_waves'
+
+  // Sprint 18H — auto-finalize design briefs when the wave loop exits.
+  // Runs whether the loop exited via 'completed', 'no_progress', or 'max_waves'.
+  // finalizeIterationIfReady is idempotent + only finalizes if run.status === 'completed',
+  // so spurious calls (e.g. after no_progress with failed subtasks) are no-ops.
+  const finalizationResult = await maybeFinalizeDesignBrief(env, finalizeOrigin, runId)
 
   return {
     runId,
@@ -340,5 +417,7 @@ export async function runAutoWave(
     total_cost_usd: totalCost,
     total_tokens: totalTokens,
     stopped_reason: stoppedReason,
+    finalized: finalizationResult.finalized,
+    preview_url: finalizationResult.preview_url,
   }
 }
