@@ -1,9 +1,14 @@
 /**
  * GET /api/design/systems — list available design systems
- * POST /api/design/systems/seed — admin-only one-time seeder
+ * POST /api/design/systems — manual seed action (admin)
  *
  * Sprint 18E. Public list endpoint shows system-wide examples
  * (tenant_id IS NULL) plus the authenticated user's own systems.
+ *
+ * AUTO-SEED: If the system-wide library is empty when GET is called,
+ * the seeder runs automatically before returning results. This keeps
+ * deployment fully automated — no DevTools commands required.
+ * Seeding is idempotent so concurrent first-loads are safe.
  *
  * Query params:
  *   ?category=fintech    Filter by category
@@ -17,7 +22,7 @@ import { getBindings } from '@/lib/cloudflare'
 import { seedDesignSystems } from '@/lib/design/design-systems-seeder'
 import type { User } from '@supabase/supabase-js'
 
-// Locked: only Connor's user_id can seed.
+// Locked: only Connor's user_id can manually re-seed.
 const ADMIN_USER_ID = '579acc61-b896-4a0e-bcee-6c369ee5f303'
 
 async function getUserFromRequest(req: NextRequest): Promise<User | null> {
@@ -40,6 +45,31 @@ export async function GET(req: NextRequest) {
   }
 
   const env = getBindings()
+
+  // Sprint 18E auto-seed: if the system-wide library is empty, seed it now.
+  // This is idempotent and self-healing — first GET after deploy populates
+  // the library. No admin command needed.
+  try {
+    const existing = await env.DB
+      .prepare(`SELECT COUNT(*) as cnt FROM design_systems WHERE tenant_id IS NULL`)
+      .first<{ cnt: number }>()
+
+    if ((existing?.cnt ?? 0) === 0) {
+      console.log('[design-systems] library empty — auto-seeding from VoltAgent…')
+      const seedResult = await seedDesignSystems(env)
+      console.log(
+        `[design-systems] auto-seed complete: ${seedResult.seeded} seeded, ${seedResult.skipped} skipped, ${seedResult.failed} failed`,
+      )
+      if (seedResult.errors.length > 0) {
+        console.error('[design-systems] seed errors:', seedResult.errors.slice(0, 5))
+      }
+    }
+  } catch (err) {
+    // Auto-seed failures are non-fatal — fall through to return whatever's in D1.
+    // Errors get logged so we can debug if the library is permanently empty.
+    console.error('[design-systems] auto-seed exception:', err)
+  }
+
   const url = new URL(req.url)
   const category = url.searchParams.get('category')
   const tag = url.searchParams.get('tag')
@@ -81,7 +111,6 @@ export async function GET(req: NextRequest) {
     source_url: r.source_url,
   }))
 
-  // Filter by tag in JS (D1 doesn't have native JSON contains)
   if (tag) {
     systems = systems.filter((s) => s.tags.includes(tag))
   }
@@ -92,11 +121,12 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * POST /api/design/systems — admin seed action.
+ * POST /api/design/systems — admin manual seed/re-seed.
  *
  * Body: { action: 'seed' }
  *
- * Only callable by Connor's user_id. Idempotent — skips existing slugs.
+ * GET auto-seeds on first empty hit so this is rarely needed. Use it to
+ * force a re-fetch if VoltAgent adds new brands (rerun is idempotent).
  */
 export async function POST(req: NextRequest) {
   const user = await getUserFromRequest(req)
