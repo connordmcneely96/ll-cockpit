@@ -1,11 +1,13 @@
 /**
- * POST /api/design/briefs — Sprint 16 v0.2.1
+ * POST /api/design/briefs — Sprint 16 → 18E (attached design systems)
  * GET /api/design/briefs — list user's briefs
  *
- * Sprint 18G: maxParallel reduced from 8 to 4 to avoid Anthropic per-org
- * rate limit (10k output tokens/min on Haiku). Combined with retry logic
- * in anthropic.ts provider, this prevents the cascading rate-limit failures
- * observed in the Test Coffee Co. brief.
+ * Sprint 18E addition: brief input may include attached_design_system_slug.
+ * When set, the pipeline loads the system's DESIGN.md from R2 and passes
+ * it to DESIGNER as upstream context, ensuring the build inherits the
+ * attached system's tokens verbatim.
+ *
+ * Sprint 18G: maxParallel: 4 (was 8) for rate-limit safety.
  *
  * Accepts auth via:
  * - Authorization: Bearer {token} (from design Worker cross-calls)
@@ -17,9 +19,14 @@ import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
-import { buildDesignBuildDAG } from '@/lib/design/pipeline'
+import { buildDesignBuildDAG, loadAttachedDesignSystem } from '@/lib/design/pipeline'
 import type { DesignBriefInput } from '@/types'
 import type { User } from '@supabase/supabase-js'
+
+// Sprint 18E — extend the brief input shape with an optional attached system slug
+interface DesignBriefInputExt extends DesignBriefInput {
+  attached_design_system_slug?: string
+}
 
 async function getUserFromRequest(req: NextRequest): Promise<User | null> {
   const authHeader = req.headers.get('authorization')
@@ -40,9 +47,9 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
-  let body: DesignBriefInput
+  let body: DesignBriefInputExt
   try {
-    body = (await req.json()) as DesignBriefInput
+    body = (await req.json()) as DesignBriefInputExt
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
@@ -63,6 +70,23 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
   }
 
+  // Sprint 18E — load attached design system if requested
+  const attachedSystem = body.attached_design_system_slug
+    ? await loadAttachedDesignSystem(env, body.attached_design_system_slug, user.id)
+    : null
+
+  // If slug was supplied but not resolvable, fail loudly so user knows
+  if (body.attached_design_system_slug && !attachedSystem) {
+    return new Response(
+      JSON.stringify({
+        error: 'design_system_not_found',
+        slug: body.attached_design_system_slug,
+        message: 'The requested design system was not found or is not accessible.',
+      }),
+      { status: 404 },
+    )
+  }
+
   const now = Math.floor(Date.now() / 1000)
   const briefId = crypto.randomUUID()
   const iterationId = crypto.randomUUID()
@@ -71,8 +95,8 @@ export async function POST(req: NextRequest) {
     `INSERT INTO design_briefs
      (id, user_id, client_name, business_description, target_audience, mood_tone,
       style_references, must_have_sections, brand_colors, constraints,
-      status, current_iteration, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'building', 1, ?, ?)`,
+      status, current_iteration, attached_design_system_slug, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'building', 1, ?, ?, ?)`,
   ).bind(
     briefId, user.id, body.client_name, body.business_description,
     body.target_audience, body.mood_tone,
@@ -80,20 +104,22 @@ export async function POST(req: NextRequest) {
     body.must_have_sections,
     body.brand_colors ?? null,
     body.constraints ?? null,
+    body.attached_design_system_slug ?? null,
     now, now,
   ).run()
 
-  const decomposition = buildDesignBuildDAG(body, 1)
+  // Sprint 18E — pass attached system to DAG builder
+  const decomposition = buildDesignBuildDAG(body, 1, undefined, attachedSystem ?? undefined)
 
   const { runId, decompositionId } = await persistDecomposition(env.DB, {
     userId: user.id,
-    originalTask: `Design build: ${body.client_name}`,
+    originalTask: `Design build: ${body.client_name}${attachedSystem ? ` (system: ${attachedSystem.name})` : ''}`,
     decomposition,
     raw: JSON.stringify(decomposition, null, 2),
     inputTokens: 0,
     outputTokens: 0,
     costUsd: 0,
-    modelId: 'design-build-dag-v0.2.1',
+    modelId: 'design-build-dag-v0.3.0',
   })
 
   await env.DB.prepare(
@@ -104,8 +130,6 @@ export async function POST(req: NextRequest) {
   await env.DB.prepare(`UPDATE design_briefs SET orchestrator_run_id = ?, updated_at = ? WHERE id = ?`)
     .bind(runId, now, briefId).run()
 
-  // Sprint 18G — explicit maxParallel: 4 (was 8) to stay under Anthropic
-  // rate limits. Retry logic in anthropic.ts handles transient 429/529.
   const waveResult = await runAutoWave(env, apiKey, user.id, runId, {
     force: true, maxWaves: 10, maxParallel: 4,
   })
@@ -117,6 +141,10 @@ export async function POST(req: NextRequest) {
       iteration_id: iterationId,
       orchestrator_run_id: runId,
       decomposition_id: decompositionId,
+      attached_design_system: attachedSystem ? {
+        slug: attachedSystem.slug,
+        name: attachedSystem.name,
+      } : null,
       summary: decomposition.summary,
       subtask_count: decomposition.subtasks.length,
       sections_detected: decomposition.subtasks.filter((s) => s.agent === 'COMPOSER').length,
