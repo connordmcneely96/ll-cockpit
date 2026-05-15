@@ -4,6 +4,8 @@
  * Sprint 16 v0.2.0 — ASSEMBLER pseudo-agent special-case handler (deterministic, $0).
  * Sprint 18F      — reads agent_subtasks.task_type and passes to router so
  *                   different subtasks of the same agent can use different models.
+ * Sprint 18G      — maxParallel reduced to 4 by default for Anthropic rate-limit safety;
+ *                   added inter-wave delay (1s) so retries from prior wave can clear.
  */
 
 import type {
@@ -43,6 +45,18 @@ const AGENT_MAX_TOKENS: Record<string, number> = {
 }
 const DEFAULT_MAX_TOKENS = 2048
 
+// Sprint 18G — Anthropic's per-org rate limit is ~10k output tokens/min on Haiku.
+// At 8192 max_tokens per COMPOSER, 4 parallel = 32k peak burst. That's tight
+// but Anthropic generally allows brief bursts above limit, and our new retry
+// logic in anthropic.ts handles 429s. Wave delay gives Anthropic's tokenizer
+// buckets time to refill between waves.
+const DEFAULT_MAX_PARALLEL = 4
+const INTER_WAVE_DELAY_MS = 1000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export async function executeOneSubtask(
   env: CloudflareEnv,
   apiKey: string,
@@ -61,7 +75,7 @@ export async function executeOneSubtask(
       agent_name: string
       title: string
       task: string
-      task_type: string | null   // Sprint 18F — new column
+      task_type: string | null
       depends_on: string | null
       status: string
       human_required: number
@@ -177,8 +191,6 @@ export async function executeOneSubtask(
     // ─── Standard LLM path ───
     const userMessage = dependencyContext + subtask.task
     const maxTokens = AGENT_MAX_TOKENS[subtask.agent_name] ?? DEFAULT_MAX_TOKENS
-
-    // Sprint 18F: use the per-subtask task_type if set, otherwise 'default'
     const taskType = subtask.task_type && subtask.task_type !== 'default'
       ? subtask.task_type
       : 'default'
@@ -208,6 +220,7 @@ export async function executeOneSubtask(
 
   const completedAt = Math.floor(Date.now() / 1000)
   if (failedReason) {
+    console.error(`subtask ${subtaskId} (${subtask.agent_name}/${subtask.task_type}) failed:`, failedReason)
     await db
       .prepare(
         `UPDATE agent_subtasks SET status = 'failed', error_log = ?, completed_at = ? WHERE id = ?`,
@@ -257,7 +270,10 @@ export async function runAutoWave(
 ): Promise<AutoWaveResult> {
   const db = env.DB
   const maxWaves = opts.maxWaves ?? 20
-  const maxParallel = opts.maxParallel ?? 8
+  // Sprint 18G — cap parallelism at DEFAULT_MAX_PARALLEL (4) unless explicitly overridden.
+  // This stays well under Anthropic's per-org output-tokens/min limit when
+  // running 8+ COMPOSER subtasks. Previous default (8) hit 429s on Haiku.
+  const maxParallel = opts.maxParallel ?? DEFAULT_MAX_PARALLEL
   let waves = 0
   let executed = 0
   let failed = 0
@@ -280,11 +296,13 @@ export async function runAutoWave(
       stoppedReason = 'completed'
       break
     }
+
     const results = await Promise.all(
       batch.map((row) =>
         executeOneSubtask(env, apiKey, userId, row.id, { force: opts.force }),
       ),
     )
+
     let madeProgress = false
     for (const r of results) {
       if (r.status === 'done') {
@@ -302,6 +320,12 @@ export async function runAutoWave(
     if (!madeProgress) {
       stoppedReason = 'no_progress'
       break
+    }
+
+    // Sprint 18G — brief pause between waves so Anthropic rate-limit buckets
+    // can refill. Only delay if more work is likely (we executed something).
+    if (executed > 0) {
+      await sleep(INTER_WAVE_DELAY_MS)
     }
   }
 
