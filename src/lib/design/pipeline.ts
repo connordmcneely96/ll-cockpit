@@ -1,12 +1,11 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F (cost tiering)
+ * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F (cost tiering) → Sprint 18E (attached design systems)
  *
  * Per-section architecture:
- *   buildDesignBuildDAG(brief) → programmatic DecompositionResult
- *     - st_1: DESIGNER (JSON tokens)
+ *   buildDesignBuildDAG(brief, iter, feedback, attachedSystem?) → DecompositionResult
+ *     - st_1: DESIGNER (JSON tokens). When attachedSystem set, prompt instructs DESIGNER
+ *             to use that DESIGN.md's tokens verbatim rather than invent new ones.
  *     - st_2..N+1: COMPOSER per section (parallel, each gets own 8192 budget)
- *                  Sprint 18F: task_type is 'compose_simple' or 'compose_complex'
- *                  depending on section classification — different model per section.
  *     - st_N+2: ASSEMBLER (deterministic scaffold + stitch, $0 cost)
  *     - st_N+3: CRITIC (reviews assembled page)
  */
@@ -26,68 +25,42 @@ import type {
 // SECTION CLASSIFICATION — Sprint 18F cost optimization
 // ──────────────────────────────────────────────────────────────────────
 
-/**
- * Sections that need creative copy, visual hierarchy, conversion intent.
- * These go to Sonnet (better long-form composition + design judgment).
- */
 const COMPLEX_KEYWORDS = [
-  'hero', 'headline', 'banner',                       // hero / above-fold
-  'pricing', 'plans', 'tier',                         // pricing tables
-  'feature', 'capability', 'benefit',                 // feature highlights
-  'testimonial', 'review', 'case stud', 'social proof', // social proof
-  'how it works', 'how we work', 'process',            // process explainer
-  'cta', 'call to action', 'sign up', 'get started',   // conversion
-  'value prop', 'proposition',                         // value prop
-  'comparison', 'versus', 'vs',                        // comparison tables
-  'demo', 'video', 'product tour',                     // rich demos
+  'hero', 'headline', 'banner',
+  'pricing', 'plans', 'tier',
+  'feature', 'capability', 'benefit',
+  'testimonial', 'review', 'case stud', 'social proof',
+  'how it works', 'how we work', 'process',
+  'cta', 'call to action', 'sign up', 'get started',
+  'value prop', 'proposition',
+  'comparison', 'versus', 'vs',
+  'demo', 'video', 'product tour',
 ] as const
 
-/**
- * Sections that are structural/utility, not creative.
- * These go to Haiku (3.75x cheaper, plenty of quality for lists/forms).
- */
 const SIMPLE_KEYWORDS = [
-  'contact', 'reach out', 'get in touch',              // contact forms
-  'footer',                                             // footer
-  'faq', 'frequently asked',                            // FAQ accordions
-  'team', 'about us', 'our story',                      // team blurbs
-  'newsletter', 'subscribe',                            // newsletter signup
-  'cert', 'compliance', 'standards', 'iso', 'gdpr',     // certifications
-  'partner', 'logo',                                    // logo strips
-  'location', 'office',                                 // locations
-  'press', 'media',                                     // press mentions
-  'careers', 'jobs',                                    // careers
-  'legal', 'policy', 'terms', 'privacy',                // legal
-  'made in', 'manufactur',                              // origin/manufacturing
-  'support', 'help',                                    // support sections
-  'request a quote', 'quote',                           // quote forms
-  'industries served', 'applications',                  // application lists
-  'lineup', 'product line', 'catalog',                  // product lineup
-  'field result', 'reference list',                     // simple lists
+  'contact', 'reach out', 'get in touch',
+  'footer',
+  'faq', 'frequently asked',
+  'team', 'about us', 'our story',
+  'newsletter', 'subscribe',
+  'cert', 'compliance', 'standards', 'iso', 'gdpr',
+  'partner', 'logo',
+  'location', 'office',
+  'press', 'media',
+  'careers', 'jobs',
+  'legal', 'policy', 'terms', 'privacy',
+  'made in', 'manufactur',
+  'support', 'help',
+  'request a quote', 'quote',
+  'industries served', 'applications',
+  'lineup', 'product line', 'catalog',
+  'field result', 'reference list',
 ] as const
 
-/**
- * Classify a section by its name/description.
- * Returns 'compose_complex' (Sonnet) or 'compose_simple' (Haiku).
- *
- * Strategy: complex wins on ties (better to overspend a little than undercut quality).
- * Falls back to 'compose_complex' if uncertain — only confidently-simple sections
- * get downgraded.
- */
 export function classifySection(name: string, description: string): 'compose_simple' | 'compose_complex' {
   const text = `${name} ${description}`.toLowerCase()
-
-  // Complex always wins
-  if (COMPLEX_KEYWORDS.some((kw) => text.includes(kw))) {
-    return 'compose_complex'
-  }
-
-  // Confidently simple
-  if (SIMPLE_KEYWORDS.some((kw) => text.includes(kw))) {
-    return 'compose_simple'
-  }
-
-  // Default: complex (safer for unknown sections)
+  if (COMPLEX_KEYWORDS.some((kw) => text.includes(kw))) return 'compose_complex'
+  if (SIMPLE_KEYWORDS.some((kw) => text.includes(kw))) return 'compose_simple'
   return 'compose_complex'
 }
 
@@ -96,9 +69,9 @@ export function classifySection(name: string, description: string): 'compose_sim
 // ──────────────────────────────────────────────────────────────────────
 
 export interface ParsedSection {
-  name: string         // Display name, parentheticals stripped (used in title + nav)
-  slug: string         // URL-safe id (used in section[id] and nav anchors)
-  description: string  // Original text incl. parentheticals (passed to COMPOSER as guidance)
+  name: string
+  slug: string
+  description: string
 }
 
 export function parseSections(briefSections: string): ParsedSection[] {
@@ -106,16 +79,8 @@ export function parseSections(briefSections: string): ParsedSection[] {
   let buf = ''
   let depth = 0
   for (const ch of briefSections) {
-    if (ch === '(') {
-      depth++
-      buf += ch
-      continue
-    }
-    if (ch === ')') {
-      depth = Math.max(0, depth - 1)
-      buf += ch
-      continue
-    }
+    if (ch === '(') { depth++; buf += ch; continue }
+    if (ch === ')') { depth = Math.max(0, depth - 1); buf += ch; continue }
     if ((ch === ',' || ch === '\n') && depth === 0) {
       if (buf.trim()) tokens.push(buf.trim())
       buf = ''
@@ -127,18 +92,28 @@ export function parseSections(briefSections: string): ParsedSection[] {
 
   return tokens.map((description) => {
     const name = description.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim()
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
     return { name, slug, description }
   })
+}
+
+/**
+ * Sprint 18E — optional attached design system context.
+ * When provided, DESIGNER reads the system's DESIGN.md verbatim and uses
+ * its tokens instead of inventing fresh ones.
+ */
+export interface AttachedDesignSystem {
+  slug: string
+  name: string
+  description: string
+  design_md: string
 }
 
 export function buildDesignBuildDAG(
   brief: DesignBriefInput,
   iterationNumber: number = 1,
   clientFeedback?: string,
+  attachedSystem?: AttachedDesignSystem,
 ): DecompositionResult {
   const sections = parseSections(brief.must_have_sections)
   const subtasks: DecompositionResult['subtasks'] = []
@@ -157,28 +132,43 @@ export function buildDesignBuildDAG(
     ? `\n\nITERATION ${iterationNumber} — client feedback to apply:\n${clientFeedback}\n`
     : ''
 
-  // st_1: DESIGNER (always Sonnet — design language is creative)
+  // Sprint 18E — design system context block for DESIGNER
+  // Truncate to 12k chars max to stay within token budget (typical DESIGN.md is 15-30KB).
+  // The frontmatter YAML at the top carries the structured tokens; sections below
+  // give DESIGNER the prose context. Truncation preserves frontmatter intact.
+  const designSystemBlock = attachedSystem
+    ? `\n\n## ATTACHED DESIGN SYSTEM — ${attachedSystem.name}\n` +
+      `The user attached this design system. Use its tokens (colors, typography, spacing, components) verbatim. ` +
+      `Adapt only where the brief explicitly requires it. Do NOT invent new colors or fonts when this system defines them.\n\n` +
+      `<design_system_content>\n${attachedSystem.design_md.slice(0, 12000)}\n</design_system_content>\n`
+    : ''
+
+  // st_1: DESIGNER
   subtasks.push({
     id: 'st_1',
     agent: 'DESIGNER',
-    title: 'Generate design tokens',
-    task: `Generate design tokens (JSON) for the website rebuild.${feedbackBlock}\n\nBRIEF:\n${briefSummary}\n\nOutput the JSON token object per your system prompt. No HTML.`,
+    title: attachedSystem
+      ? `Adapt design tokens from ${attachedSystem.name}`
+      : 'Generate design tokens',
+    task: `${attachedSystem
+        ? `Adapt the attached design system's tokens to this brief.${feedbackBlock}\n\nBRIEF:\n${briefSummary}${designSystemBlock}\n\nOutput the JSON token object per your system prompt. Preserve the attached system's color hex values, font families, and spacing scale. Map them into the standard {palette, typography, spacing, motion} JSON shape. No HTML.`
+        : `Generate design tokens (JSON) for the website rebuild.${feedbackBlock}\n\nBRIEF:\n${briefSummary}\n\nOutput the JSON token object per your system prompt. No HTML.`
+      }`,
     task_type: 'design_language',
     depends_on: [],
-    estimated_cost_usd: 0.02,
+    estimated_cost_usd: attachedSystem ? 0.03 : 0.02, // slightly higher with attached context
     estimated_duration_seconds: 15,
     risk_level: 'low',
     human_required: false,
   })
 
-  // st_2..N+1: COMPOSER per section — Sprint 18F tiering
+  // st_2..N+1: COMPOSER per section
   const composerIds: string[] = []
   let estimatedComposerCost = 0
   sections.forEach((sec, i) => {
     const id = `st_${i + 2}`
     composerIds.push(id)
     const taskType = classifySection(sec.name, sec.description)
-    // Cost estimate per tier: Haiku ~$0.013, Sonnet ~$0.05
     const estCost = taskType === 'compose_simple' ? 0.015 : 0.05
     estimatedComposerCost += estCost
 
@@ -191,7 +181,7 @@ export function buildDesignBuildDAG(
       agent: 'COMPOSER',
       title: `Compose ${sec.name} section`,
       task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
-      task_type: taskType, // Sprint 18F — routes to Sonnet or Haiku per classification
+      task_type: taskType,
       depends_on: ['st_1'],
       estimated_cost_usd: estCost,
       estimated_duration_seconds: 30,
@@ -200,13 +190,13 @@ export function buildDesignBuildDAG(
     })
   })
 
-  // st_N+2: ASSEMBLER ($0, deterministic)
+  // st_N+2: ASSEMBLER
   const assemblerId = `st_${sections.length + 2}`
   subtasks.push({
     id: assemblerId,
     agent: 'ASSEMBLER',
     title: 'Assemble final HTML page',
-    task: `Deterministically stitch DESIGNER tokens + all COMPOSER section outputs into a complete HTML document. Adds: <!DOCTYPE>, <head> with Tailwind CDN + tailwind.config + Google Fonts, skip-to-main link, sticky header with desktop nav + mobile menu toggle (aria-expanded), <main> wrapping all sections, footer, focus-visible styles, semantic landmarks. No LLM call — runs as deterministic Worker code.`,
+    task: `Deterministically stitch DESIGNER tokens + all COMPOSER section outputs into a complete HTML document.`,
     task_type: 'assemble_page',
     depends_on: ['st_1', ...composerIds],
     estimated_cost_usd: 0,
@@ -215,13 +205,13 @@ export function buildDesignBuildDAG(
     human_required: false,
   })
 
-  // st_N+3: CRITIC (uses Haiku per existing policy — that's already cheap)
+  // st_N+3: CRITIC
   const criticId = `st_${sections.length + 3}`
   subtasks.push({
     id: criticId,
     agent: 'CRITIC',
     title: 'Review assembled page',
-    task: `Review the assembled HTML page (from ASSEMBLER's output in upstream context) against this brief and your rubric. Score 0–100. Return JSON per your system prompt.\n\nBRIEF:\n${briefSummary}`,
+    task: `Review the assembled HTML page against this brief and your rubric. Score 0–100. Return JSON per your system prompt.\n\nBRIEF:\n${briefSummary}`,
     task_type: 'critique_design',
     depends_on: [assemblerId],
     estimated_cost_usd: 0.015,
@@ -230,14 +220,52 @@ export function buildDesignBuildDAG(
     human_required: false,
   })
 
-  const totalCost = 0.02 + estimatedComposerCost + 0.015
+  const totalCost = (attachedSystem ? 0.03 : 0.02) + estimatedComposerCost + 0.015
   const totalDurationSec = 15 + sections.length * 30 + 1 + 20
 
   return {
-    summary: `Design build for ${brief.client_name} — ${sections.length} sections (Sprint 18F tiered: simple→Haiku, complex→Sonnet).`,
+    summary: attachedSystem
+      ? `Design build for ${brief.client_name} (${sections.length} sections, design system: ${attachedSystem.name})`
+      : `Design build for ${brief.client_name} — ${sections.length} sections (Sprint 18F tiered: simple→Haiku, complex→Sonnet).`,
     estimated_total_cost_usd: totalCost,
     estimated_duration_minutes: Math.ceil(totalDurationSec / 60),
     subtasks,
+  }
+}
+
+/**
+ * Sprint 18E — fetch an attached design system from D1 + R2, ready to pass
+ * to buildDesignBuildDAG. Returns null if slug not found or user not authorized.
+ */
+export async function loadAttachedDesignSystem(
+  env: CloudflareEnv,
+  slug: string,
+  userId: string,
+): Promise<AttachedDesignSystem | null> {
+  const row = await env.DB
+    .prepare(
+      `SELECT slug, name, description, r2_key FROM design_systems
+       WHERE slug = ? AND (tenant_id IS NULL OR user_id = ?)
+       LIMIT 1`,
+    )
+    .bind(slug, userId)
+    .first<{ slug: string; name: string; description: string | null; r2_key: string | null }>()
+
+  if (!row || !row.r2_key) return null
+
+  try {
+    const obj = await env.R2.get(row.r2_key)
+    if (!obj) return null
+    const design_md = await obj.text()
+    return {
+      slug: row.slug,
+      name: row.name,
+      description: row.description ?? '',
+      design_md,
+    }
+  } catch (err) {
+    console.error(`loadAttachedDesignSystem R2 fetch failed for ${row.r2_key}:`, err)
+    return null
   }
 }
 
@@ -266,9 +294,7 @@ export function extractSectionHtml(text: string): string {
   candidate = candidate.trim()
 
   const bodyMatch = candidate.match(/<body[^>]*>([\s\S]*?)<\/body>/i)
-  if (bodyMatch) {
-    candidate = bodyMatch[1].trim()
-  }
+  if (bodyMatch) candidate = bodyMatch[1].trim()
 
   const sectionMatch = candidate.match(/<section[\s\S]*?<\/section>/i)
   if (sectionMatch) return sectionMatch[0]
@@ -318,14 +344,10 @@ export function renderFullHtml({
   const bodyFont = t.body_font || 'Inter'
 
   const navLinks = sections
-    .map(
-      (s) =>
-        `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`,
-    )
+    .map((s) => `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`)
     .join('\n        ')
 
   const sectionMarkup = sections.map((s) => s.html).join('\n\n  ')
-
   const fontParam = (name: string) => name.replace(/ /g, '+')
 
   return `<!DOCTYPE html>
@@ -335,11 +357,9 @@ export function renderFullHtml({
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(brief.client_name)}</title>
   <meta name="description" content="${escapeHtml(brief.business_description)}">
-
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=${fontParam(displayFont)}:wght@400;500;600;700&family=${fontParam(bodyFont)}:wght@400;500;600;700&display=swap" rel="stylesheet">
-
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -363,7 +383,6 @@ export function renderFullHtml({
       },
     }
   </script>
-
   <style>
     body { font-family: '${bodyFont}', system-ui, sans-serif; background: ${p.background}; color: ${p.text_primary}; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -375,7 +394,6 @@ export function renderFullHtml({
 </head>
 <body>
   <a href="#main" class="skip-link sr-only">Skip to main content</a>
-
   <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-border" role="banner">
     <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between" aria-label="Main navigation">
       <a href="#" class="font-display font-bold text-xl text-primary">${escapeHtml(brief.client_name)}</a>
@@ -394,46 +412,11 @@ export function renderFullHtml({
       </div>
     </div>
   </header>
-
   <main id="main" role="main">
   ${sectionMarkup}
   </main>
-
   <footer class="bg-primary text-white py-12 mt-16" role="contentinfo">
     <div class="max-w-7xl mx-auto px-6">
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
-        <div>
-          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Company</h3>
-          <ul class="space-y-2 text-sm opacity-75">
-            <li><a href="#" class="hover:opacity-100">About</a></li>
-            <li><a href="#" class="hover:opacity-100">Careers</a></li>
-            <li><a href="#" class="hover:opacity-100">Contact</a></li>
-          </ul>
-        </div>
-        <div>
-          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Resources</h3>
-          <ul class="space-y-2 text-sm opacity-75">
-            <li><a href="#" class="hover:opacity-100">Datasheets</a></li>
-            <li><a href="#" class="hover:opacity-100">Certifications</a></li>
-            <li><a href="#" class="hover:opacity-100">Documentation</a></li>
-          </ul>
-        </div>
-        <div>
-          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Legal</h3>
-          <ul class="space-y-2 text-sm opacity-75">
-            <li><a href="#" class="hover:opacity-100">Privacy Policy</a></li>
-            <li><a href="#" class="hover:opacity-100">Terms of Service</a></li>
-            <li><a href="#" class="hover:opacity-100">Export Compliance</a></li>
-          </ul>
-        </div>
-        <div>
-          <h3 class="font-display font-semibold text-sm uppercase tracking-wider mb-3 opacity-90">Connect</h3>
-          <ul class="space-y-2 text-sm opacity-75">
-            <li><a href="#" class="hover:opacity-100">LinkedIn</a></li>
-            <li><a href="#" class="hover:opacity-100">YouTube</a></li>
-          </ul>
-        </div>
-      </div>
       <div class="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
         <p class="text-sm opacity-80">© ${new Date().getFullYear()} ${escapeHtml(brief.client_name)}. All rights reserved.</p>
         <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
@@ -460,12 +443,7 @@ export async function executeAssembler(
          ORDER BY short_id ASC`,
     )
     .bind(pipelineRunId, userId)
-    .all<{
-      short_id: string
-      agent_name: string
-      title: string
-      output: string
-    }>()
+    .all<{ short_id: string; agent_name: string; title: string; output: string }>()
 
   let designTokens: DesignTokens | null = null
   const sections: DesignSection[] = []
@@ -477,40 +455,22 @@ export async function executeAssembler(
       const match = row.title.match(/Compose\s+(.+?)\s+section/i)
       const name = match ? match[1] : row.title.replace(/Compose\s+/i, '').replace(/\s+section/i, '')
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-      sections.push({
-        slug,
-        name,
-        html: extractSectionHtml(row.output),
-      })
+      sections.push({ slug, name, html: extractSectionHtml(row.output) })
     }
   }
 
-  if (!designTokens) {
-    throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
-  }
-  if (sections.length === 0) {
-    throw new Error('ASSEMBLER: no COMPOSER section outputs found')
-  }
+  if (!designTokens) throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
+  if (sections.length === 0) throw new Error('ASSEMBLER: no COMPOSER section outputs found')
 
   const brief = await env.DB
-    .prepare(
-      `SELECT client_name, business_description FROM design_briefs
-         WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`,
-    )
+    .prepare(`SELECT client_name, business_description FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
     .bind(pipelineRunId, userId)
     .first<{ client_name: string; business_description: string }>()
 
-  if (!brief) {
-    throw new Error('ASSEMBLER: brief metadata not found for this run')
-  }
+  if (!brief) throw new Error('ASSEMBLER: brief metadata not found for this run')
 
   const html = renderFullHtml({ brief, tokens: designTokens, sections })
-
-  return {
-    output: html,
-    cost_usd: 0,
-    tokens: 0,
-  }
+  return { output: html, cost_usd: 0, tokens: 0 }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -554,31 +514,15 @@ export async function finalizeIterationIfReady(
   iteration: DesignIterationRow,
   run: OrchestratorRunRow,
 ): Promise<FinalizationResult> {
-  if (iteration.preview_r2_key) {
-    return { finalized: false, reason: 'already finalized' }
-  }
-  if (run.status !== 'completed') {
-    return { finalized: false, reason: `run status: ${run.status}` }
-  }
+  if (iteration.preview_r2_key) return { finalized: false, reason: 'already finalized' }
+  if (run.status !== 'completed') return { finalized: false, reason: `run status: ${run.status}` }
 
   const subtasks = await env.DB
-    .prepare(
-      `SELECT agent_name, output, status, cost_usd, tokens FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ?`,
-    )
+    .prepare(`SELECT agent_name, output, status, cost_usd, tokens FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ?`)
     .bind(run.id, brief.user_id)
-    .all<{
-      agent_name: string
-      output: string | null
-      status: string
-      cost_usd: number
-      tokens: number
-    }>()
+    .all<{ agent_name: string; output: string | null; status: string; cost_usd: number; tokens: number }>()
 
-  const byAgent: Record<
-    string,
-    { latestOutput: string; cost: number; tokens: number }
-  > = {}
+  const byAgent: Record<string, { latestOutput: string; cost: number; tokens: number }> = {}
   for (const row of subtasks.results ?? []) {
     if (row.status === 'done' && row.output) {
       const prev = byAgent[row.agent_name]
@@ -591,9 +535,7 @@ export async function finalizeIterationIfReady(
   }
 
   const finalSource = byAgent.assembler ?? byAgent.composer
-  if (!finalSource) {
-    return { finalized: false, reason: 'No ASSEMBLER or COMPOSER output found' }
-  }
+  if (!finalSource) return { finalized: false, reason: 'No ASSEMBLER or COMPOSER output found' }
 
   const html = extractHtml(finalSource.latestOutput)
   if (!html || !/<html\b|<!DOCTYPE/i.test(html)) {
@@ -605,34 +547,19 @@ export async function finalizeIterationIfReady(
 
   const designerJson = byAgent.designer ? extractJson(byAgent.designer.latestOutput) : null
   const criticJson = byAgent.critic ? extractJson(byAgent.critic.latestOutput) : null
-  const criticScore =
-    criticJson && typeof (criticJson as { score?: unknown }).score === 'number'
-      ? ((criticJson as { score: number }).score as number)
-      : null
-  const criticPass =
-    criticJson && typeof (criticJson as { pass?: unknown }).pass === 'boolean'
-      ? ((criticJson as { pass: boolean }).pass as boolean)
-      : null
+  const criticScore = criticJson && typeof (criticJson as { score?: unknown }).score === 'number'
+    ? ((criticJson as { score: number }).score as number)
+    : null
+  const criticPass = criticJson && typeof (criticJson as { pass?: unknown }).pass === 'boolean'
+    ? ((criticJson as { pass: boolean }).pass as boolean)
+    : null
 
   const now = Math.floor(Date.now() / 1000)
   const totalCost = Object.values(byAgent).reduce((sum, a) => sum + a.cost, 0)
   const totalTokens = Object.values(byAgent).reduce((sum, a) => sum + a.tokens, 0)
 
   await env.DB
-    .prepare(
-      `UPDATE design_iterations SET
-         design_tokens_json = ?,
-         page_html = ?,
-         critic_score = ?,
-         critic_feedback = ?,
-         preview_r2_key = ?,
-         preview_url = ?,
-         status = 'ready',
-         cost_usd = ?,
-         tokens = ?,
-         completed_at = ?
-       WHERE id = ?`,
-    )
+    .prepare(`UPDATE design_iterations SET design_tokens_json = ?, page_html = ?, critic_score = ?, critic_feedback = ?, preview_r2_key = ?, preview_url = ?, status = 'ready', cost_usd = ?, tokens = ?, completed_at = ? WHERE id = ?`)
     .bind(
       designerJson ? JSON.stringify(designerJson) : null,
       html,
@@ -648,15 +575,7 @@ export async function finalizeIterationIfReady(
     .run()
 
   await env.DB
-    .prepare(
-      `UPDATE design_briefs SET
-         status = 'preview_ready',
-         preview_url = ?,
-         total_cost_usd = total_cost_usd + ?,
-         total_tokens = total_tokens + ?,
-         updated_at = ?
-       WHERE id = ?`,
-    )
+    .prepare(`UPDATE design_briefs SET status = 'preview_ready', preview_url = ?, total_cost_usd = total_cost_usd + ?, total_tokens = total_tokens + ?, updated_at = ? WHERE id = ?`)
     .bind(previewUrl, totalCost, totalTokens, now, brief.id)
     .run()
 
