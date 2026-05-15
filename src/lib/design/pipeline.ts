@@ -1,17 +1,14 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.1
+ * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F (cost tiering)
  *
  * Per-section architecture:
  *   buildDesignBuildDAG(brief) → programmatic DecompositionResult
  *     - st_1: DESIGNER (JSON tokens)
  *     - st_2..N+1: COMPOSER per section (parallel, each gets own 8192 budget)
+ *                  Sprint 18F: task_type is 'compose_simple' or 'compose_complex'
+ *                  depending on section classification — different model per section.
  *     - st_N+2: ASSEMBLER (deterministic scaffold + stitch, $0 cost)
  *     - st_N+3: CRITIC (reviews assembled page)
- *
- *   v0.2.1: paren-aware section parser (commas inside `(...)` no longer split sections).
- *           Parentheticals become COMPOSER guidance ("section guidance: ..."),
- *           not separate sections. Slug strips parens. Heading hierarchy guidance
- *           in COMPOSER task (h2 for section headline, h3 for cards inside).
  */
 
 import type {
@@ -26,6 +23,75 @@ import type {
 } from '@/types'
 
 // ──────────────────────────────────────────────────────────────────────
+// SECTION CLASSIFICATION — Sprint 18F cost optimization
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Sections that need creative copy, visual hierarchy, conversion intent.
+ * These go to Sonnet (better long-form composition + design judgment).
+ */
+const COMPLEX_KEYWORDS = [
+  'hero', 'headline', 'banner',                       // hero / above-fold
+  'pricing', 'plans', 'tier',                         // pricing tables
+  'feature', 'capability', 'benefit',                 // feature highlights
+  'testimonial', 'review', 'case stud', 'social proof', // social proof
+  'how it works', 'how we work', 'process',            // process explainer
+  'cta', 'call to action', 'sign up', 'get started',   // conversion
+  'value prop', 'proposition',                         // value prop
+  'comparison', 'versus', 'vs',                        // comparison tables
+  'demo', 'video', 'product tour',                     // rich demos
+] as const
+
+/**
+ * Sections that are structural/utility, not creative.
+ * These go to Haiku (3.75x cheaper, plenty of quality for lists/forms).
+ */
+const SIMPLE_KEYWORDS = [
+  'contact', 'reach out', 'get in touch',              // contact forms
+  'footer',                                             // footer
+  'faq', 'frequently asked',                            // FAQ accordions
+  'team', 'about us', 'our story',                      // team blurbs
+  'newsletter', 'subscribe',                            // newsletter signup
+  'cert', 'compliance', 'standards', 'iso', 'gdpr',     // certifications
+  'partner', 'logo',                                    // logo strips
+  'location', 'office',                                 // locations
+  'press', 'media',                                     // press mentions
+  'careers', 'jobs',                                    // careers
+  'legal', 'policy', 'terms', 'privacy',                // legal
+  'made in', 'manufactur',                              // origin/manufacturing
+  'support', 'help',                                    // support sections
+  'request a quote', 'quote',                           // quote forms
+  'industries served', 'applications',                  // application lists
+  'lineup', 'product line', 'catalog',                  // product lineup
+  'field result', 'reference list',                     // simple lists
+] as const
+
+/**
+ * Classify a section by its name/description.
+ * Returns 'compose_complex' (Sonnet) or 'compose_simple' (Haiku).
+ *
+ * Strategy: complex wins on ties (better to overspend a little than undercut quality).
+ * Falls back to 'compose_complex' if uncertain — only confidently-simple sections
+ * get downgraded.
+ */
+export function classifySection(name: string, description: string): 'compose_simple' | 'compose_complex' {
+  const text = `${name} ${description}`.toLowerCase()
+
+  // Complex always wins
+  if (COMPLEX_KEYWORDS.some((kw) => text.includes(kw))) {
+    return 'compose_complex'
+  }
+
+  // Confidently simple
+  if (SIMPLE_KEYWORDS.some((kw) => text.includes(kw))) {
+    return 'compose_simple'
+  }
+
+  // Default: complex (safer for unknown sections)
+  return 'compose_complex'
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // DAG BUILDER — programmatic, no HERMES
 // ──────────────────────────────────────────────────────────────────────
 
@@ -35,23 +101,6 @@ export interface ParsedSection {
   description: string  // Original text incl. parentheticals (passed to COMPOSER as guidance)
 }
 
-/**
- * Paren-aware section splitter.
- *  - Splits on commas and newlines at paren depth 0 only
- *  - Strips parenthetical content from the display name + slug
- *  - Preserves the full original text as `description` so COMPOSER can use it as guidance
- *
- * Example input:
- *   "Hero (with a single confident headline), pump categories, certifications and standards (API 610, API 682, ATEX), case studies"
- *
- * Output:
- *   [
- *     { name: "Hero",                       slug: "hero",                       description: "Hero (with a single confident headline)" },
- *     { name: "pump categories",            slug: "pump_categories",            description: "pump categories" },
- *     { name: "certifications and standards", slug: "certifications_and_standards", description: "certifications and standards (API 610, API 682, ATEX)" },
- *     { name: "case studies",               slug: "case_studies",               description: "case studies" },
- *   ]
- */
 export function parseSections(briefSections: string): ParsedSection[] {
   const tokens: string[] = []
   let buf = ''
@@ -77,7 +126,6 @@ export function parseSections(briefSections: string): ParsedSection[] {
   if (buf.trim()) tokens.push(buf.trim())
 
   return tokens.map((description) => {
-    // name = description with all parentheticals stripped
     const name = description.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim()
     const slug = name
       .toLowerCase()
@@ -109,12 +157,13 @@ export function buildDesignBuildDAG(
     ? `\n\nITERATION ${iterationNumber} — client feedback to apply:\n${clientFeedback}\n`
     : ''
 
-  // st_1: DESIGNER
+  // st_1: DESIGNER (always Sonnet — design language is creative)
   subtasks.push({
     id: 'st_1',
     agent: 'DESIGNER',
     title: 'Generate design tokens',
     task: `Generate design tokens (JSON) for the website rebuild.${feedbackBlock}\n\nBRIEF:\n${briefSummary}\n\nOutput the JSON token object per your system prompt. No HTML.`,
+    task_type: 'design_language',
     depends_on: [],
     estimated_cost_usd: 0.02,
     estimated_duration_seconds: 15,
@@ -122,11 +171,17 @@ export function buildDesignBuildDAG(
     human_required: false,
   })
 
-  // st_2..N+1: COMPOSER per section
+  // st_2..N+1: COMPOSER per section — Sprint 18F tiering
   const composerIds: string[] = []
+  let estimatedComposerCost = 0
   sections.forEach((sec, i) => {
     const id = `st_${i + 2}`
     composerIds.push(id)
+    const taskType = classifySection(sec.name, sec.description)
+    // Cost estimate per tier: Haiku ~$0.013, Sonnet ~$0.05
+    const estCost = taskType === 'compose_simple' ? 0.015 : 0.05
+    estimatedComposerCost += estCost
+
     const guidanceBlock =
       sec.description !== sec.name
         ? `\n\nSECTION GUIDANCE (from brief): ${sec.description}\n`
@@ -136,21 +191,23 @@ export function buildDesignBuildDAG(
       agent: 'COMPOSER',
       title: `Compose ${sec.name} section`,
       task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
+      task_type: taskType, // Sprint 18F — routes to Sonnet or Haiku per classification
       depends_on: ['st_1'],
-      estimated_cost_usd: 0.04,
+      estimated_cost_usd: estCost,
       estimated_duration_seconds: 30,
       risk_level: 'low',
       human_required: false,
     })
   })
 
-  // st_N+2: ASSEMBLER
+  // st_N+2: ASSEMBLER ($0, deterministic)
   const assemblerId = `st_${sections.length + 2}`
   subtasks.push({
     id: assemblerId,
     agent: 'ASSEMBLER',
     title: 'Assemble final HTML page',
     task: `Deterministically stitch DESIGNER tokens + all COMPOSER section outputs into a complete HTML document. Adds: <!DOCTYPE>, <head> with Tailwind CDN + tailwind.config + Google Fonts, skip-to-main link, sticky header with desktop nav + mobile menu toggle (aria-expanded), <main> wrapping all sections, footer, focus-visible styles, semantic landmarks. No LLM call — runs as deterministic Worker code.`,
+    task_type: 'assemble_page',
     depends_on: ['st_1', ...composerIds],
     estimated_cost_usd: 0,
     estimated_duration_seconds: 1,
@@ -158,13 +215,14 @@ export function buildDesignBuildDAG(
     human_required: false,
   })
 
-  // st_N+3: CRITIC
+  // st_N+3: CRITIC (uses Haiku per existing policy — that's already cheap)
   const criticId = `st_${sections.length + 3}`
   subtasks.push({
     id: criticId,
     agent: 'CRITIC',
     title: 'Review assembled page',
     task: `Review the assembled HTML page (from ASSEMBLER's output in upstream context) against this brief and your rubric. Score 0–100. Return JSON per your system prompt.\n\nBRIEF:\n${briefSummary}`,
+    task_type: 'critique_design',
     depends_on: [assemblerId],
     estimated_cost_usd: 0.015,
     estimated_duration_seconds: 20,
@@ -172,11 +230,11 @@ export function buildDesignBuildDAG(
     human_required: false,
   })
 
-  const totalCost = 0.02 + sections.length * 0.04 + 0.015
+  const totalCost = 0.02 + estimatedComposerCost + 0.015
   const totalDurationSec = 15 + sections.length * 30 + 1 + 20
 
   return {
-    summary: `Design build for ${brief.client_name} — ${sections.length} sections (programmatic DAG, no HERMES).`,
+    summary: `Design build for ${brief.client_name} — ${sections.length} sections (Sprint 18F tiered: simple→Haiku, complex→Sonnet).`,
     estimated_total_cost_usd: totalCost,
     estimated_duration_minutes: Math.ceil(totalDurationSec / 60),
     subtasks,
@@ -387,7 +445,7 @@ export function renderFullHtml({
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// DETERMINISTIC ASSEMBLER — called from orchestrator's special-case handler
+// DETERMINISTIC ASSEMBLER
 // ──────────────────────────────────────────────────────────────────────
 
 export async function executeAssembler(
@@ -478,7 +536,7 @@ export async function savePreviewToR2(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// LAZY FINALIZER — prefers ASSEMBLER output, falls back to COMPOSER (v0.1 compat)
+// LAZY FINALIZER
 // ──────────────────────────────────────────────────────────────────────
 
 export interface FinalizationResult {
