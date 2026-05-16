@@ -1,5 +1,5 @@
 /**
- * Design iteration agent — Sprint 16 v0.3.3.
+ * Design iteration agent — Sprint 16 v0.3.4.
  *
  * Programmatic Anthropic tool-use loop that lets the user refine a finished
  * design brief by chatting.
@@ -11,20 +11,17 @@
  *   - save_iteration         clones current state as a new design_iterations row
  *   - critique               re-scores the current HTML using CRITIC system prompt
  *
- * v0.3.1 FIX: update_design_tokens token-key allowlist + tool routing rubric.
- *
+ * v0.3.1: token-key allowlist + tool routing rubric.
  * v0.3.2 SLICE 2: assemble_html, add_section, remove_section.
+ * v0.3.3: callComposer uses extractSectionHtml + assemble_html clarity.
  *
- * v0.3.3 FIX:
- *   - callComposer was rejecting valid responses that had a preamble
- *     ("Here's the section:") or code fences. Now uses extractSectionHtml
- *     to pull the <section> out of whatever wrapper COMPOSER produced.
- *     Was the showstopper bug breaking add_section on Connor's contact-back
- *     attempt — DESIGNER was forced to give up after 2 failed retries.
- *   - assemble_html description tightened to make clear it is NOT a
- *     "rebuild from scratch" tool. It's a deterministic re-stitch that
- *     produces identical output unless tokens or sections just changed.
- *   - System prompt's RE-STITCH rule clarified for the same reason.
+ * v0.3.4 FIX (race condition in add_section):
+ *   - The slugCollision check before INSERT is not race-safe. Two concurrent
+ *     invocations (caused by sub-request retries, double-clicks, etc.) can
+ *     both pass the check before either commits, then both attempt the INSERT,
+ *     and the second hits UNIQUE constraint failed.
+ *   - Fix: catch UNIQUE constraint, look up whether our slug is now present
+ *     with status='done'. If yes, return idempotent success.
  *
  * STUBBED:
  *   splice_section (low value), apply_preset (Slice 3), analyze_reference_url (Sprint 18I).
@@ -211,7 +208,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'add_section',
     description:
-      'Insert a NEW section into the page. Runs COMPOSER to generate the section HTML using the current design tokens, then re-stitches the page. Use for: "add a testimonials section between case studies and pricing", "add a FAQ section at the bottom", "add a logo cloud above the hero".\n\nThe new section gets generated content (real copy, real layout) matching the brief\'s tone and the current visual style. Costs ~$0.02-0.05 depending on section complexity.',
+      'Insert a NEW section into the page. Runs COMPOSER to generate the section HTML using the current design tokens, then re-stitches the page. Use for: "add a testimonials section between case studies and pricing", "add a FAQ section at the bottom", "add a logo cloud above the hero".\n\nThe new section gets generated content (real copy, real layout) matching the brief\'s tone and the current visual style. Costs ~$0.02-0.05 depending on section complexity.\n\nIdempotent: if a concurrent invocation already added the same section, this returns ok:true with idempotent_recovery:true.',
     input_schema: {
       type: 'object',
       properties: {
@@ -307,6 +304,7 @@ Tool routing — match the request to the right tool:
 
   • ADD a NEW section → add_section.
     Examples: "add a testimonials section between case studies and pricing", "add a FAQ at the bottom", "add a logo cloud above the hero".
+    If the result is ok:true (including idempotent_recovery:true), report success to the user — don't second-guess.
 
   • REMOVE a section → remove_section.
     Examples: "remove the case studies", "drop the team section".
@@ -322,6 +320,7 @@ Tool routing — match the request to the right tool:
 Important rules:
   • Use ONE tool per turn unless a user request genuinely needs two. Don't chain tools "to be safe" — that doubles cost.
   • Don't claim the change is visible until the tool result confirms it. If a tool returns ok:false, tell the user honestly and offer the right alternative.
+  • If a tool returns ok:true with idempotent_recovery:true, treat it as a clean success — the work was done (just by a concurrent retry).
   • Keep replies concise. Don't repeat the brief back unless asked.
   • If a request is ambiguous, ask one clarifying question rather than guessing.
 
@@ -939,36 +938,85 @@ async function runAddSection(
     }
   }
 
+  // v0.3.4 — race-tolerant INSERT.
   const newId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   const taskType = classifySection(input.name, input.description)
+  const insertedTitle = `Compose ${input.name} section`
 
-  await deps.env.DB
-    .prepare(
-      `INSERT INTO agent_subtasks
-         (id, pipeline_run_id, user_id, short_id, agent_name, title, task,
-          depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level,
-          human_required, status, output, cost_usd, tokens, started_at, completed_at,
-          created_at, task_type)
-         VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      newId,
-      iter.orchestrator_run_id,
-      deps.userId,
-      newShortId,
-      `Compose ${input.name} section`,
-      `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`,
-      taskType === 'compose_simple' ? 0.015 : 0.05,
-      composerResult.html,
-      composerResult.costUsd,
-      composerResult.usage.input + composerResult.usage.output,
-      now,
-      now,
-      now,
-      taskType,
-    )
-    .run()
+  let insertedNewRow = true
+  let finalShortId = newShortId
+
+  try {
+    await deps.env.DB
+      .prepare(
+        `INSERT INTO agent_subtasks
+           (id, pipeline_run_id, user_id, short_id, agent_name, title, task,
+            depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level,
+            human_required, status, output, cost_usd, tokens, started_at, completed_at,
+            created_at, task_type)
+           VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        newId,
+        iter.orchestrator_run_id,
+        deps.userId,
+        newShortId,
+        insertedTitle,
+        `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`,
+        taskType === 'compose_simple' ? 0.015 : 0.05,
+        composerResult.html,
+        composerResult.costUsd,
+        composerResult.usage.input + composerResult.usage.output,
+        now,
+        now,
+        now,
+        taskType,
+      )
+      .run()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('UNIQUE constraint failed')) {
+      const existing = await deps.env.DB
+        .prepare(
+          `SELECT short_id FROM agent_subtasks
+             WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
+               AND title = ? AND status = 'done'
+             LIMIT 1`,
+        )
+        .bind(iter.orchestrator_run_id, deps.userId, insertedTitle)
+        .first<{ short_id: string }>()
+
+      if (existing) {
+        insertedNewRow = false
+        finalShortId = existing.short_id
+      } else {
+        return {
+          type: 'tool_result',
+          tool_use_id: toolUse.id,
+          content: JSON.stringify({
+            ok: false,
+            error: 'short_id_collision_no_recovery',
+            attempted_short_id: newShortId,
+            message:
+              'A short_id collision happened but our section isn\'t in the database. Rare. Suggest the user try again — should self-resolve.',
+          }),
+          is_error: true,
+        }
+      }
+    } else {
+      return {
+        type: 'tool_result',
+        tool_use_id: toolUse.id,
+        content: JSON.stringify({
+          ok: false,
+          error: 'database_error',
+          message: msg.slice(0, 300),
+        }),
+        is_error: true,
+      }
+    }
+  }
 
   let assemblyError: string | null = null
   try {
@@ -990,16 +1038,19 @@ async function runAddSection(
       new_section: {
         slug: newSlug,
         name: input.name,
-        short_id: newShortId,
+        short_id: finalShortId,
         after: input.after_slug ?? null,
         task_type: taskType,
       },
       composer_tokens: composerResult.usage,
-      cost_usd: composerResult.costUsd,
+      cost_usd: insertedNewRow ? composerResult.costUsd : 0,
+      idempotent_recovery: !insertedNewRow,
       assembly_warning: assemblyError,
-      note: assemblyError
-        ? `Section added but re-assembly failed: ${assemblyError}`
-        : `Section "${input.name}" added and page re-stitched. The preview iframe refreshes automatically.`,
+      note: insertedNewRow
+        ? assemblyError
+          ? `Section added but re-assembly failed: ${assemblyError}`
+          : `Section "${input.name}" added and page re-stitched. The preview iframe refreshes automatically.`
+        : `Section "${input.name}" was already added by a concurrent retry. Preview is up to date. (idempotent_recovery=true)`,
     }),
   }
 }
@@ -1069,13 +1120,6 @@ OUTPUT FORMAT (STRICT):
 Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML.`
 }
 
-/**
- * v0.3.3 — shared COMPOSER call wrapper. Uses extractSectionHtml to pull the
- * <section> out of preambled or code-fenced responses (Sonnet sometimes ignores
- * the strict-output instruction). Returns the extracted section html on
- * success; on failure returns a structured error that includes the first 500
- * chars of the raw response so the caller can diagnose what went wrong.
- */
 async function callComposer(
   apiKey: string,
   prompt: string,
@@ -1111,11 +1155,6 @@ async function callComposer(
     .map((c) => (c.type === 'text' ? c.text ?? '' : ''))
     .join('')
 
-  // v0.3.3 — use extractSectionHtml to handle preambled/fenced responses.
-  // The previous validation `if (!html.trim().startsWith('<'))` was rejecting
-  // valid responses where Sonnet added text like "Here's the section:" before
-  // the actual <section>. extractSectionHtml strips fences AND finds the
-  // <section> tag inside text wrappers.
   const extracted = extractSectionHtml(rawText)
   if (!extracted || !/<section[\s>]/i.test(extracted)) {
     return {
