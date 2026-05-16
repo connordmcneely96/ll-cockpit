@@ -20,14 +20,8 @@
  *     invocations (caused by sub-request retries, double-clicks, etc.) can
  *     both pass the check before either commits, then both attempt the INSERT,
  *     and the second hits UNIQUE constraint failed.
- *   - In Connor's testing, "actually add contact back" produced two tool_results
- *     for the same tool_use_id — one ok:true with new st_6_a, one with the
- *     UNIQUE constraint error. DESIGNER then paraphrased the failure into
- *     "database constraint issue" even though the section WAS added.
  *   - Fix: catch UNIQUE constraint, look up whether our slug is now present
- *     with status='done'. If yes, return idempotent success with
- *     idempotent_recovery:true so DESIGNER reports it cleanly. If no, return
- *     a clean hard-error.
+ *     with status='done'. If yes, return idempotent success.
  *
  * STUBBED:
  *   splice_section (low value), apply_preset (Slice 3), analyze_reference_url (Sprint 18I).
@@ -945,12 +939,6 @@ async function runAddSection(
   }
 
   // v0.3.4 — race-tolerant INSERT.
-  // Concurrent invocations of runAddSection (caused by sub-request retries,
-  // browser double-click, or any other duplicate-call source) can both pass
-  // the slugCollision check above before either commits. The second INSERT
-  // then hits UNIQUE(pipeline_run_id, short_id). When that happens, we check
-  // whether the section IS now present with status='done' — if yes, the
-  // first call did the work and we return idempotent success.
   const newId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   const taskType = classifySection(input.name, input.description)
@@ -989,7 +977,6 @@ async function runAddSection(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('UNIQUE constraint failed')) {
-      // Race condition. Check if our slug is now present in done state.
       const existing = await deps.env.DB
         .prepare(
           `SELECT short_id FROM agent_subtasks
@@ -1001,14 +988,9 @@ async function runAddSection(
         .first<{ short_id: string }>()
 
       if (existing) {
-        // The section was added by the concurrent invocation. We're idempotent.
-        // Skip re-running COMPOSER (would just waste tokens) and re-assembler
-        // (the winning invocation already did or is doing it).
         insertedNewRow = false
         finalShortId = existing.short_id
       } else {
-        // True hard error — our generated short_id collided but our slug isn't
-        // present. Probably means the row failed elsewhere. Surface a clean error.
         return {
           type: 'tool_result',
           tool_use_id: toolUse.id,
@@ -1036,8 +1018,6 @@ async function runAddSection(
     }
   }
 
-  // Re-assemble. Idempotent — runs whether we inserted a new row or recovered
-  // from a concurrent insert. The cost is one D1 query + one R2 PUT, no LLM.
   let assemblyError: string | null = null
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
@@ -1537,7 +1517,7 @@ function emptyTokens(): DesignTokens {
     },
     typography: {
       display_font: 'system-ui',
-      body_function: 'system-ui',
+      body_font: 'system-ui',
     },
   }
 }
