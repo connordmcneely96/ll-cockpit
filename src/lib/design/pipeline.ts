@@ -11,7 +11,8 @@
  *
  * Sprint 18N — every rendered page now ships with the data-anim scroll animation
  * scaffold: ANIMATION_PRESETS_CSS in the head, INTERSECTION_OBSERVER_SCRIPT before
- * </body>. Sections opt in via `data-anim="..."` attributes emitted by COMPOSER.
+ * </body>. COMPOSER prompt teaches the agent to emit data-anim attributes
+ * contextually, tone-matched to the brief.
  */
 
 import type {
@@ -27,6 +28,7 @@ import type {
 import {
   ANIMATION_PRESETS_CSS,
   INTERSECTION_OBSERVER_SCRIPT,
+  animationPresetsForPrompt,
 } from './animation-presets'
 
 // ──────────────────────────────────────────────────────────────────────
@@ -142,6 +144,10 @@ export function buildDesignBuildDAG(
       `<design_system_content>\n${attachedSystem.design_md.slice(0, 12000)}\n</design_system_content>\n`
     : ''
 
+  // Sprint 18N — scroll animations block shared by every COMPOSER task. Generated
+  // once per DAG build so the preset list stays consistent across all sections.
+  const scrollAnimationsBlock = buildScrollAnimationsBlock()
+
   // st_1: DESIGNER
   subtasks.push({
     id: 'st_1',
@@ -179,7 +185,7 @@ export function buildDesignBuildDAG(
       id,
       agent: 'COMPOSER',
       title: `Compose ${sec.name} section`,
-      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
+      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\n${scrollAnimationsBlock}\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
       task_type: taskType,
       depends_on: ['st_1'],
       estimated_cost_usd: estCost,
@@ -230,6 +236,45 @@ export function buildDesignBuildDAG(
     estimated_duration_minutes: Math.ceil(totalDurationSec / 60),
     subtasks,
   }
+}
+
+/**
+ * Sprint 18N — shared scroll-animations block used by both buildDesignBuildDAG
+ * (initial build) and iteration-agent.buildComposerPrompt (regenerate_section,
+ * add_section). Keeping this in one place ensures both paths teach COMPOSER the
+ * same conventions for emitting data-anim attributes.
+ */
+export function buildScrollAnimationsBlock(): string {
+  return `SCROLL ANIMATIONS (Sprint 18N — agent-prescribed):
+The rendered page ships with a scroll-triggered animation scaffold. Opt elements into animations by adding the data-anim HTML attribute to MAJOR BLOCK ELEMENTS. Available presets:
+
+${animationPresetsForPrompt()}
+
+PLACEMENT RULES:
+- Add data-anim to MAJOR BLOCK ELEMENTS only: the <section> itself, large cards, hero headline, key CTAs, stat blocks. Never on every <p>, span, button, or inline element.
+- ONE preset per element in most cases. Combine only when pairing parent + child semantics (e.g. <ul data-anim="stagger-children"> with <li data-anim="fade-in"> children).
+- Tone fit:
+  - Default → fade-in or slide-up
+  - CTAs / callouts → scale-in (one per section maximum)
+  - Card grids / lists → parent gets stagger-children, children get fade-in or slide-up
+  - Hero headline → text-reveal (one per PAGE maximum, hero only)
+  - Numeric stats → count-up on the number element itself
+  - Hero background image → parallax-bg on the background div (one per page maximum)
+  - Long-form narrative / process steps → sticky-scroll-reveal
+- Solemn / medical / bereavement / archival sections: use ONLY fade-in. No transforms.
+- Tone match with the brief's mood_tone matters more than animating things. If the mood is quiet/restrained/editorial/corporate-formal, default to fewer animations or fade-in only.
+- LIMIT: At most 4 data-anim attributes per section. Animating everything is worse than animating nothing.
+
+EXAMPLE (features section):
+  <section id="features" data-anim="fade-in">
+    <h2>Built for engineers</h2>
+    <div class="grid grid-cols-3 gap-6" data-anim="stagger-children">
+      <article data-anim="slide-up">...</article>
+      <article data-anim="slide-up">...</article>
+      <article data-anim="slide-up">...</article>
+    </div>
+    <a href="#contact" class="btn" data-anim="scale-in">Get a quote</a>
+  </section>`
 }
 
 export async function loadAttachedDesignSystem(

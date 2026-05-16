@@ -1,17 +1,20 @@
 /**
- * Design iteration agent — Sprint 16 v0.5.0 (live streaming).
+ * Design iteration agent — Sprint 16 v0.5.0 (live streaming) + Sprint 18N (scroll animations).
  *
  * v0.4.0: chat POST returned turn_messages array (all-at-once).
  *
- * v0.5.0 ADD: runIterationAgent now accepts an optional `emit` callback
- * that fires at each agent state transition — turn_start, agent_text,
- * tool_use (BEFORE executing, so UI shows pending), tool_result
- * (AFTER each execution, so cards fill in live), and done. The /chat
- * route uses this to stream Server-Sent Events when the client requests
+ * v0.5.0: runIterationAgent accepts an optional `emit` callback that fires
+ * at each agent state transition — turn_start, agent_text, tool_use
+ * (BEFORE executing, so UI shows pending), tool_result (AFTER each
+ * execution, so cards fill in live), and done. The /chat route uses this
+ * to stream Server-Sent Events when the client requests
  * `Accept: text/event-stream`, falling back to the legacy JSON path
  * otherwise.
  *
- * v0.4 turnMessages tracking is preserved for the legacy JSON response.
+ * Sprint 18N: buildComposerPrompt teaches COMPOSER (regenerate_section,
+ * add_section) about data-anim scroll animations. Same guidance block as
+ * the initial-build COMPOSER in pipeline.ts, sourced from
+ * buildScrollAnimationsBlock() so the two stay in sync.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -37,6 +40,7 @@ import {
   renderFullHtml,
   savePreviewToR2,
   classifySection,
+  buildScrollAnimationsBlock,
 } from './pipeline'
 
 const MODEL_ID = 'claude-sonnet-4-5'
@@ -326,7 +330,7 @@ function buildComposerPrompt(args: { sectionSlug: string; sectionName: string; i
   const referenceBlock = isNewSection ? '' : `\n\nCURRENT SECTION HTML (for reference, may be truncated):\n${currentSectionHtml.slice(0, 6000)}\n`
   const structureBlock = isNewSection ? '' : preserveStructure ? '\nPreserve the existing structure but apply the refinement to copy and styling.\n' : '\nFeel free to restructure if it serves the refinement.\n'
   const headingRule = sectionSlug === 'hero' ? 'HEADING HIERARCHY: This is the hero section — it MUST contain the single <h1>.' : 'HEADING HIERARCHY: Use <h2> for the section\'s main headline. Use <h3> for cards. Do NOT add another <h1>.'
-  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\n${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:\n${instruction}\n${structureBlock}${referenceBlock}\nDESIGN TOKENS:\n  primary: ${tokens.palette.primary}\n  accent: ${tokens.palette.accent}\n  background: ${tokens.palette.background}\n  text: ${tokens.palette.text_primary}\n  display font: ${tokens.typography.display_font}\n  body font: ${tokens.typography.body_font}\n\nBRIEF CONTEXT:\n  Brand: ${brief.client_name}\n  Business: ${brief.business_description.slice(0, 240)}\n  Audience: ${brief.target_audience}\n  Tone: ${brief.mood_tone}\n\n${headingRule}\n\nACCESSIBILITY: CTA contrast ≥ 4.5:1. Use bg-primary text-white OR bg-white text-primary border-2 border-primary. Forms: aria-required. SVG illustrations: aria-hidden="true" or with figcaption. Don't add custom focus:ring on inputs.\n\nINLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS.\n\nOUTPUT FORMAT (STRICT):\n- Output ONLY the <section> markup. No preamble. No code fences.\n- First character MUST be <. Last character MUST be >.\n\nProduce production-quality, responsive, accessible markup with REAL copy.`
+  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\n${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:\n${instruction}\n${structureBlock}${referenceBlock}\nDESIGN TOKENS:\n  primary: ${tokens.palette.primary}\n  accent: ${tokens.palette.accent}\n  background: ${tokens.palette.background}\n  text: ${tokens.palette.text_primary}\n  display font: ${tokens.typography.display_font}\n  body font: ${tokens.typography.body_font}\n\nBRIEF CONTEXT:\n  Brand: ${brief.client_name}\n  Business: ${brief.business_description.slice(0, 240)}\n  Audience: ${brief.target_audience}\n  Tone: ${brief.mood_tone}\n\n${headingRule}\n\nACCESSIBILITY: CTA contrast ≥ 4.5:1. Use bg-primary text-white OR bg-white text-primary border-2 border-primary. Forms: aria-required. SVG illustrations: aria-hidden="true" or with figcaption. Don't add custom focus:ring on inputs.\n\n${buildScrollAnimationsBlock()}\n\nINLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS.\n\nOUTPUT FORMAT (STRICT):\n- Output ONLY the <section> markup. No preamble. No code fences.\n- First character MUST be <. Last character MUST be >.\n\nProduce production-quality, responsive, accessible markup with REAL copy.`
 }
 
 async function callComposer(apiKey: string, prompt: string): Promise<{ ok: true; html: string; usage: { input: number; output: number }; costUsd: number } | { ok: false; error: string }> {
@@ -384,10 +388,6 @@ export interface ChatTurnMessage {
   created_at: number
 }
 
-/**
- * v0.5.0 — streaming event types. The /chat route maps these to SSE
- * `data: {...}\n\n` chunks.
- */
 export type StreamEvent =
   | { type: 'turn_start'; turn_index: number }
   | { type: 'agent_text'; turn_index: number; text: string }
@@ -500,7 +500,6 @@ export async function runIterationAgent(args: {
     const assistantText = blocks.filter((b) => b.type === 'text').map((b) => (b.type === 'text' ? b.text : '')).join('\n')
     const toolUses = blocks.filter((b): b is DesignAssistantToolUse => b.type === 'tool_use')
 
-    // Persist assistant row FIRST so DB state is consistent before we emit.
     const turnCostUsd = calculateCost(turnInputTokens, turnOutputTokens)
     const toolCallsJson = toolUses.length > 0 ? JSON.stringify(toolUses) : null
     const assistantRowTs = Math.floor(Date.now() / 1000)
@@ -525,12 +524,9 @@ export async function runIterationAgent(args: {
       created_at: assistantRowTs,
     })
 
-    // Emit agent_text BEFORE tool_use events so the UI shows the agent's
-    // intent ("Adding contact section now...") before the tool cards appear.
     if (assistantText && assistantText.trim()) {
       await emit({ type: 'agent_text', turn_index: turnIndex, text: assistantText })
     }
-    // Emit one tool_use event per call. UI shows pending cards.
     for (const tu of toolUses) {
       await emit({
         type: 'tool_use',
@@ -545,8 +541,6 @@ export async function runIterationAgent(args: {
 
     if (toolUses.length === 0 || data.stop_reason === 'end_turn') break
 
-    // Execute tools sequentially. After each, emit its result so the UI
-    // can fill in that specific card without waiting for the rest.
     const results: DesignToolResult[] = []
     for (const toolUse of toolUses) {
       const result = await executeIterationTool(toolUse, { env, apiKey, userId, briefId: brief.id })
