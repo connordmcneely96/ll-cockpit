@@ -1,5 +1,5 @@
 /**
- * Design iteration agent — Sprint 16 v0.3.2.
+ * Design iteration agent — Sprint 16 v0.3.3.
  *
  * Programmatic Anthropic tool-use loop that lets the user refine a finished
  * design brief by chatting.
@@ -11,22 +11,23 @@
  *   - save_iteration         clones current state as a new design_iterations row
  *   - critique               re-scores the current HTML using CRITIC system prompt
  *
- * v0.3.1 FIX:
- *   - Tool routing — update_design_tokens now refuses patches that introduce
- *     keys outside the SAFE_TOKEN_KEYS allowlist and tells DESIGNER to use
- *     regenerate_section for structural changes (gradients, layouts, copy).
+ * v0.3.1 FIX: update_design_tokens token-key allowlist + tool routing rubric.
  *
- * v0.3.2 SLICE 2 — structural editing tools come online:
- *   - assemble_html      idempotent re-stitch of current state, $0 cost
- *   - remove_section     soft-deletes by setting status='cancelled', re-assembles
- *   - add_section        runs COMPOSER for new section, inserts at after_slug
- *                        (or end), re-assembles. Short_id generation slots
- *                        new sections lexicographically between siblings.
+ * v0.3.2 SLICE 2: assemble_html, add_section, remove_section.
  *
- * STUBBED (return descriptive "not implemented" results):
- *   splice_section, apply_preset, analyze_reference_url
- *   (apply_preset = Slice 3; analyze_reference_url = Sprint 18I; splice_section
- *    is low-value and stays stubbed unless a real use case emerges.)
+ * v0.3.3 FIX:
+ *   - callComposer was rejecting valid responses that had a preamble
+ *     ("Here's the section:") or code fences. Now uses extractSectionHtml
+ *     to pull the <section> out of whatever wrapper COMPOSER produced.
+ *     Was the showstopper bug breaking add_section on Connor's contact-back
+ *     attempt — DESIGNER was forced to give up after 2 failed retries.
+ *   - assemble_html description tightened to make clear it is NOT a
+ *     "rebuild from scratch" tool. It's a deterministic re-stitch that
+ *     produces identical output unless tokens or sections just changed.
+ *   - System prompt's RE-STITCH rule clarified for the same reason.
+ *
+ * STUBBED:
+ *   splice_section (low value), apply_preset (Slice 3), analyze_reference_url (Sprint 18I).
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -58,12 +59,6 @@ const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
 const MAX_TOOL_HOPS = 6
 
-/**
- * v0.3.1 — Whitelist of token keys that the HTML/Tailwind config actually
- * references. Patching any key NOT in this list won't change the rendered
- * page (because the HTML doesn't read it), so update_design_tokens refuses
- * those and tells DESIGNER to use regenerate_section.
- */
 const SAFE_TOKEN_KEYS: Record<string, Set<string>> = {
   palette: new Set([
     'primary',
@@ -98,10 +93,6 @@ function findUnsafePaths(patch: Record<string, unknown>, prefix = ''): string[] 
   return unsafe
 }
 
-/**
- * v0.3.2 — extract a stable slug from a COMPOSER subtask title.
- * Used in 4+ places, factored out to keep the logic consistent.
- */
 function slugFromTitle(title: string): { name: string; slug: string } {
   const match = title.match(/Compose\s+(.+?)\s+section/i)
   const name = match
@@ -114,14 +105,6 @@ function slugFromTitle(title: string): { name: string; slug: string } {
   return { name, slug }
 }
 
-/**
- * v0.3.2 — generate a new short_id that sorts lexicographically AFTER
- * `afterShortId` but BEFORE the next sibling. Pattern: `st_5_a` sorts
- * between `st_5` and `st_6` because '_' (ASCII 95) > '9' (57).
- *
- * If multiple inserts happen after the same anchor (st_5_a, st_5_b), this
- * picks the next available letter. Beyond 'z' it doubles up (st_5_za).
- */
 function generateInsertShortId(afterShortId: string, allShortIds: string[]): string {
   const prefix = `${afterShortId}_`
   const existingInserts = allShortIds.filter((s) => s.startsWith(prefix)).sort()
@@ -131,14 +114,11 @@ function generateInsertShortId(afterShortId: string, allShortIds: string[]): str
   const last = existingInserts[existingInserts.length - 1]
   const suffix = last.slice(prefix.length)
 
-  // suffix is one or more lowercase letters; increment like a base-26 counter
   if (suffix.length === 1) {
     const ch = suffix[0]
     if (ch >= 'a' && ch < 'z') return `${prefix}${String.fromCharCode(ch.charCodeAt(0) + 1)}`
-    // past 'z' — go to 'za'
     return `${prefix}za`
   }
-  // multi-char suffix — append another letter
   return `${prefix}${suffix}a`
 }
 
@@ -221,11 +201,10 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
       },
     },
   },
-  // ───── v0.3.2 Slice 2 — structural editing tools ─────
   {
     name: 'assemble_html',
     description:
-      'Re-stitch the current section outputs into a complete HTML page using the current design tokens, then upload to R2 so the preview reflects the latest state. Useful when the user wants to force a clean re-render, or after a sequence of section edits to make sure the assembly is fresh. Idempotent and costs $0 — it does no LLM calls, just deterministic stitching.',
+      'NO-OP RE-STITCH. Re-runs the deterministic ASSEMBLER on EXISTING section outputs + EXISTING tokens. No new content is generated. Output is byte-identical to the current state unless tokens or sections were just changed by another tool. $0 cost, no LLM call.\n\nUse ONLY when: (a) you just made several section edits in a row and want one final clean re-stitch as a defensive measure, OR (b) the preview seems stale and you want to force a fresh upload to R2.\n\nDO NOT USE for: "rebuild the page from scratch", "regenerate everything", "redo this design", or any request that implies fresh CONTENT. Those require multiple regenerate_section calls (one per section), or you should tell the user to start a fresh brief instead.',
     input_schema: { type: 'object', properties: {} },
     uses_code_execution: true,
   },
@@ -267,7 +246,6 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
       required: ['section_slug'],
     },
   },
-  // ───── still stubbed (separate sprints) ─────
   {
     name: 'splice_section',
     description: 'Not yet implemented. For copy/structure changes use regenerate_section; for adding a section use add_section.',
@@ -322,8 +300,6 @@ Tool routing — match the request to the right tool:
 
   • SIMPLE TOKEN SWAP (existing key, new value) → update_design_tokens.
     Examples: "make the primary color navy", "use a warmer purple", "increase section padding", "switch to a serif heading font".
-    What this tool does: swaps a value (e.g. palette.primary from #5645d4 to #0a4d6b) and re-renders the page. The HTML must already reference that key via Tailwind classes.
-    What this tool CANNOT do: introduce gradients, new layouts, new elements. The tool will REFUSE any patch that introduces a key not in its allowlist.
 
   • STRUCTURAL OR VISUAL CHANGE within an EXISTING section → regenerate_section.
     Examples: "make the hero a blue-to-black gradient", "rewrite pricing with three tiers", "add a third feature card", "change the hero photo to an abstract illustration".
@@ -331,13 +307,13 @@ Tool routing — match the request to the right tool:
 
   • ADD a NEW section → add_section.
     Examples: "add a testimonials section between case studies and pricing", "add a FAQ at the bottom", "add a logo cloud above the hero".
-    The new section is COMPOSED with real copy + structure using the current design tokens. Specify after_slug to position it; omit to append.
 
   • REMOVE a section → remove_section.
     Examples: "remove the case studies", "drop the team section".
-    Soft-delete (recoverable). Re-stitches the page.
 
-  • RE-STITCH the page (rarely needed) → assemble_html. Use only when the user asks to force a re-render.
+  • REGENERATE-EVERYTHING requests → DO NOT call assemble_html. Tell the user that to "rebuild from scratch" / "regenerate everything" you'd need to call regenerate_section multiple times (one per section) and ask which sections they want fresh, OR suggest they start a new brief. assemble_html is NOT a fresh-generate tool.
+
+  • assemble_html is ONLY for a defensive re-stitch with no new content. Rare. Use after several section edits if you suspect the assembly is out of sync, not for "rebuild" type requests.
 
   • CRITIQUE → critique. Returns a 0-100 score plus structured feedback.
 
@@ -381,14 +357,12 @@ export async function executeIterationTool(
         return await runSaveIteration(toolUse, deps)
       case 'critique':
         return await runCritique(toolUse, deps)
-      // v0.3.2 Slice 2 — structural editing
       case 'assemble_html':
         return await runAssembleHtml(toolUse, deps)
       case 'add_section':
         return await runAddSection(toolUse, deps)
       case 'remove_section':
         return await runRemoveSection(toolUse, deps)
-      // Still stubbed
       case 'splice_section':
       case 'apply_preset':
       case 'analyze_reference_url':
@@ -411,10 +385,6 @@ export async function executeIterationTool(
   }
 }
 
-/**
- * Helper: re-render full HTML from current tokens + COMPOSER section outputs,
- * save to D1 + R2.
- */
 async function rerenderAndPersist(
   deps: ToolDeps,
   iter: DesignIterationRow,
@@ -711,10 +681,6 @@ async function runRegenerateSection(
   }
 }
 
-/**
- * v0.3.2 — re-stitches the page with current tokens + current section
- * outputs. Idempotent, $0 cost, no LLM calls.
- */
 async function runAssembleHtml(
   toolUse: DesignAssistantToolUse,
   deps: ToolDeps,
@@ -749,7 +715,7 @@ async function runAssembleHtml(
         ok: true,
         html_length: result.output.length,
         r2_key: r2Key,
-        note: 'Page re-stitched and preview re-uploaded. The preview iframe refreshes automatically.',
+        note: 'Page re-stitched with EXISTING tokens and EXISTING section outputs. No new content was generated. If the user expected a "from scratch" rebuild, this tool was the wrong choice — use regenerate_section per section instead.',
       }),
     }
   } catch (err) {
@@ -762,12 +728,6 @@ async function runAssembleHtml(
   }
 }
 
-/**
- * v0.3.2 — soft-deletes a section by setting status='cancelled' on its
- * agent_subtasks row. executeAssembler filters by status='done' so the
- * removed section is automatically skipped. The COMPOSER output is preserved
- * in the row so a future undo tool can restore it.
- */
 async function runRemoveSection(
   toolUse: DesignAssistantToolUse,
   deps: ToolDeps,
@@ -822,8 +782,6 @@ async function runRemoveSection(
     }
   }
 
-  // Soft-delete: status='cancelled' filters out of executeAssembler's WHERE status='done'.
-  // Preserves the output column so a hypothetical undo tool can flip status back to 'done'.
   await deps.env.DB
     .prepare(`UPDATE agent_subtasks SET status = 'cancelled' WHERE id = ?`)
     .bind(target.id)
@@ -856,11 +814,6 @@ async function runRemoveSection(
   }
 }
 
-/**
- * v0.3.2 — runs COMPOSER for a brand new section, inserts a new agent_subtasks
- * row with status='done', and re-assembles. Short_id slots between after_slug's
- * subtask and the next sibling, so the section appears in the right position.
- */
 async function runAddSection(
   toolUse: DesignAssistantToolUse,
   deps: ToolDeps,
@@ -903,7 +856,6 @@ async function runAddSection(
     }
   }
 
-  // Generate slug and check for collision
   const newSlug = input.name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
@@ -917,7 +869,6 @@ async function runAddSection(
     }
   }
 
-  // Look up ALL composer subtasks (including cancelled ones, so we don't reuse slugs)
   const allSubtasks = await deps.env.DB
     .prepare(
       `SELECT short_id, title, status FROM agent_subtasks
@@ -944,7 +895,6 @@ async function runAddSection(
     }
   }
 
-  // Determine the short_id anchor for insertion
   const activeRows = allRows.filter((r) => r.status === 'done')
   let anchorShortId: string
 
@@ -953,12 +903,10 @@ async function runAddSection(
     if (anchor) {
       anchorShortId = anchor.short_id
     } else {
-      // after_slug not found — fall back to last active section
       const sorted = [...activeRows].sort((a, b) => a.short_id.localeCompare(b.short_id))
       anchorShortId = sorted.length > 0 ? sorted[sorted.length - 1].short_id : 'st_1'
     }
   } else {
-    // No anchor specified — append at end of active sections
     const sorted = [...activeRows].sort((a, b) => a.short_id.localeCompare(b.short_id))
     anchorShortId = sorted.length > 0 ? sorted[sorted.length - 1].short_id : 'st_1'
   }
@@ -966,7 +914,6 @@ async function runAddSection(
   const allShortIds = allRows.map((r) => r.short_id)
   const newShortId = generateInsertShortId(anchorShortId, allShortIds)
 
-  // Build the COMPOSER prompt
   const tokens: DesignTokens = iter.design_tokens_json
     ? safeParse(iter.design_tokens_json) ?? emptyTokens()
     : emptyTokens()
@@ -992,7 +939,6 @@ async function runAddSection(
     }
   }
 
-  // INSERT the new subtask row
   const newId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   const taskType = classifySection(input.name, input.description)
@@ -1024,7 +970,6 @@ async function runAddSection(
     )
     .run()
 
-  // Re-assemble
   let assemblyError: string | null = null
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
@@ -1059,11 +1004,6 @@ async function runAddSection(
   }
 }
 
-/**
- * v0.3.2 — shared COMPOSER prompt builder. Used by both regenerate_section
- * (existing section) and add_section (new section). The only material
- * difference is whether we include the current section HTML as reference.
- */
 function buildComposerPrompt(args: {
   sectionSlug: string
   sectionName: string
@@ -1120,12 +1060,21 @@ ACCESSIBILITY REQUIREMENTS:
 
 INLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS. If the instruction asks for a gradient, multi-stop background, or unusual color treatment, use inline style="background: linear-gradient(...)" or a custom <style> block inside the section.
 
-Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML. First character of your response must be <, last must be >.`
+OUTPUT FORMAT (STRICT):
+- Output ONLY the <section> markup. No preamble like "Here's the section:" or "I'll create...". No code fences. No closing remarks.
+- First character MUST be < (the opening angle bracket of <section).
+- Last character MUST be > (the closing angle bracket of </section>).
+- If you absolutely must emit a wrapper, use \`\`\`html ... \`\`\` and the parser will strip it — but plain output is preferred.
+
+Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML.`
 }
 
 /**
- * v0.3.2 — shared COMPOSER call wrapper. Returns html + usage on success,
- * structured error string on failure.
+ * v0.3.3 — shared COMPOSER call wrapper. Uses extractSectionHtml to pull the
+ * <section> out of preambled or code-fenced responses (Sonnet sometimes ignores
+ * the strict-output instruction). Returns the extracted section html on
+ * success; on failure returns a structured error that includes the first 500
+ * chars of the raw response so the caller can diagnose what went wrong.
  */
 async function callComposer(
   apiKey: string,
@@ -1158,12 +1107,21 @@ async function callComposer(
     usage?: { input_tokens?: number; output_tokens?: number }
   }
   const data = (await res.json()) as AR
-  const html = (data.content ?? [])
+  const rawText = (data.content ?? [])
     .map((c) => (c.type === 'text' ? c.text ?? '' : ''))
     .join('')
 
-  if (!html.trim().startsWith('<')) {
-    return { ok: false, error: 'COMPOSER returned non-HTML content. Section not updated.' }
+  // v0.3.3 — use extractSectionHtml to handle preambled/fenced responses.
+  // The previous validation `if (!html.trim().startsWith('<'))` was rejecting
+  // valid responses where Sonnet added text like "Here's the section:" before
+  // the actual <section>. extractSectionHtml strips fences AND finds the
+  // <section> tag inside text wrappers.
+  const extracted = extractSectionHtml(rawText)
+  if (!extracted || !/<section[\s>]/i.test(extracted)) {
+    return {
+      ok: false,
+      error: `COMPOSER response did not contain a <section> tag. Raw response (first 500 chars): ${rawText.slice(0, 500).replace(/\n/g, ' ')}`,
+    }
   }
 
   const inputTokens = data.usage?.input_tokens ?? 0
@@ -1171,7 +1129,7 @@ async function callComposer(
 
   return {
     ok: true,
-    html,
+    html: extracted,
     usage: { input: inputTokens, output: outputTokens },
     costUsd: calculateCost(inputTokens, outputTokens),
   }
