@@ -1,5 +1,5 @@
 /**
- * Design iteration agent — Sprint 16 v0.3.1.
+ * Design iteration agent — Sprint 16 v0.3.2.
  *
  * Programmatic Anthropic tool-use loop that lets the user refine a finished
  * design brief by chatting.
@@ -12,18 +12,21 @@
  *   - critique               re-scores the current HTML using CRITIC system prompt
  *
  * v0.3.1 FIX:
- *   - Tool routing was confused — DESIGNER kept choosing update_design_tokens
- *     for requests like "blue gradient hero" which need regenerate_section.
- *     Root cause: update_design_tokens can only swap EXISTING token VALUES
- *     that the HTML already references via Tailwind classes. It cannot
- *     introduce new visual structure (gradients, layouts, new elements).
- *   - System prompt now spells out which tool fits which kind of request.
- *   - update_design_tokens detects new keys not present in current HTML and
- *     refuses, returning a directive to use regenerate_section instead.
+ *   - Tool routing — update_design_tokens now refuses patches that introduce
+ *     keys outside the SAFE_TOKEN_KEYS allowlist and tells DESIGNER to use
+ *     regenerate_section for structural changes (gradients, layouts, copy).
+ *
+ * v0.3.2 SLICE 2 — structural editing tools come online:
+ *   - assemble_html      idempotent re-stitch of current state, $0 cost
+ *   - remove_section     soft-deletes by setting status='cancelled', re-assembles
+ *   - add_section        runs COMPOSER for new section, inserts at after_slug
+ *                        (or end), re-assembles. Short_id generation slots
+ *                        new sections lexicographically between siblings.
  *
  * STUBBED (return descriptive "not implemented" results):
- *   splice_section, assemble_html, add_section, remove_section,
- *   apply_preset, analyze_reference_url
+ *   splice_section, apply_preset, analyze_reference_url
+ *   (apply_preset = Slice 3; analyze_reference_url = Sprint 18I; splice_section
+ *    is low-value and stays stubbed unless a real use case emerges.)
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -48,6 +51,7 @@ import {
   extractSectionHtml,
   renderFullHtml,
   savePreviewToR2,
+  classifySection,
 } from './pipeline'
 
 const MODEL_ID = 'claude-sonnet-4-5'
@@ -83,7 +87,6 @@ function findUnsafePaths(patch: Record<string, unknown>, prefix = ''): string[] 
     const path = prefix ? `${prefix}.${k}` : k
     const allowed = SAFE_TOKEN_KEYS[prefix]
     if (!prefix) {
-      // top-level — k must be a known group (palette/typography/spacing/motion) or 'rationale'
       if (!SAFE_TOKEN_KEYS[k] && k !== 'rationale') unsafe.push(path)
       else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
         unsafe.push(...findUnsafePaths(v as Record<string, unknown>, k))
@@ -93,6 +96,50 @@ function findUnsafePaths(patch: Record<string, unknown>, prefix = ''): string[] 
     }
   }
   return unsafe
+}
+
+/**
+ * v0.3.2 — extract a stable slug from a COMPOSER subtask title.
+ * Used in 4+ places, factored out to keep the logic consistent.
+ */
+function slugFromTitle(title: string): { name: string; slug: string } {
+  const match = title.match(/Compose\s+(.+?)\s+section/i)
+  const name = match
+    ? match[1]
+    : title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return { name, slug }
+}
+
+/**
+ * v0.3.2 — generate a new short_id that sorts lexicographically AFTER
+ * `afterShortId` but BEFORE the next sibling. Pattern: `st_5_a` sorts
+ * between `st_5` and `st_6` because '_' (ASCII 95) > '9' (57).
+ *
+ * If multiple inserts happen after the same anchor (st_5_a, st_5_b), this
+ * picks the next available letter. Beyond 'z' it doubles up (st_5_za).
+ */
+function generateInsertShortId(afterShortId: string, allShortIds: string[]): string {
+  const prefix = `${afterShortId}_`
+  const existingInserts = allShortIds.filter((s) => s.startsWith(prefix)).sort()
+
+  if (existingInserts.length === 0) return `${afterShortId}_a`
+
+  const last = existingInserts[existingInserts.length - 1]
+  const suffix = last.slice(prefix.length)
+
+  // suffix is one or more lowercase letters; increment like a base-26 counter
+  if (suffix.length === 1) {
+    const ch = suffix[0]
+    if (ch >= 'a' && ch < 'z') return `${prefix}${String.fromCharCode(ch.charCodeAt(0) + 1)}`
+    // past 'z' — go to 'za'
+    return `${prefix}za`
+  }
+  // multi-char suffix — append another letter
+  return `${prefix}${suffix}a`
 }
 
 export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
@@ -174,10 +221,56 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
       },
     },
   },
-  // ───── stubbed for v0.3.0 ─────
+  // ───── v0.3.2 Slice 2 — structural editing tools ─────
+  {
+    name: 'assemble_html',
+    description:
+      'Re-stitch the current section outputs into a complete HTML page using the current design tokens, then upload to R2 so the preview reflects the latest state. Useful when the user wants to force a clean re-render, or after a sequence of section edits to make sure the assembly is fresh. Idempotent and costs $0 — it does no LLM calls, just deterministic stitching.',
+    input_schema: { type: 'object', properties: {} },
+    uses_code_execution: true,
+  },
+  {
+    name: 'add_section',
+    description:
+      'Insert a NEW section into the page. Runs COMPOSER to generate the section HTML using the current design tokens, then re-stitches the page. Use for: "add a testimonials section between case studies and pricing", "add a FAQ section at the bottom", "add a logo cloud above the hero".\n\nThe new section gets generated content (real copy, real layout) matching the brief\'s tone and the current visual style. Costs ~$0.02-0.05 depending on section complexity.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Display name for the new section (e.g. "FAQ", "Testimonials", "Trusted by").',
+        },
+        description: {
+          type: 'string',
+          description: 'What the section should contain. Be specific: target audience, tone, content type. Example: "Five short testimonials from technical founders who shipped AI features in days using LLD; each card has quote, name, role, and company logo placeholder."',
+        },
+        after_slug: {
+          type: 'string',
+          description: 'Slug of the existing section the new section should be placed AFTER. If omitted or not found, the new section is appended at the end. Examples: "hero", "pricing", "case_studies".',
+        },
+      },
+      required: ['name', 'description'],
+    },
+  },
+  {
+    name: 'remove_section',
+    description:
+      'Remove an existing section from the page. Soft-delete via status flag so it can be recovered later — the COMPOSER output is preserved in agent_subtasks but won\'t show up in the assembled HTML. Use for: "remove the case studies section", "drop the testimonials".\n\nFree (no LLM call). Re-assembles the page after removal.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_slug: {
+          type: 'string',
+          description: 'Slug of the section to remove. Examples: "case_studies", "testimonials", "team".',
+        },
+      },
+      required: ['section_slug'],
+    },
+  },
+  // ───── still stubbed (separate sprints) ─────
   {
     name: 'splice_section',
-    description: 'v0.3.0 — not yet implemented; use regenerate_section instead.',
+    description: 'Not yet implemented. For copy/structure changes use regenerate_section; for adding a section use add_section.',
     input_schema: {
       type: 'object',
       properties: {
@@ -189,36 +282,8 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
     uses_code_execution: true,
   },
   {
-    name: 'assemble_html',
-    description: 'v0.3.0 — not yet implemented (update_design_tokens auto-stitches).',
-    input_schema: { type: 'object', properties: {} },
-    uses_code_execution: true,
-  },
-  {
-    name: 'add_section',
-    description: 'v0.3.0 — not yet implemented.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string' },
-        description: { type: 'string' },
-        after_slug: { type: 'string' },
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'remove_section',
-    description: 'v0.3.0 — not yet implemented.',
-    input_schema: {
-      type: 'object',
-      properties: { section_slug: { type: 'string' } },
-      required: ['section_slug'],
-    },
-  },
-  {
     name: 'apply_preset',
-    description: 'v0.3.0 — not yet implemented.',
+    description: 'Not yet implemented (planned for Slice 3). For now ask the user to describe the change in concrete terms and use update_design_tokens or regenerate_section.',
     input_schema: {
       type: 'object',
       properties: { preset_name: { type: 'string' } },
@@ -227,7 +292,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'analyze_reference_url',
-    description: 'v0.3.0 — not yet implemented.',
+    description: 'Not yet implemented (planned for Sprint 18I). If the user wants the design to match a reference URL, ask them to describe what they like about it in concrete terms (colors, layout, tone) and use regenerate_section.',
     input_schema: {
       type: 'object',
       properties: {
@@ -257,21 +322,30 @@ Tool routing — match the request to the right tool:
 
   • SIMPLE TOKEN SWAP (existing key, new value) → update_design_tokens.
     Examples: "make the primary color navy", "use a warmer purple", "increase section padding", "switch to a serif heading font".
-    What this tool does: swaps a value (e.g. palette.primary from #5645d4 to #0a4d6b) and re-renders the page. The HTML must already reference that key via Tailwind classes (bg-primary, text-primary, font-display, etc).
-    What this tool CANNOT do: introduce gradients, backgrounds with multiple colors, new layouts, new elements, new visual structure. The tool will REFUSE any patch that introduces a key not in its allowlist and tell you to use regenerate_section instead.
+    What this tool does: swaps a value (e.g. palette.primary from #5645d4 to #0a4d6b) and re-renders the page. The HTML must already reference that key via Tailwind classes.
+    What this tool CANNOT do: introduce gradients, new layouts, new elements. The tool will REFUSE any patch that introduces a key not in its allowlist.
 
-  • STRUCTURAL OR VISUAL CHANGE → regenerate_section.
-    Examples: "make the hero a blue-to-black gradient", "darker, more dramatic hero", "rewrite pricing with three tiers", "add a video to the testimonials section", "change the hero photo to an abstract illustration", "more bento-grid feel on the capabilities section".
-    What this tool does: re-runs COMPOSER for that section with your refinement instruction; new HTML is generated using the CURRENT design tokens (so colors stay consistent across the page); the full page is then re-stitched.
-    When in doubt, prefer regenerate_section. Gradients, multi-color backgrounds, new structural elements, and any copy or layout change all require regenerate_section.
+  • STRUCTURAL OR VISUAL CHANGE within an EXISTING section → regenerate_section.
+    Examples: "make the hero a blue-to-black gradient", "rewrite pricing with three tiers", "add a third feature card", "change the hero photo to an abstract illustration".
+    When in doubt between this and update_design_tokens, prefer regenerate_section.
+
+  • ADD a NEW section → add_section.
+    Examples: "add a testimonials section between case studies and pricing", "add a FAQ at the bottom", "add a logo cloud above the hero".
+    The new section is COMPOSED with real copy + structure using the current design tokens. Specify after_slug to position it; omit to append.
+
+  • REMOVE a section → remove_section.
+    Examples: "remove the case studies", "drop the team section".
+    Soft-delete (recoverable). Re-stitches the page.
+
+  • RE-STITCH the page (rarely needed) → assemble_html. Use only when the user asks to force a re-render.
 
   • CRITIQUE → critique. Returns a 0-100 score plus structured feedback.
 
-  • COMMIT a coherent set of changes → save_iteration. Call this once at the end, not after every edit.
+  • COMMIT a coherent set of changes → save_iteration. Call this once at the end of a session.
 
 Important rules:
-  • Use ONE tool per turn unless a user request genuinely needs two. Don't chain update_design_tokens + regenerate_section "to be safe" — that doubles cost and confuses the iteration log.
-  • Don't claim the change is visible until the tool result confirms it. If a tool returns ok:false or unsafe_paths, tell the user honestly and offer the right alternative.
+  • Use ONE tool per turn unless a user request genuinely needs two. Don't chain tools "to be safe" — that doubles cost.
+  • Don't claim the change is visible until the tool result confirms it. If a tool returns ok:false, tell the user honestly and offer the right alternative.
   • Keep replies concise. Don't repeat the brief back unless asked.
   • If a request is ambiguous, ask one clarifying question rather than guessing.
 
@@ -307,10 +381,15 @@ export async function executeIterationTool(
         return await runSaveIteration(toolUse, deps)
       case 'critique':
         return await runCritique(toolUse, deps)
-      case 'splice_section':
+      // v0.3.2 Slice 2 — structural editing
       case 'assemble_html':
+        return await runAssembleHtml(toolUse, deps)
       case 'add_section':
+        return await runAddSection(toolUse, deps)
       case 'remove_section':
+        return await runRemoveSection(toolUse, deps)
+      // Still stubbed
+      case 'splice_section':
       case 'apply_preset':
       case 'analyze_reference_url':
         return notImplemented(toolUse)
@@ -334,8 +413,7 @@ export async function executeIterationTool(
 
 /**
  * Helper: re-render full HTML from current tokens + COMPOSER section outputs,
- * save to D1 + R2. Used by both update_design_tokens (auto) and
- * apply_token_to_html (explicit).
+ * save to D1 + R2.
  */
 async function rerenderAndPersist(
   deps: ToolDeps,
@@ -371,14 +449,7 @@ async function rerenderAndPersist(
   }
 
   const sections: DesignSection[] = rows.results.map((row) => {
-    const match = row.title.match(/Compose\s+(.+?)\s+section/i)
-    const name = match
-      ? match[1]
-      : row.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
+    const { name, slug } = slugFromTitle(row.title)
     return { name, slug, html: extractSectionHtml(row.output) }
   })
 
@@ -396,7 +467,6 @@ async function rerenderAndPersist(
     newHtml,
   )
 
-  // Make sure the iteration knows its R2 key (older iterations may have NULL).
   if (!iter.preview_r2_key) {
     await deps.env.DB
       .prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`)
@@ -424,10 +494,6 @@ async function runUpdateDesignTokens(
     }
   }
 
-  // v0.3.1 — Validate patch only contains keys the HTML actually uses.
-  // Adding a new key (e.g. "heroBackground") to tokens has no effect because
-  // the rendered HTML doesn't read it. Refuse early and direct DESIGNER to
-  // regenerate_section, which CAN make structural changes.
   const unsafePaths = findUnsafePaths(input.patch as Record<string, unknown>)
   if (unsafePaths.length > 0) {
     return {
@@ -438,9 +504,9 @@ async function runUpdateDesignTokens(
         error: 'unsupported_token_keys',
         unsafe_paths: unsafePaths,
         message:
-          'These token paths are not consumed by the rendered HTML, so patching them would have NO visible effect. The HTML reads via Tailwind classes (bg-primary, text-primary, font-display, etc) and only sees the allowlisted token keys.',
+          'These token paths are not consumed by the rendered HTML, so patching them would have NO visible effect.',
         directive:
-          'For visual changes that require new structure (gradients, new backgrounds, layout shifts, copy edits), call regenerate_section with section_slug + refinement instead. The regenerated section will use the current design tokens and stay consistent with the rest of the page.',
+          'For visual changes that require new structure (gradients, new backgrounds, layout shifts, copy edits), call regenerate_section with section_slug + refinement instead.',
         allowed_keys: SAFE_TOKEN_KEYS,
       }),
       is_error: true,
@@ -461,7 +527,6 @@ async function runUpdateDesignTokens(
     .bind(JSON.stringify(merged), iter.id)
     .run()
 
-  // AUTO re-render: tokens-only changes are useless without HTML propagation.
   const rerender = await rerenderAndPersist(deps, iter, merged)
 
   return {
@@ -571,15 +636,13 @@ async function runRegenerateSection(
     .all<{ id: string; short_id: string; title: string; output: string }>()
 
   const target = (subtasks.results ?? []).find((s) => {
-    const match = s.title.match(/Compose\s+(.+?)\s+section/i)
-    const name = match ? match[1] : s.title.replace(/Compose\s+/i, '').replace(/\s+section/i, '')
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    const { slug } = slugFromTitle(s.title)
     return slug === input.section_slug
   })
 
   if (!target) {
     const available = (subtasks.results ?? [])
-      .map((s) => s.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, ''))
+      .map((s) => slugFromTitle(s.title).name)
       .join(', ')
     return {
       type: 'tool_result',
@@ -589,93 +652,35 @@ async function runRegenerateSection(
     }
   }
 
-  const sectionName = target.title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
+  const { name: sectionName } = slugFromTitle(target.title)
   const tokens: DesignTokens = iter.design_tokens_json
     ? safeParse(iter.design_tokens_json) ?? emptyTokens()
     : emptyTokens()
 
-  const composerPrompt = `SECTION-ONLY MODE. Regenerate ONLY the <section id="${input.section_slug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.
-
-REFINEMENT INSTRUCTION:
-${input.refinement}
-
-${input.preserve_structure ? 'Preserve the existing structure but apply the refinement to copy and styling.' : 'Feel free to restructure if it serves the refinement.'}
-
-CURRENT SECTION HTML (for reference, may be truncated):
-${target.output.slice(0, 6000)}
-
-DESIGN TOKENS (use Tailwind classes referencing these via the tailwind.config theme: primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans):
-  primary: ${tokens.palette.primary}
-  accent: ${tokens.palette.accent}
-  background: ${tokens.palette.background}
-  text: ${tokens.palette.text_primary}
-  display font: ${tokens.typography.display_font}
-  body font: ${tokens.typography.body_font}
-
-BRIEF CONTEXT:
-  Brand: ${brief.client_name}
-  Business: ${brief.business_description.slice(0, 240)}
-  Audience: ${brief.target_audience}
-  Tone: ${brief.mood_tone}
-
-HEADING HIERARCHY: Use <h2> for your section's main headline. Use <h3> for cards or sub-items. Do NOT add another <h1> (the hero owns the single h1). EXCEPTION: if the section_slug is 'hero', the hero MUST contain the single <h1> for the page.
-
-ACCESSIBILITY REQUIREMENTS:
-- CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.
-- Form inputs: use aria-required="true" for required fields.
-- Icon-only indicators must include sr-only text or visible label.
-- SVG illustrations: wrap in <figure> with <figcaption> if meaningful; aria-hidden="true" if purely decorative.
-- Focus styles: rely on global focus-visible outline; do NOT add custom focus:ring on inputs (causes double-ring).
-
-INLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS. If the refinement asks for a gradient, multi-stop background, or unusual color treatment, use inline style="background: linear-gradient(...)" or a custom <style> block inside the section — do NOT try to wedge it into a Tailwind class name.
-
-Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML. First character of your response must be <, last must be >.`
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': deps.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: MODEL_ID,
-      max_tokens: 8192,
-      messages: [{ role: 'user', content: composerPrompt }],
-    }),
+  const composerPrompt = buildComposerPrompt({
+    sectionSlug: input.section_slug,
+    sectionName,
+    instruction: input.refinement,
+    preserveStructure: input.preserve_structure ?? false,
+    currentSectionHtml: target.output,
+    tokens,
+    brief,
+    isNewSection: false,
   })
 
-  if (!res.ok) {
-    const errText = await res.text()
+  const composerResult = await callComposer(deps.apiKey, composerPrompt)
+  if (!composerResult.ok) {
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,
-      content: `COMPOSER call failed: ${res.status} ${errText.slice(0, 200)}`,
-      is_error: true,
-    }
-  }
-
-  type AR = {
-    content?: Array<{ type: string; text?: string }>
-    usage?: { input_tokens?: number; output_tokens?: number }
-  }
-  const data = (await res.json()) as AR
-  const newHtml = (data.content ?? [])
-    .map((c) => (c.type === 'text' ? c.text ?? '' : ''))
-    .join('')
-
-  if (!newHtml.trim().startsWith('<')) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'COMPOSER returned non-HTML content. Section not updated.',
+      content: composerResult.error,
       is_error: true,
     }
   }
 
   await deps.env.DB
     .prepare(`UPDATE agent_subtasks SET output = ? WHERE id = ?`)
-    .bind(newHtml, target.id)
+    .bind(composerResult.html, target.id)
     .run()
 
   let assemblyError: string | null = null
@@ -696,16 +701,479 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
     content: JSON.stringify({
       ok: true,
       section_slug: input.section_slug,
-      new_html_length: newHtml.length,
-      composer_tokens: {
-        input: data.usage?.input_tokens ?? 0,
-        output: data.usage?.output_tokens ?? 0,
-      },
+      new_html_length: composerResult.html.length,
+      composer_tokens: composerResult.usage,
       assembly_warning: assemblyError,
       note: assemblyError
-        ? 'Section regenerated but full-page re-assembly failed. Run apply_token_to_html to retry.'
+        ? 'Section regenerated but full-page re-assembly failed.'
         : 'Section regenerated and page re-assembled. The preview iframe refreshes automatically.',
     }),
+  }
+}
+
+/**
+ * v0.3.2 — re-stitches the page with current tokens + current section
+ * outputs. Idempotent, $0 cost, no LLM calls.
+ */
+async function runAssembleHtml(
+  toolUse: DesignAssistantToolUse,
+  deps: ToolDeps,
+): Promise<DesignToolResult> {
+  const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
+  if (!iter) return missingIteration(toolUse)
+  if (!iter.orchestrator_run_id) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'No orchestrator_run_id on iteration — cannot assemble.',
+      is_error: true,
+    }
+  }
+
+  try {
+    const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
+    await deps.env.DB
+      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
+      .bind(result.output, iter.id)
+      .run()
+    const { r2Key } = await savePreviewToR2(
+      deps.env,
+      deps.briefId,
+      iter.iteration_number,
+      result.output,
+    )
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: JSON.stringify({
+        ok: true,
+        html_length: result.output.length,
+        r2_key: r2Key,
+        note: 'Page re-stitched and preview re-uploaded. The preview iframe refreshes automatically.',
+      }),
+    }
+  } catch (err) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: `Assembly failed: ${err instanceof Error ? err.message : String(err)}`,
+      is_error: true,
+    }
+  }
+}
+
+/**
+ * v0.3.2 — soft-deletes a section by setting status='cancelled' on its
+ * agent_subtasks row. executeAssembler filters by status='done' so the
+ * removed section is automatically skipped. The COMPOSER output is preserved
+ * in the row so a future undo tool can restore it.
+ */
+async function runRemoveSection(
+  toolUse: DesignAssistantToolUse,
+  deps: ToolDeps,
+): Promise<DesignToolResult> {
+  const input = toolUse.input as { section_slug?: string }
+  if (!input.section_slug) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'section_slug is required.',
+      is_error: true,
+    }
+  }
+
+  const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
+  if (!iter) return missingIteration(toolUse)
+  if (!iter.orchestrator_run_id) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'No orchestrator_run_id on iteration — cannot locate section.',
+      is_error: true,
+    }
+  }
+
+  const subtasks = await deps.env.DB
+    .prepare(
+      `SELECT id, short_id, title FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`,
+    )
+    .bind(iter.orchestrator_run_id, deps.userId)
+    .all<{ id: string; short_id: string; title: string }>()
+
+  const target = (subtasks.results ?? []).find(
+    (s) => slugFromTitle(s.title).slug === input.section_slug,
+  )
+
+  if (!target) {
+    const available = (subtasks.results ?? [])
+      .map((s) => slugFromTitle(s.title).slug)
+      .join(', ')
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: JSON.stringify({
+        ok: false,
+        error: 'section_not_found',
+        section_slug: input.section_slug,
+        available_slugs: available,
+      }),
+      is_error: true,
+    }
+  }
+
+  // Soft-delete: status='cancelled' filters out of executeAssembler's WHERE status='done'.
+  // Preserves the output column so a hypothetical undo tool can flip status back to 'done'.
+  await deps.env.DB
+    .prepare(`UPDATE agent_subtasks SET status = 'cancelled' WHERE id = ?`)
+    .bind(target.id)
+    .run()
+
+  let assemblyError: string | null = null
+  try {
+    const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
+    await deps.env.DB
+      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
+      .bind(result.output, iter.id)
+      .run()
+    await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
+  } catch (err) {
+    assemblyError = err instanceof Error ? err.message : String(err)
+  }
+
+  return {
+    type: 'tool_result',
+    tool_use_id: toolUse.id,
+    content: JSON.stringify({
+      ok: true,
+      section_slug: input.section_slug,
+      removed_subtask_id: target.id,
+      assembly_warning: assemblyError,
+      note: assemblyError
+        ? `Section removed from data but re-assembly failed: ${assemblyError}`
+        : 'Section removed and page re-stitched. The preview iframe refreshes automatically. (The section output is preserved internally — future undo tool can restore it.)',
+    }),
+  }
+}
+
+/**
+ * v0.3.2 — runs COMPOSER for a brand new section, inserts a new agent_subtasks
+ * row with status='done', and re-assembles. Short_id slots between after_slug's
+ * subtask and the next sibling, so the section appears in the right position.
+ */
+async function runAddSection(
+  toolUse: DesignAssistantToolUse,
+  deps: ToolDeps,
+): Promise<DesignToolResult> {
+  const input = toolUse.input as {
+    name?: string
+    description?: string
+    after_slug?: string
+  }
+  if (!input.name || !input.description) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'name and description are required.',
+      is_error: true,
+    }
+  }
+
+  const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
+  if (!iter) return missingIteration(toolUse)
+  if (!iter.orchestrator_run_id) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'No orchestrator_run_id on iteration — cannot add section.',
+      is_error: true,
+    }
+  }
+
+  const brief = await deps.env.DB
+    .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
+    .bind(deps.briefId, deps.userId)
+    .first<DesignBriefRow>()
+  if (!brief) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'Brief not found.',
+      is_error: true,
+    }
+  }
+
+  // Generate slug and check for collision
+  const newSlug = input.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  if (!newSlug) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: 'name must contain alphanumeric characters.',
+      is_error: true,
+    }
+  }
+
+  // Look up ALL composer subtasks (including cancelled ones, so we don't reuse slugs)
+  const allSubtasks = await deps.env.DB
+    .prepare(
+      `SELECT short_id, title, status FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'`,
+    )
+    .bind(iter.orchestrator_run_id, deps.userId)
+    .all<{ short_id: string; title: string; status: string }>()
+
+  const allRows = allSubtasks.results ?? []
+  const slugCollision = allRows.find(
+    (r) => slugFromTitle(r.title).slug === newSlug && r.status === 'done',
+  )
+  if (slugCollision) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: JSON.stringify({
+        ok: false,
+        error: 'slug_collision',
+        message: `A section with slug "${newSlug}" already exists. Use regenerate_section to modify it, or pick a different name.`,
+        existing_section: slugCollision.title,
+      }),
+      is_error: true,
+    }
+  }
+
+  // Determine the short_id anchor for insertion
+  const activeRows = allRows.filter((r) => r.status === 'done')
+  let anchorShortId: string
+
+  if (input.after_slug) {
+    const anchor = activeRows.find((r) => slugFromTitle(r.title).slug === input.after_slug)
+    if (anchor) {
+      anchorShortId = anchor.short_id
+    } else {
+      // after_slug not found — fall back to last active section
+      const sorted = [...activeRows].sort((a, b) => a.short_id.localeCompare(b.short_id))
+      anchorShortId = sorted.length > 0 ? sorted[sorted.length - 1].short_id : 'st_1'
+    }
+  } else {
+    // No anchor specified — append at end of active sections
+    const sorted = [...activeRows].sort((a, b) => a.short_id.localeCompare(b.short_id))
+    anchorShortId = sorted.length > 0 ? sorted[sorted.length - 1].short_id : 'st_1'
+  }
+
+  const allShortIds = allRows.map((r) => r.short_id)
+  const newShortId = generateInsertShortId(anchorShortId, allShortIds)
+
+  // Build the COMPOSER prompt
+  const tokens: DesignTokens = iter.design_tokens_json
+    ? safeParse(iter.design_tokens_json) ?? emptyTokens()
+    : emptyTokens()
+
+  const composerPrompt = buildComposerPrompt({
+    sectionSlug: newSlug,
+    sectionName: input.name,
+    instruction: input.description,
+    preserveStructure: false,
+    currentSectionHtml: '',
+    tokens,
+    brief,
+    isNewSection: true,
+  })
+
+  const composerResult = await callComposer(deps.apiKey, composerPrompt)
+  if (!composerResult.ok) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: composerResult.error,
+      is_error: true,
+    }
+  }
+
+  // INSERT the new subtask row
+  const newId = crypto.randomUUID()
+  const now = Math.floor(Date.now() / 1000)
+  const taskType = classifySection(input.name, input.description)
+
+  await deps.env.DB
+    .prepare(
+      `INSERT INTO agent_subtasks
+         (id, pipeline_run_id, user_id, short_id, agent_name, title, task,
+          depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level,
+          human_required, status, output, cost_usd, tokens, started_at, completed_at,
+          created_at, task_type)
+         VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      newId,
+      iter.orchestrator_run_id,
+      deps.userId,
+      newShortId,
+      `Compose ${input.name} section`,
+      `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`,
+      taskType === 'compose_simple' ? 0.015 : 0.05,
+      composerResult.html,
+      composerResult.costUsd,
+      composerResult.usage.input + composerResult.usage.output,
+      now,
+      now,
+      now,
+      taskType,
+    )
+    .run()
+
+  // Re-assemble
+  let assemblyError: string | null = null
+  try {
+    const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
+    await deps.env.DB
+      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
+      .bind(result.output, iter.id)
+      .run()
+    await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
+  } catch (err) {
+    assemblyError = err instanceof Error ? err.message : String(err)
+  }
+
+  return {
+    type: 'tool_result',
+    tool_use_id: toolUse.id,
+    content: JSON.stringify({
+      ok: true,
+      new_section: {
+        slug: newSlug,
+        name: input.name,
+        short_id: newShortId,
+        after: input.after_slug ?? null,
+        task_type: taskType,
+      },
+      composer_tokens: composerResult.usage,
+      cost_usd: composerResult.costUsd,
+      assembly_warning: assemblyError,
+      note: assemblyError
+        ? `Section added but re-assembly failed: ${assemblyError}`
+        : `Section "${input.name}" added and page re-stitched. The preview iframe refreshes automatically.`,
+    }),
+  }
+}
+
+/**
+ * v0.3.2 — shared COMPOSER prompt builder. Used by both regenerate_section
+ * (existing section) and add_section (new section). The only material
+ * difference is whether we include the current section HTML as reference.
+ */
+function buildComposerPrompt(args: {
+  sectionSlug: string
+  sectionName: string
+  instruction: string
+  preserveStructure: boolean
+  currentSectionHtml: string
+  tokens: DesignTokens
+  brief: DesignBriefRow
+  isNewSection: boolean
+}): string {
+  const { sectionSlug, sectionName, instruction, preserveStructure, currentSectionHtml, tokens, brief, isNewSection } = args
+
+  const referenceBlock = isNewSection
+    ? ''
+    : `\n\nCURRENT SECTION HTML (for reference, may be truncated):\n${currentSectionHtml.slice(0, 6000)}\n`
+
+  const structureBlock = isNewSection
+    ? ''
+    : preserveStructure
+      ? '\nPreserve the existing structure but apply the refinement to copy and styling.\n'
+      : '\nFeel free to restructure if it serves the refinement.\n'
+
+  const headingRule = sectionSlug === 'hero'
+    ? 'HEADING HIERARCHY: This is the hero section — it MUST contain the single <h1> for the page. Use <h2> for any sub-headings within the hero.'
+    : 'HEADING HIERARCHY: Use <h2> for the section\'s main headline. Use <h3> for cards or sub-items. Do NOT add another <h1> (the hero owns the single h1).'
+
+  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.
+
+${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:
+${instruction}
+${structureBlock}${referenceBlock}
+DESIGN TOKENS (use Tailwind classes referencing these via the tailwind.config theme: primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans):
+  primary: ${tokens.palette.primary}
+  accent: ${tokens.palette.accent}
+  background: ${tokens.palette.background}
+  text: ${tokens.palette.text_primary}
+  display font: ${tokens.typography.display_font}
+  body font: ${tokens.typography.body_font}
+
+BRIEF CONTEXT:
+  Brand: ${brief.client_name}
+  Business: ${brief.business_description.slice(0, 240)}
+  Audience: ${brief.target_audience}
+  Tone: ${brief.mood_tone}
+
+${headingRule}
+
+ACCESSIBILITY REQUIREMENTS:
+- CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.
+- Form inputs: use aria-required="true" for required fields.
+- Icon-only indicators must include sr-only text or visible label.
+- SVG illustrations: wrap in <figure> with <figcaption> if meaningful; aria-hidden="true" if purely decorative.
+- Focus styles: rely on global focus-visible outline; do NOT add custom focus:ring on inputs (causes double-ring).
+
+INLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS. If the instruction asks for a gradient, multi-stop background, or unusual color treatment, use inline style="background: linear-gradient(...)" or a custom <style> block inside the section.
+
+Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML. First character of your response must be <, last must be >.`
+}
+
+/**
+ * v0.3.2 — shared COMPOSER call wrapper. Returns html + usage on success,
+ * structured error string on failure.
+ */
+async function callComposer(
+  apiKey: string,
+  prompt: string,
+): Promise<
+  | { ok: true; html: string; usage: { input: number; output: number }; costUsd: number }
+  | { ok: false; error: string }
+> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: MODEL_ID,
+      max_tokens: 8192,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    return { ok: false, error: `COMPOSER call failed: ${res.status} ${errText.slice(0, 200)}` }
+  }
+
+  type AR = {
+    content?: Array<{ type: string; text?: string }>
+    usage?: { input_tokens?: number; output_tokens?: number }
+  }
+  const data = (await res.json()) as AR
+  const html = (data.content ?? [])
+    .map((c) => (c.type === 'text' ? c.text ?? '' : ''))
+    .join('')
+
+  if (!html.trim().startsWith('<')) {
+    return { ok: false, error: 'COMPOSER returned non-HTML content. Section not updated.' }
+  }
+
+  const inputTokens = data.usage?.input_tokens ?? 0
+  const outputTokens = data.usage?.output_tokens ?? 0
+
+  return {
+    ok: true,
+    html,
+    usage: { input: inputTokens, output: outputTokens },
+    costUsd: calculateCost(inputTokens, outputTokens),
   }
 }
 
@@ -827,7 +1295,7 @@ function notImplemented(toolUse: DesignAssistantToolUse): DesignToolResult {
   return {
     type: 'tool_result',
     tool_use_id: toolUse.id,
-    content: `Tool '${toolUse.name}' is in the v0.3.0 catalog but not yet implemented. Suggest a workaround using update_design_tokens or regenerate_section.`,
+    content: `Tool '${toolUse.name}' is in the catalog but not yet implemented. Try update_design_tokens, regenerate_section, add_section, or remove_section depending on what you want to change.`,
     is_error: false,
   }
 }
