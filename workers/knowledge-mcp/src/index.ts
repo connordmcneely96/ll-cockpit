@@ -62,10 +62,18 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
           // filter: { tenant_id: tenantId },
         });
 
-        const enriched = await Promise.all(
+        // Use allSettled so a single bad vector (e.g. ORACLE's research-{id} format)
+        // doesn't crash the entire search response.
+        const settled = await Promise.allSettled(
           results.matches.map(async (match) => {
-            const [table, id] = match.id.split('::');
-            const tableName = table === 'study_nodes' ? 'study_nodes' : 'sprint_items';
+            // Only enrich study_nodes/sprint_items vectors (table::id format).
+            // ORACLE writes research-{id} vectors to the same index — skip those.
+            const sepIdx = match.id.indexOf('::');
+            if (sepIdx === -1) return null;
+            const table = match.id.slice(0, sepIdx);
+            const id = match.id.slice(sepIdx + 2);
+            if (!id || (table !== 'study_nodes' && table !== 'sprint_items')) return null;
+            const tableName = table as 'study_nodes' | 'sprint_items';
             const row = await this.env.DB.prepare(
               `SELECT * FROM ${tableName} WHERE id = ? AND tenant_id = ?`
             )
@@ -74,6 +82,12 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
             return { score: match.score, type: table, ...row };
           })
         );
+        const enriched = settled
+          .filter(
+            (r): r is PromiseFulfilledResult<Record<string, unknown>> =>
+              r.status === 'fulfilled' && r.value !== null
+          )
+          .map((r) => r.value);
 
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ results: enriched }) }],

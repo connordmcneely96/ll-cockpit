@@ -14,6 +14,8 @@ interface Env {
 export default {
   async queue(batch: MessageBatch<KnowledgeMessage>, env: Env): Promise<void> {
     const vectors: VectorizeVector[] = [];
+    // Collect messages that successfully produced embeddings — ack only after upsert succeeds.
+    const toAck: (typeof batch.messages)[0][] = [];
 
     for (const message of batch.messages) {
       const { id, table, content, metadata } = message.body;
@@ -38,15 +40,22 @@ export default {
           values: result.data[0],
           metadata: { ...metadata, table, record_id: id },
         });
-
-        message.ack();
+        toAck.push(message);
       } catch {
         message.retry();
       }
     }
 
     if (vectors.length > 0) {
-      await env.KNOWLEDGE_VECTORIZE.upsert(vectors);
+      try {
+        await env.KNOWLEDGE_VECTORIZE.upsert(vectors);
+        // Ack only after successful upsert — prevents silent data loss on Vectorize errors.
+        for (const msg of toAck) msg.ack();
+      } catch (err) {
+        console.error('[knowledge-embed] Vectorize upsert failed:', String(err));
+        // Let the queue retry the whole batch.
+        for (const msg of toAck) msg.retry();
+      }
     }
   },
 };
