@@ -1,13 +1,26 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F (cost tiering) → Sprint 18E (attached design systems)
+ * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F → Sprint 18E → Sprint 18N (scroll animations + typography debt fix).
  *
  * Per-section architecture:
  *   buildDesignBuildDAG(brief, iter, feedback, attachedSystem?) → DecompositionResult
  *     - st_1: DESIGNER (JSON tokens). When attachedSystem set, prompt instructs DESIGNER
- *             to use that DESIGN.md's tokens verbatim rather than invent new ones.
+ *             to use that DESIGN.md's tokens verbatim rather than invent new ones,
+ *             INCLUDING serif/sans/mono font split when the system specifies one.
  *     - st_2..N+1: COMPOSER per section (parallel, each gets own 8192 budget)
  *     - st_N+2: ASSEMBLER (deterministic scaffold + stitch, $0 cost)
  *     - st_N+3: CRITIC (reviews assembled page)
+ *
+ * Sprint 18N — every rendered page now ships with the data-anim scroll animation
+ * scaffold: ANIMATION_PRESETS_CSS in the head, INTERSECTION_OBSERVER_SCRIPT before
+ * </body>. COMPOSER prompt teaches the agent to emit data-anim attributes
+ * contextually, tone-matched to the brief.
+ *
+ * Sprint 18N typography debt fix (982e66e5) — renderFullHtml now supports an
+ * optional font_serif/font_sans/font_mono triad in DesignTokens.typography.
+ * Custom Google Fonts are deduped and loaded together, and the Tailwind theme
+ * registers all four slots (display, sans, serif, mono) so COMPOSER can apply
+ * `font-serif` to editorial headings, `font-mono` to code, etc. Existing
+ * briefs with only display_font + body_font render identically.
  */
 
 import type {
@@ -20,6 +33,11 @@ import type {
   DecompositionResult,
   OrchestratorRunRow,
 } from '@/types'
+import {
+  ANIMATION_PRESETS_CSS,
+  INTERSECTION_OBSERVER_SCRIPT,
+  animationPresetsForPrompt,
+} from './animation-presets'
 
 // ──────────────────────────────────────────────────────────────────────
 // SECTION CLASSIFICATION — Sprint 18F cost optimization
@@ -97,11 +115,6 @@ export function parseSections(briefSections: string): ParsedSection[] {
   })
 }
 
-/**
- * Sprint 18E — optional attached design system context.
- * When provided, DESIGNER reads the system's DESIGN.md verbatim and uses
- * its tokens instead of inventing fresh ones.
- */
 export interface AttachedDesignSystem {
   slug: string
   name: string
@@ -132,16 +145,16 @@ export function buildDesignBuildDAG(
     ? `\n\nITERATION ${iterationNumber} — client feedback to apply:\n${clientFeedback}\n`
     : ''
 
-  // Sprint 18E — design system context block for DESIGNER
-  // Truncate to 12k chars max to stay within token budget (typical DESIGN.md is 15-30KB).
-  // The frontmatter YAML at the top carries the structured tokens; sections below
-  // give DESIGNER the prose context. Truncation preserves frontmatter intact.
   const designSystemBlock = attachedSystem
     ? `\n\n## ATTACHED DESIGN SYSTEM — ${attachedSystem.name}\n` +
       `The user attached this design system. Use its tokens (colors, typography, spacing, components) verbatim. ` +
       `Adapt only where the brief explicitly requires it. Do NOT invent new colors or fonts when this system defines them.\n\n` +
       `<design_system_content>\n${attachedSystem.design_md.slice(0, 12000)}\n</design_system_content>\n`
     : ''
+
+  // Sprint 18N — scroll animations block shared by every COMPOSER task. Generated
+  // once per DAG build so the preset list stays consistent across all sections.
+  const scrollAnimationsBlock = buildScrollAnimationsBlock()
 
   // st_1: DESIGNER
   subtasks.push({
@@ -151,12 +164,12 @@ export function buildDesignBuildDAG(
       ? `Adapt design tokens from ${attachedSystem.name}`
       : 'Generate design tokens',
     task: `${attachedSystem
-        ? `Adapt the attached design system's tokens to this brief.${feedbackBlock}\n\nBRIEF:\n${briefSummary}${designSystemBlock}\n\nOutput the JSON token object per your system prompt. Preserve the attached system's color hex values, font families, and spacing scale. Map them into the standard {palette, typography, spacing, motion} JSON shape. No HTML.`
+        ? `Adapt the attached design system's tokens to this brief.${feedbackBlock}\n\nBRIEF:\n${briefSummary}${designSystemBlock}\n\nOutput the JSON token object per your system prompt. Preserve the attached system's color hex values, font families, and spacing scale. Map them into the standard {palette, typography, spacing, motion} JSON shape.\n\nTYPOGRAPHY HIERARCHY (Sprint 18N typography debt fix): If the system specifies a multi-font hierarchy — separate serif/sans/mono families (e.g. Notion's Inter + Lora + JetBrains Mono triad, Stripe's serif headlines on sans body, Apple's SF Pro + SF Mono pair) — populate the optional typography fields in addition to display_font and body_font:\n  - typography.font_serif → editorial/display serif font (e.g. "Lora", "Source Serif Pro", "Playfair Display")\n  - typography.font_sans → primary sans font (often same as body_font, but use this when the system distinguishes a UI sans from a body sans)\n  - typography.font_mono → monospace font for code/technical content (e.g. "JetBrains Mono", "SF Mono", "Fira Code")\nMap display_font to the primary headline font (whichever family the system uses for H1-H2). Map body_font to the primary running text font. Only set font_serif/font_sans/font_mono when the attached system explicitly defines them — do not invent splits when the system uses one font everywhere. No HTML.`
         : `Generate design tokens (JSON) for the website rebuild.${feedbackBlock}\n\nBRIEF:\n${briefSummary}\n\nOutput the JSON token object per your system prompt. No HTML.`
       }`,
     task_type: 'design_language',
     depends_on: [],
-    estimated_cost_usd: attachedSystem ? 0.03 : 0.02, // slightly higher with attached context
+    estimated_cost_usd: attachedSystem ? 0.03 : 0.02,
     estimated_duration_seconds: 15,
     risk_level: 'low',
     human_required: false,
@@ -180,7 +193,7 @@ export function buildDesignBuildDAG(
       id,
       agent: 'COMPOSER',
       title: `Compose ${sec.name} section`,
-      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
+      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans, font-serif, font-mono — last two only when the DESIGNER tokens specify font_serif/font_mono).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\n${scrollAnimationsBlock}\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
       task_type: taskType,
       depends_on: ['st_1'],
       estimated_cost_usd: estCost,
@@ -234,9 +247,44 @@ export function buildDesignBuildDAG(
 }
 
 /**
- * Sprint 18E — fetch an attached design system from D1 + R2, ready to pass
- * to buildDesignBuildDAG. Returns null if slug not found or user not authorized.
+ * Sprint 18N — shared scroll-animations block used by both buildDesignBuildDAG
+ * (initial build) and iteration-agent.buildComposerPrompt (regenerate_section,
+ * add_section). Keeping this in one place ensures both paths teach COMPOSER the
+ * same conventions for emitting data-anim attributes.
  */
+export function buildScrollAnimationsBlock(): string {
+  return `SCROLL ANIMATIONS (Sprint 18N — agent-prescribed):
+The rendered page ships with a scroll-triggered animation scaffold. Opt elements into animations by adding the data-anim HTML attribute to MAJOR BLOCK ELEMENTS. Available presets:
+
+${animationPresetsForPrompt()}
+
+PLACEMENT RULES:
+- Add data-anim to MAJOR BLOCK ELEMENTS only: the <section> itself, large cards, hero headline, key CTAs, stat blocks. Never on every <p>, span, button, or inline element.
+- ONE preset per element in most cases. Combine only when pairing parent + child semantics (e.g. <ul data-anim="stagger-children"> with <li data-anim="fade-in"> children).
+- Tone fit:
+  - Default → fade-in or slide-up
+  - CTAs / callouts → scale-in (one per section maximum)
+  - Card grids / lists → parent gets stagger-children, children get fade-in or slide-up
+  - Hero headline → text-reveal (one per PAGE maximum, hero only)
+  - Numeric stats → count-up on the number element itself
+  - Hero background image → parallax-bg on the background div (one per page maximum)
+  - Long-form narrative / process steps → sticky-scroll-reveal
+- Solemn / medical / bereavement / archival sections: use ONLY fade-in. No transforms.
+- Tone match with the brief's mood_tone matters more than animating things. If the mood is quiet/restrained/editorial/corporate-formal, default to fewer animations or fade-in only.
+- LIMIT: At most 4 data-anim attributes per section. Animating everything is worse than animating nothing.
+
+EXAMPLE (features section):
+  <section id="features" data-anim="fade-in">
+    <h2>Built for engineers</h2>
+    <div class="grid grid-cols-3 gap-6" data-anim="stagger-children">
+      <article data-anim="slide-up">...</article>
+      <article data-anim="slide-up">...</article>
+      <article data-anim="slide-up">...</article>
+    </div>
+    <a href="#contact" class="btn" data-anim="scale-in">Get a quote</a>
+  </section>`
+}
+
 export async function loadAttachedDesignSystem(
   env: CloudflareEnv,
   slug: string,
@@ -342,6 +390,13 @@ export function renderFullHtml({
   const t = tokens.typography
   const displayFont = t.display_font || 'Inter'
   const bodyFont = t.body_font || 'Inter'
+  // Sprint 18N typography debt fix (982e66e5) — resolve the rich font hierarchy.
+  // sansFont prefers the explicit font_sans when set (e.g. attached design system
+  // distinguishes a UI sans from a body sans), otherwise falls back to body_font
+  // for backwards compatibility with existing briefs.
+  const sansFont = t.font_sans || bodyFont
+  const serifFont = t.font_serif // optional — Tailwind serif default fires if absent
+  const monoFont = t.font_mono   // optional — Tailwind mono default fires if absent
 
   const navLinks = sections
     .map((s) => `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`)
@@ -349,6 +404,26 @@ export function renderFullHtml({
 
   const sectionMarkup = sections.map((s) => s.html).join('\n\n  ')
   const fontParam = (name: string) => name.replace(/ /g, '+')
+
+  // Collect unique Google Fonts to load. Dedupe via Set so e.g. when
+  // display_font === body_font we don't request the same family twice.
+  const fontsToLoad = new Set<string>([displayFont, sansFont])
+  if (serifFont) fontsToLoad.add(serifFont)
+  if (monoFont) fontsToLoad.add(monoFont)
+  const fontFamilyQs = Array.from(fontsToLoad)
+    .map((f) => `family=${fontParam(f)}:wght@400;500;600;700`)
+    .join('&')
+
+  // Tailwind theme font slots. Always emit all four so COMPOSER can use
+  // font-display, font-sans, font-serif, font-mono uniformly. When the
+  // attached system doesn't specify serif/mono, fall through to safe system
+  // fallbacks — Tailwind's own defaults are Georgia + ui-monospace.
+  const tailwindFontFamily = [
+    `display: ['${displayFont}', 'system-ui', 'sans-serif']`,
+    `sans: ['${sansFont}', 'system-ui', 'sans-serif']`,
+    `serif: [${serifFont ? `'${serifFont}', ` : ''}'Georgia', 'serif']`,
+    `mono: [${monoFont ? `'${monoFont}', ` : ''}'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']`,
+  ].join(',\n            ')
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -359,7 +434,7 @@ export function renderFullHtml({
   <meta name="description" content="${escapeHtml(brief.business_description)}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=${fontParam(displayFont)}:wght@400;500;600;700&family=${fontParam(bodyFont)}:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?${fontFamilyQs}&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -376,20 +451,21 @@ export function renderFullHtml({
             border: '${p.border ?? '#e2e8f0'}',
           },
           fontFamily: {
-            display: ['${displayFont}', 'system-ui', 'sans-serif'],
-            sans: ['${bodyFont}', 'system-ui', 'sans-serif'],
+            ${tailwindFontFamily},
           },
         },
       },
     }
   </script>
   <style>
-    body { font-family: '${bodyFont}', system-ui, sans-serif; background: ${p.background}; color: ${p.text_primary}; }
+    body { font-family: '${sansFont}', system-ui, sans-serif; background: ${p.background}; color: ${p.text_primary}; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
     .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: ${p.primary}; color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
     a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid ${p.primary}; outline-offset: 2px; border-radius: 2px; }
     .mobile-menu { display: none; }
     .mobile-menu.open { display: block; }
+
+    ${ANIMATION_PRESETS_CSS}
   </style>
 </head>
 <body>
@@ -423,6 +499,9 @@ export function renderFullHtml({
       </div>
     </div>
   </footer>
+  <script>
+${INTERSECTION_OBSERVER_SCRIPT}
+  </script>
 </body>
 </html>`
 }

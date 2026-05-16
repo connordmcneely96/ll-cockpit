@@ -394,6 +394,18 @@ export interface DesignTokens {
     display_font: string
     body_font: string
     scale?: Record<string, string>
+    // Sprint 18N — typography debt fix (982e66e5)
+    // Allow attached design systems (Notion, Stripe, etc) to prescribe a
+    // richer font hierarchy beyond display/body, so e.g. Notion's
+    // Inter + Lora + JetBrains Mono triad carries through to the rendered
+    // HTML. All three optional — existing tokens stay backwards compatible.
+    // COMPOSER uses these via Tailwind classes:
+    //   font_serif  -> font-serif  (editorial headings, blockquotes, brand)
+    //   font_sans   -> font-sans   (overrides body_font if present, body running text)
+    //   font_mono   -> font-mono   (code snippets, technical annotations)
+    font_serif?: string
+    font_sans?: string
+    font_mono?: string
   }
   spacing?: {
     scale?: 'tight' | 'comfortable' | 'generous'
