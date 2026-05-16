@@ -1,25 +1,33 @@
 #!/usr/bin/env node
 // Backfill script: re-embeds all study_nodes and sprint_items into nexus-knowledge Vectorize.
-// Usage:
-//   CLOUDFLARE_API_TOKEN=<token> CLOUDFLARE_ACCOUNT_ID=<account_id> node scripts/reindex-knowledge.js
+// Usage (PowerShell):
+//   $env:CLOUDFLARE_API_TOKEN="your-token"; $env:CLOUDFLARE_ACCOUNT_ID="your-account-id"; node scripts/reindex-knowledge.js
 //
 // Idempotent: Vectorize upsert is safe to run repeatedly (same vector ID = overwrite).
-// No embed_status column exists in D1, so ALL records are processed each run.
 
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const DB_ID = '831eeccf-60bc-4378-8a3b-71dfb910756e';
 const VECTORIZE_INDEX = 'nexus-knowledge';
 const AI_MODEL = '@cf/baai/bge-base-en-v1.5';
-const CF_BASE = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}`;
 
+// Guard FIRST — before using env vars to build anything
 if (!ACCOUNT_ID || !API_TOKEN) {
   console.error('Error: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set.');
+  console.error('  CLOUDFLARE_ACCOUNT_ID:', ACCOUNT_ID ? '✅ set' : '❌ missing');
+  console.error('  CLOUDFLARE_API_TOKEN:', API_TOKEN ? '✅ set' : '❌ missing');
   process.exit(1);
 }
 
+// Build CF_BASE AFTER the guard so ACCOUNT_ID is guaranteed defined
+const CF_BASE = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}`;
+
+console.log(`Using Account ID: ${ACCOUNT_ID}`);
+console.log(`Using DB ID: ${DB_ID}`);
+
 async function cfFetch(path, options = {}) {
-  const res = await fetch(`${CF_BASE}${path}`, {
+  const url = `${CF_BASE}${path}`;
+  const res = await fetch(url, {
     ...options,
     headers: {
       Authorization: `Bearer ${API_TOKEN}`,
@@ -47,14 +55,12 @@ async function embed(text) {
     method: 'POST',
     body: JSON.stringify({ text }),
   });
-  // Response shape: { data: number[][] }
   const vector = result?.data?.[0];
   if (!vector) throw new Error('Empty embedding response');
   return vector;
 }
 
 async function upsertVectors(vectors) {
-  // Vectorize v2 upsert expects NDJSON body, not JSON array
   const ndjson = vectors.map((v) => JSON.stringify(v)).join('\n');
   const res = await fetch(
     `${CF_BASE}/vectorize/v2/indexes/${VECTORIZE_INDEX}/upsert`,
@@ -90,10 +96,10 @@ async function processRecords(records, table, buildContent, buildMetadata) {
         metadata,
       }]);
 
-      console.log(`  ✅ Reindexed: ${record.title ?? record.id} [${record.id}]`);
+      console.log(`  ✅ ${record.title ?? record.id}`);
       succeeded++;
     } catch (err) {
-      console.error(`  ❌ Failed: ${record.title ?? record.id} [${record.id}] — ${err.message}`);
+      console.error(`  ❌ ${record.title ?? record.id} — ${err.message}`);
       failed++;
     }
   }
@@ -102,9 +108,8 @@ async function processRecords(records, table, buildContent, buildMetadata) {
 }
 
 async function main() {
-  console.log(`\n🔁 NEXUS Knowledge Backfill — nexus-knowledge Vectorize index\n`);
+  console.log(`\n🔁 NEXUS Knowledge Backfill — ${VECTORIZE_INDEX}\n`);
 
-  // --- study_nodes ---
   console.log('Fetching study_nodes from D1...');
   const studyNodes = await queryD1('SELECT id, title, category, content, tags, source, tenant_id FROM study_nodes ORDER BY created_at ASC');
   console.log(`  Found ${studyNodes.length} study_nodes\n`);
@@ -124,7 +129,6 @@ async function main() {
     })
   );
 
-  // --- sprint_items ---
   console.log('\nFetching sprint_items from D1...');
   const sprintItems = await queryD1('SELECT id, sprint_number, title, description, status, agent, category, tenant_id FROM sprint_items ORDER BY created_at ASC');
   console.log(`  Found ${sprintItems.length} sprint_items\n`);
