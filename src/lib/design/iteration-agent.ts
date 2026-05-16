@@ -1,5 +1,5 @@
 /**
- * Design iteration agent — Sprint 16 v0.3.0.
+ * Design iteration agent — Sprint 16 v0.3.1.
  *
  * Programmatic Anthropic tool-use loop that lets the user refine a finished
  * design brief by chatting.
@@ -10,6 +10,16 @@
  *   - regenerate_section     re-runs COMPOSER for one section + re-stitches
  *   - save_iteration         clones current state as a new design_iterations row
  *   - critique               re-scores the current HTML using CRITIC system prompt
+ *
+ * v0.3.1 FIX:
+ *   - Tool routing was confused — DESIGNER kept choosing update_design_tokens
+ *     for requests like "blue gradient hero" which need regenerate_section.
+ *     Root cause: update_design_tokens can only swap EXISTING token VALUES
+ *     that the HTML already references via Tailwind classes. It cannot
+ *     introduce new visual structure (gradients, layouts, new elements).
+ *   - System prompt now spells out which tool fits which kind of request.
+ *   - update_design_tokens detects new keys not present in current HTML and
+ *     refuses, returning a directive to use regenerate_section instead.
  *
  * STUBBED (return descriptive "not implemented" results):
  *   splice_section, assemble_html, add_section, remove_section,
@@ -44,17 +54,58 @@ const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
 const MAX_TOOL_HOPS = 6
 
+/**
+ * v0.3.1 — Whitelist of token keys that the HTML/Tailwind config actually
+ * references. Patching any key NOT in this list won't change the rendered
+ * page (because the HTML doesn't read it), so update_design_tokens refuses
+ * those and tells DESIGNER to use regenerate_section.
+ */
+const SAFE_TOKEN_KEYS: Record<string, Set<string>> = {
+  palette: new Set([
+    'primary',
+    'primary_dark',
+    'primary_light',
+    'accent',
+    'background',
+    'surface',
+    'text_primary',
+    'text_secondary',
+    'border',
+  ]),
+  typography: new Set(['display_font', 'body_font', 'scale']),
+  spacing: new Set(['scale', 'container_max_width', 'section_padding']),
+  motion: new Set(['transition_speed', 'easing']),
+}
+
+function findUnsafePaths(patch: Record<string, unknown>, prefix = ''): string[] {
+  const unsafe: string[] = []
+  for (const [k, v] of Object.entries(patch)) {
+    const path = prefix ? `${prefix}.${k}` : k
+    const allowed = SAFE_TOKEN_KEYS[prefix]
+    if (!prefix) {
+      // top-level — k must be a known group (palette/typography/spacing/motion) or 'rationale'
+      if (!SAFE_TOKEN_KEYS[k] && k !== 'rationale') unsafe.push(path)
+      else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+        unsafe.push(...findUnsafePaths(v as Record<string, unknown>, k))
+      }
+    } else if (allowed && !allowed.has(k)) {
+      unsafe.push(path)
+    }
+  }
+  return unsafe
+}
+
 export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'update_design_tokens',
     description:
-      'Patch the design tokens (palette, typography, spacing, motion) AND immediately re-render the page HTML with the new tokens, then upload to R2 so the preview reflects the change. Use this for all color, font, or spacing changes. The patch is merged into the existing tokens; only include keys you want to change. This tool does the full propagation in one call — you do NOT need to also call apply_token_to_html after.',
+      'Swap an EXISTING token VALUE that the page already uses via Tailwind classes (e.g. primary color, accent color, display font, section padding). The HTML is then re-rendered with the new value.\n\nUse for: "change primary color to navy", "switch display font to Playfair", "tighten section padding".\n\nDO NOT use for: gradients, backgrounds with multiple colors, new visual elements, structural changes, copy changes, layout changes. For those, use regenerate_section.\n\nThe only valid keys are: palette.{primary, primary_dark, primary_light, accent, background, surface, text_primary, text_secondary, border}, typography.{display_font, body_font}, spacing.{section_padding, container_max_width}, motion.{transition_speed, easing}. Anything else will be rejected — the HTML does not read those keys.',
     input_schema: {
       type: 'object',
       properties: {
         patch: {
           type: 'object',
-          description: 'Partial DesignTokens object. Example: { "palette": { "primary": "#0a4d6b" } }',
+          description: 'Partial DesignTokens object. Example: { "palette": { "primary": "#0a4d6b" } }. Only the keys listed in the tool description are valid.',
         },
         rationale: {
           type: 'string',
@@ -67,13 +118,13 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'apply_token_to_html',
     description:
-      'Force a full HTML re-render using the current design tokens (rarely needed — update_design_tokens already does this). Use only if you suspect the page_html is out of sync with the stored tokens.',
+      'Force a full HTML re-render using the current design tokens. Rarely needed — update_design_tokens already does this. Use only if the rendered HTML appears to be out of sync with the stored tokens.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'regenerate_section',
     description:
-      'Re-run COMPOSER for a single section with refined instructions, then re-stitch the full page via ASSEMBLER. Use when the user wants to change copy or structure within a section (not just colors). Examples: "make the hero darker and replace the photo with an abstract gradient", "add a third pricing tier called Enterprise", "the testimonials section needs three more quotes".',
+      'Re-run COMPOSER for a single section with new instructions, then re-stitch the full page. This is the right tool whenever the change requires NEW HTML — different layout, new visual structure, gradients, new copy, added/removed elements within a section.\n\nUse for: "make the hero a blue-to-black gradient", "make the hero darker and more dramatic", "rewrite the pricing section with three tiers", "add a third feature card", "replace the testimonials with a video", "change the hero photo to an abstract illustration".\n\nThe new section will be generated with the current design tokens already in scope, so colors stay consistent.',
     input_schema: {
       type: 'object',
       properties: {
@@ -83,7 +134,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
         },
         refinement: {
           type: 'string',
-          description: 'Concrete instructions for how to change the section. Be specific.',
+          description: 'Concrete instructions for how to change the section. Be specific about visual direction (e.g. "dark blue-to-black gradient background, white text, more dramatic spacing").',
         },
         preserve_structure: {
           type: 'boolean',
@@ -202,12 +253,25 @@ Constraints: ${brief.constraints ?? 'none'}
 Current iteration: ${currentIter ? `#${currentIter.iteration_number} (${currentIter.status})` : 'none'}
 Current CRITIC score: ${currentIter?.critic_score ?? 'not yet scored'}
 
-Your job:
-  • Listen to the user's refinement request.
-  • Use the smallest tool that does the job. update_design_tokens handles ALL color/font changes (patches tokens AND re-renders HTML AND uploads R2 preview in one call). You do NOT need to call apply_token_to_html separately.
-  • For copy or structural changes within a section, use regenerate_section.
-  • After a coherent set of changes, call save_iteration to commit a new iteration row.
-  • IMPORTANT: Even if the user references a color you THINK is already applied, call update_design_tokens anyway when they ask for any change. The agent has no way to verify what the user is currently seeing; always make the change they asked for.
+Tool routing — match the request to the right tool:
+
+  • SIMPLE TOKEN SWAP (existing key, new value) → update_design_tokens.
+    Examples: "make the primary color navy", "use a warmer purple", "increase section padding", "switch to a serif heading font".
+    What this tool does: swaps a value (e.g. palette.primary from #5645d4 to #0a4d6b) and re-renders the page. The HTML must already reference that key via Tailwind classes (bg-primary, text-primary, font-display, etc).
+    What this tool CANNOT do: introduce gradients, backgrounds with multiple colors, new layouts, new elements, new visual structure. The tool will REFUSE any patch that introduces a key not in its allowlist and tell you to use regenerate_section instead.
+
+  • STRUCTURAL OR VISUAL CHANGE → regenerate_section.
+    Examples: "make the hero a blue-to-black gradient", "darker, more dramatic hero", "rewrite pricing with three tiers", "add a video to the testimonials section", "change the hero photo to an abstract illustration", "more bento-grid feel on the capabilities section".
+    What this tool does: re-runs COMPOSER for that section with your refinement instruction; new HTML is generated using the CURRENT design tokens (so colors stay consistent across the page); the full page is then re-stitched.
+    When in doubt, prefer regenerate_section. Gradients, multi-color backgrounds, new structural elements, and any copy or layout change all require regenerate_section.
+
+  • CRITIQUE → critique. Returns a 0-100 score plus structured feedback.
+
+  • COMMIT a coherent set of changes → save_iteration. Call this once at the end, not after every edit.
+
+Important rules:
+  • Use ONE tool per turn unless a user request genuinely needs two. Don't chain update_design_tokens + regenerate_section "to be safe" — that doubles cost and confuses the iteration log.
+  • Don't claim the change is visible until the tool result confirms it. If a tool returns ok:false or unsafe_paths, tell the user honestly and offer the right alternative.
   • Keep replies concise. Don't repeat the brief back unless asked.
   • If a request is ambiguous, ask one clarifying question rather than guessing.
 
@@ -352,7 +416,33 @@ async function runUpdateDesignTokens(
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,
-      content: 'patch must be an object containing partial design tokens.',
+      content: JSON.stringify({
+        ok: false,
+        error: 'patch must be an object containing partial design tokens.',
+      }),
+      is_error: true,
+    }
+  }
+
+  // v0.3.1 — Validate patch only contains keys the HTML actually uses.
+  // Adding a new key (e.g. "heroBackground") to tokens has no effect because
+  // the rendered HTML doesn't read it. Refuse early and direct DESIGNER to
+  // regenerate_section, which CAN make structural changes.
+  const unsafePaths = findUnsafePaths(input.patch as Record<string, unknown>)
+  if (unsafePaths.length > 0) {
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: JSON.stringify({
+        ok: false,
+        error: 'unsupported_token_keys',
+        unsafe_paths: unsafePaths,
+        message:
+          'These token paths are not consumed by the rendered HTML, so patching them would have NO visible effect. The HTML reads via Tailwind classes (bg-primary, text-primary, font-display, etc) and only sees the allowlisted token keys.',
+        directive:
+          'For visual changes that require new structure (gradients, new backgrounds, layout shifts, copy edits), call regenerate_section with section_slug + refinement instead. The regenerated section will use the current design tokens and stay consistent with the rest of the page.',
+        allowed_keys: SAFE_TOKEN_KEYS,
+      }),
       is_error: true,
     }
   }
@@ -389,7 +479,7 @@ async function runUpdateDesignTokens(
           }
         : { ok: false, reason: rerender.reason },
       note: rerender.ok
-        ? 'Tokens patched and page re-rendered with the new values. Hard-refresh the preview tab to see the change.'
+        ? 'Tokens patched and page re-rendered. The preview iframe refreshes automatically.'
         : `Tokens patched but auto re-render failed (${rerender.reason}). Preview still shows old colors.`,
     }),
   }
@@ -425,7 +515,7 @@ async function runApplyTokenToHtml(
       sections_re_rendered: rerender.sections,
       html_length: rerender.htmlLength,
       r2_key: rerender.r2Key,
-      note: 'Page re-rendered. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to see updates.',
+      note: 'Page re-rendered. Preview iframe refreshes automatically.',
     }),
   }
 }
@@ -528,7 +618,7 @@ BRIEF CONTEXT:
   Audience: ${brief.target_audience}
   Tone: ${brief.mood_tone}
 
-HEADING HIERARCHY: Use <h2> for your section's main headline. Use <h3> for cards or sub-items. Do NOT add another <h1> (the hero owns the single h1).
+HEADING HIERARCHY: Use <h2> for your section's main headline. Use <h3> for cards or sub-items. Do NOT add another <h1> (the hero owns the single h1). EXCEPTION: if the section_slug is 'hero', the hero MUST contain the single <h1> for the page.
 
 ACCESSIBILITY REQUIREMENTS:
 - CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.
@@ -536,6 +626,8 @@ ACCESSIBILITY REQUIREMENTS:
 - Icon-only indicators must include sr-only text or visible label.
 - SVG illustrations: wrap in <figure> with <figcaption> if meaningful; aria-hidden="true" if purely decorative.
 - Focus styles: rely on global focus-visible outline; do NOT add custom focus:ring on inputs (causes double-ring).
+
+INLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS. If the refinement asks for a gradient, multi-stop background, or unusual color treatment, use inline style="background: linear-gradient(...)" or a custom <style> block inside the section — do NOT try to wedge it into a Tailwind class name.
 
 Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML. First character of your response must be <, last must be >.`
 
@@ -612,7 +704,7 @@ Produce production-quality, responsive, accessible markup with REAL copy (not pl
       assembly_warning: assemblyError,
       note: assemblyError
         ? 'Section regenerated but full-page re-assembly failed. Run apply_token_to_html to retry.'
-        : 'Section regenerated and page re-assembled. Hard-refresh the preview tab (Cmd/Ctrl+Shift+R) to see updates.',
+        : 'Section regenerated and page re-assembled. The preview iframe refreshes automatically.',
     }),
   }
 }
@@ -785,8 +877,6 @@ export async function runIterationAgent(args: {
     input_schema: t.input_schema,
   }))
 
-  // Build messages. If the last priorTurn is a user message, merge our new
-  // user content into it so we don't send two consecutive user turns.
   const messages: AnthropicTurn[] = [...priorTurns]
   const lastTurn = messages[messages.length - 1]
   if (lastTurn && lastTurn.role === 'user') {
