@@ -56,6 +56,39 @@ interface KnowledgeRequestBody {
   data: Record<string, unknown>;
 }
 
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  if (searchParams.get('reindex') !== '1') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  const { DB, KNOWLEDGE_QUEUE } = getBindings();
+  const reindexSecret = (getBindings() as Record<string, unknown>)['REINDEX_SECRET'] as string | undefined;
+  const providedSecret = searchParams.get('secret');
+  if (reindexSecret && providedSecret !== reindexSecret) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const [nodes, items] = await Promise.all([
+    DB.prepare('SELECT id, title, category, content, tags, source FROM study_nodes').all(),
+    DB.prepare('SELECT id, sprint_number, title, description, status, agent, category FROM sprint_items').all(),
+  ]);
+
+  let queued = 0;
+  for (const row of nodes.results as Record<string, unknown>[]) {
+    const embedContent = buildEmbedContent('study_node', row as Parameters<typeof buildEmbedContent>[1]);
+    await KNOWLEDGE_QUEUE.send({ id: row.id, table: 'study_nodes', content: embedContent, metadata: { type: 'study_node', title: row.title as string } });
+    queued++;
+  }
+  for (const row of items.results as Record<string, unknown>[]) {
+    const embedContent = buildEmbedContent('sprint_item', row as Parameters<typeof buildEmbedContent>[1]);
+    await KNOWLEDGE_QUEUE.send({ id: row.id, table: 'sprint_items', content: embedContent, metadata: { type: 'sprint_item', title: row.title as string } });
+    queued++;
+  }
+
+  return NextResponse.json({ queued });
+}
+
 export async function POST(req: NextRequest) {
   const { DB, KNOWLEDGE_QUEUE } = getBindings();
   const body = await req.json() as KnowledgeRequestBody;
