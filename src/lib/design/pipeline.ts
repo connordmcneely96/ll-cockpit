@@ -1,5 +1,5 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F (cost tiering) → Sprint 18E (attached design systems)
+ * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F → Sprint 18E → Sprint 18N (scroll animations).
  *
  * Per-section architecture:
  *   buildDesignBuildDAG(brief, iter, feedback, attachedSystem?) → DecompositionResult
@@ -8,6 +8,10 @@
  *     - st_2..N+1: COMPOSER per section (parallel, each gets own 8192 budget)
  *     - st_N+2: ASSEMBLER (deterministic scaffold + stitch, $0 cost)
  *     - st_N+3: CRITIC (reviews assembled page)
+ *
+ * Sprint 18N — every rendered page now ships with the data-anim scroll animation
+ * scaffold: ANIMATION_PRESETS_CSS in the head, INTERSECTION_OBSERVER_SCRIPT before
+ * </body>. Sections opt in via `data-anim="..."` attributes emitted by COMPOSER.
  */
 
 import type {
@@ -20,6 +24,10 @@ import type {
   DecompositionResult,
   OrchestratorRunRow,
 } from '@/types'
+import {
+  ANIMATION_PRESETS_CSS,
+  INTERSECTION_OBSERVER_SCRIPT,
+} from './animation-presets'
 
 // ──────────────────────────────────────────────────────────────────────
 // SECTION CLASSIFICATION — Sprint 18F cost optimization
@@ -97,11 +105,6 @@ export function parseSections(briefSections: string): ParsedSection[] {
   })
 }
 
-/**
- * Sprint 18E — optional attached design system context.
- * When provided, DESIGNER reads the system's DESIGN.md verbatim and uses
- * its tokens instead of inventing fresh ones.
- */
 export interface AttachedDesignSystem {
   slug: string
   name: string
@@ -132,10 +135,6 @@ export function buildDesignBuildDAG(
     ? `\n\nITERATION ${iterationNumber} — client feedback to apply:\n${clientFeedback}\n`
     : ''
 
-  // Sprint 18E — design system context block for DESIGNER
-  // Truncate to 12k chars max to stay within token budget (typical DESIGN.md is 15-30KB).
-  // The frontmatter YAML at the top carries the structured tokens; sections below
-  // give DESIGNER the prose context. Truncation preserves frontmatter intact.
   const designSystemBlock = attachedSystem
     ? `\n\n## ATTACHED DESIGN SYSTEM — ${attachedSystem.name}\n` +
       `The user attached this design system. Use its tokens (colors, typography, spacing, components) verbatim. ` +
@@ -156,7 +155,7 @@ export function buildDesignBuildDAG(
       }`,
     task_type: 'design_language',
     depends_on: [],
-    estimated_cost_usd: attachedSystem ? 0.03 : 0.02, // slightly higher with attached context
+    estimated_cost_usd: attachedSystem ? 0.03 : 0.02,
     estimated_duration_seconds: 15,
     risk_level: 'low',
     human_required: false,
@@ -233,10 +232,6 @@ export function buildDesignBuildDAG(
   }
 }
 
-/**
- * Sprint 18E — fetch an attached design system from D1 + R2, ready to pass
- * to buildDesignBuildDAG. Returns null if slug not found or user not authorized.
- */
 export async function loadAttachedDesignSystem(
   env: CloudflareEnv,
   slug: string,
@@ -390,6 +385,8 @@ export function renderFullHtml({
     a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid ${p.primary}; outline-offset: 2px; border-radius: 2px; }
     .mobile-menu { display: none; }
     .mobile-menu.open { display: block; }
+
+    ${ANIMATION_PRESETS_CSS}
   </style>
 </head>
 <body>
@@ -423,6 +420,9 @@ export function renderFullHtml({
       </div>
     </div>
   </footer>
+  <script>
+${INTERSECTION_OBSERVER_SCRIPT}
+  </script>
 </body>
 </html>`
 }
