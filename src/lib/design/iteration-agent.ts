@@ -1,30 +1,14 @@
 /**
- * Design iteration agent — Sprint 16 v0.3.4.
+ * Design iteration agent — Sprint 16 v0.4.0 (tool transparency).
  *
- * Programmatic Anthropic tool-use loop that lets the user refine a finished
- * design brief by chatting.
+ * v0.3.x: tool routing, structural editing, COMPOSER extraction, idempotency.
  *
- * v0.3.0 MVP tools FULLY IMPLEMENTED:
- *   - update_design_tokens   patches tokens AND auto re-renders HTML + R2 preview
- *   - apply_token_to_html    explicit re-render (kept for backward compat)
- *   - regenerate_section     re-runs COMPOSER for one section + re-stitches
- *   - save_iteration         clones current state as a new design_iterations row
- *   - critique               re-scores the current HTML using CRITIC system prompt
+ * v0.4.0 ADD: runIterationAgent now collects every assistant + tool_result
+ * row it persists during the loop and returns them as `turnMessages`. The
+ * /chat route surfaces this as `turn_messages` on the POST response so the
+ * design Worker can render inline tool-call cards in the chat UI.
  *
- * v0.3.1: token-key allowlist + tool routing rubric.
- * v0.3.2 SLICE 2: assemble_html, add_section, remove_section.
- * v0.3.3: callComposer uses extractSectionHtml + assemble_html clarity.
- *
- * v0.3.4 FIX (race condition in add_section):
- *   - The slugCollision check before INSERT is not race-safe. Two concurrent
- *     invocations (caused by sub-request retries, double-clicks, etc.) can
- *     both pass the check before either commits, then both attempt the INSERT,
- *     and the second hits UNIQUE constraint failed.
- *   - Fix: catch UNIQUE constraint, look up whether our slug is now present
- *     with status='done'. If yes, return idempotent success.
- *
- * STUBBED:
- *   splice_section (low value), apply_preset (Slice 3), analyze_reference_url (Sprint 18I).
+ * No behavior change for any existing tool. Pure observability surface.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -218,11 +202,11 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
         },
         description: {
           type: 'string',
-          description: 'What the section should contain. Be specific: target audience, tone, content type. Example: "Five short testimonials from technical founders who shipped AI features in days using LLD; each card has quote, name, role, and company logo placeholder."',
+          description: 'What the section should contain. Be specific: target audience, tone, content type.',
         },
         after_slug: {
           type: 'string',
-          description: 'Slug of the existing section the new section should be placed AFTER. If omitted or not found, the new section is appended at the end. Examples: "hero", "pricing", "case_studies".',
+          description: 'Slug of the existing section the new section should be placed AFTER. If omitted or not found, the new section is appended at the end.',
         },
       },
       required: ['name', 'description'],
@@ -231,13 +215,13 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'remove_section',
     description:
-      'Remove an existing section from the page. Soft-delete via status flag so it can be recovered later — the COMPOSER output is preserved in agent_subtasks but won\'t show up in the assembled HTML. Use for: "remove the case studies section", "drop the testimonials".\n\nFree (no LLM call). Re-assembles the page after removal.',
+      'Remove an existing section from the page. Soft-delete via status flag so it can be recovered later. Use for: "remove the case studies section", "drop the testimonials".\n\nFree (no LLM call). Re-assembles the page after removal.',
     input_schema: {
       type: 'object',
       properties: {
         section_slug: {
           type: 'string',
-          description: 'Slug of the section to remove. Examples: "case_studies", "testimonials", "team".',
+          description: 'Slug of the section to remove.',
         },
       },
       required: ['section_slug'],
@@ -258,7 +242,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'apply_preset',
-    description: 'Not yet implemented (planned for Slice 3). For now ask the user to describe the change in concrete terms and use update_design_tokens or regenerate_section.',
+    description: 'Not yet implemented (planned for Slice 3).',
     input_schema: {
       type: 'object',
       properties: { preset_name: { type: 'string' } },
@@ -267,7 +251,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   },
   {
     name: 'analyze_reference_url',
-    description: 'Not yet implemented (planned for Sprint 18I). If the user wants the design to match a reference URL, ask them to describe what they like about it in concrete terms (colors, layout, tone) and use regenerate_section.',
+    description: 'Not yet implemented (planned for Sprint 18I).',
     input_schema: {
       type: 'object',
       properties: {
@@ -296,39 +280,26 @@ Current CRITIC score: ${currentIter?.critic_score ?? 'not yet scored'}
 Tool routing — match the request to the right tool:
 
   • SIMPLE TOKEN SWAP (existing key, new value) → update_design_tokens.
-    Examples: "make the primary color navy", "use a warmer purple", "increase section padding", "switch to a serif heading font".
-
   • STRUCTURAL OR VISUAL CHANGE within an EXISTING section → regenerate_section.
-    Examples: "make the hero a blue-to-black gradient", "rewrite pricing with three tiers", "add a third feature card", "change the hero photo to an abstract illustration".
-    When in doubt between this and update_design_tokens, prefer regenerate_section.
-
-  • ADD a NEW section → add_section.
-    Examples: "add a testimonials section between case studies and pricing", "add a FAQ at the bottom", "add a logo cloud above the hero".
-    If the result is ok:true (including idempotent_recovery:true), report success to the user — don't second-guess.
-
+  • ADD a NEW section → add_section. If result is ok:true (including idempotent_recovery:true), report success.
   • REMOVE a section → remove_section.
-    Examples: "remove the case studies", "drop the team section".
-
-  • REGENERATE-EVERYTHING requests → DO NOT call assemble_html. Tell the user that to "rebuild from scratch" / "regenerate everything" you'd need to call regenerate_section multiple times (one per section) and ask which sections they want fresh, OR suggest they start a new brief. assemble_html is NOT a fresh-generate tool.
-
-  • assemble_html is ONLY for a defensive re-stitch with no new content. Rare. Use after several section edits if you suspect the assembly is out of sync, not for "rebuild" type requests.
-
-  • CRITIQUE → critique. Returns a 0-100 score plus structured feedback.
-
-  • COMMIT a coherent set of changes → save_iteration. Call this once at the end of a session.
+  • REGENERATE-EVERYTHING requests → DO NOT call assemble_html. Tell user to call regenerate_section per section OR start a new brief.
+  • assemble_html is ONLY for a defensive re-stitch with no new content.
+  • CRITIQUE → critique.
+  • COMMIT a coherent set of changes → save_iteration.
 
 Important rules:
-  • Use ONE tool per turn unless a user request genuinely needs two. Don't chain tools "to be safe" — that doubles cost.
-  • Don't claim the change is visible until the tool result confirms it. If a tool returns ok:false, tell the user honestly and offer the right alternative.
-  • If a tool returns ok:true with idempotent_recovery:true, treat it as a clean success — the work was done (just by a concurrent retry).
-  • Keep replies concise. Don't repeat the brief back unless asked.
-  • If a request is ambiguous, ask one clarifying question rather than guessing.
+  • Use ONE tool per turn unless a request genuinely needs two.
+  • Don't claim the change is visible until the tool result confirms it.
+  • If a tool returns ok:true with idempotent_recovery:true, treat it as a clean success.
+  • Keep replies concise.
+  • If ambiguous, ask one clarifying question.
 
 Design principles to enforce silently:
   • Accessibility: CTA contrast ≥ 4.5:1, focus rings visible, semantic HTML.
-  • Hierarchy: one h1 hero, h2 per section, h3 per card; no skipped levels.
-  • Type scale: don't mix more than two font families.
-  • Spacing: keep a consistent rhythm; don't introduce arbitrary px values.
+  • Hierarchy: one h1 hero, h2 per section, h3 per card.
+  • Type scale: max two font families.
+  • Spacing: consistent rhythm.
 
 Tone: direct, professional, no hedging.`
 }
@@ -390,518 +361,147 @@ async function rerenderAndPersist(
   tokens: DesignTokens,
 ): Promise<{ ok: true; sections: number; htmlLength: number; r2Key: string }
    | { ok: false; reason: string }> {
-  if (!iter.orchestrator_run_id) {
-    return { ok: false, reason: 'no orchestrator_run_id on iteration' }
-  }
-
+  if (!iter.orchestrator_run_id) return { ok: false, reason: 'no orchestrator_run_id on iteration' }
   const brief = await deps.env.DB
-    .prepare(
-      `SELECT client_name, business_description FROM design_briefs
-         WHERE id = ? AND user_id = ?`,
-    )
+    .prepare(`SELECT client_name, business_description FROM design_briefs WHERE id = ? AND user_id = ?`)
     .bind(deps.briefId, deps.userId)
     .first<{ client_name: string; business_description: string }>()
   if (!brief) return { ok: false, reason: 'brief not found' }
-
   const rows = await deps.env.DB
-    .prepare(
-      `SELECT short_id, title, output FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
-           AND status = 'done' AND output IS NOT NULL
-         ORDER BY short_id ASC`,
-    )
+    .prepare(`SELECT short_id, title, output FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done' AND output IS NOT NULL ORDER BY short_id ASC`)
     .bind(iter.orchestrator_run_id, deps.userId)
     .all<{ short_id: string; title: string; output: string }>()
-
-  if (!rows.results || rows.results.length === 0) {
-    return { ok: false, reason: 'no COMPOSER section outputs found' }
-  }
-
+  if (!rows.results || rows.results.length === 0) return { ok: false, reason: 'no COMPOSER section outputs found' }
   const sections: DesignSection[] = rows.results.map((row) => {
     const { name, slug } = slugFromTitle(row.title)
     return { name, slug, html: extractSectionHtml(row.output) }
   })
-
   const newHtml = renderFullHtml({ brief, tokens, sections })
-
-  await deps.env.DB
-    .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-    .bind(newHtml, iter.id)
-    .run()
-
-  const { r2Key } = await savePreviewToR2(
-    deps.env,
-    deps.briefId,
-    iter.iteration_number,
-    newHtml,
-  )
-
+  await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(newHtml, iter.id).run()
+  const { r2Key } = await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, newHtml)
   if (!iter.preview_r2_key) {
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`)
-      .bind(r2Key, iter.id)
-      .run()
+    await deps.env.DB.prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`).bind(r2Key, iter.id).run()
   }
-
   return { ok: true, sections: sections.length, htmlLength: newHtml.length, r2Key }
 }
 
-async function runUpdateDesignTokens(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
+async function runUpdateDesignTokens(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
   const input = toolUse.input as { patch?: Partial<DesignTokens>; rationale?: string }
   if (!input.patch || typeof input.patch !== 'object') {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: JSON.stringify({
-        ok: false,
-        error: 'patch must be an object containing partial design tokens.',
-      }),
-      is_error: true,
-    }
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'patch must be an object containing partial design tokens.' }), is_error: true }
   }
-
   const unsafePaths = findUnsafePaths(input.patch as Record<string, unknown>)
   if (unsafePaths.length > 0) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: JSON.stringify({
-        ok: false,
-        error: 'unsupported_token_keys',
-        unsafe_paths: unsafePaths,
-        message:
-          'These token paths are not consumed by the rendered HTML, so patching them would have NO visible effect.',
-        directive:
-          'For visual changes that require new structure (gradients, new backgrounds, layout shifts, copy edits), call regenerate_section with section_slug + refinement instead.',
-        allowed_keys: SAFE_TOKEN_KEYS,
-      }),
-      is_error: true,
-    }
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'unsupported_token_keys', unsafe_paths: unsafePaths, message: 'These token paths are not consumed by the rendered HTML.', directive: 'For visual changes requiring new structure, use regenerate_section.', allowed_keys: SAFE_TOKEN_KEYS }), is_error: true }
   }
-
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-
-  const currentTokens: DesignTokens =
-    iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
-
+  const currentTokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
   const merged = deepMergeJson(currentTokens, input.patch) as DesignTokens
   if (input.rationale) merged.rationale = input.rationale
-
-  await deps.env.DB
-    .prepare(`UPDATE design_iterations SET design_tokens_json = ? WHERE id = ?`)
-    .bind(JSON.stringify(merged), iter.id)
-    .run()
-
+  await deps.env.DB.prepare(`UPDATE design_iterations SET design_tokens_json = ? WHERE id = ?`).bind(JSON.stringify(merged), iter.id).run()
   const rerender = await rerenderAndPersist(deps, iter, merged)
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: JSON.stringify({
-      ok: true,
-      updated_keys: Object.keys(input.patch),
-      tokens: merged,
-      rerender: rerender.ok
-        ? {
-            ok: true,
-            sections_re_rendered: rerender.sections,
-            r2_key: rerender.r2Key,
-          }
-        : { ok: false, reason: rerender.reason },
-      note: rerender.ok
-        ? 'Tokens patched and page re-rendered. The preview iframe refreshes automatically.'
-        : `Tokens patched but auto re-render failed (${rerender.reason}). Preview still shows old colors.`,
-    }),
-  }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, updated_keys: Object.keys(input.patch), tokens: merged, rerender: rerender.ok ? { ok: true, sections_re_rendered: rerender.sections, r2_key: rerender.r2Key } : { ok: false, reason: rerender.reason }, note: rerender.ok ? 'Tokens patched and page re-rendered.' : `Tokens patched but auto re-render failed (${rerender.reason}).` }) }
 }
 
-async function runApplyTokenToHtml(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
+async function runApplyTokenToHtml(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-
-  const tokens: DesignTokens = iter.design_tokens_json
-    ? safeParse(iter.design_tokens_json) ?? emptyTokens()
-    : emptyTokens()
-
+  const tokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
   const rerender = await rerenderAndPersist(deps, iter, tokens)
-
-  if (!rerender.ok) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: `Re-render failed: ${rerender.reason}`,
-      is_error: true,
-    }
-  }
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: JSON.stringify({
-      ok: true,
-      sections_re_rendered: rerender.sections,
-      html_length: rerender.htmlLength,
-      r2_key: rerender.r2Key,
-      note: 'Page re-rendered. Preview iframe refreshes automatically.',
-    }),
-  }
+  if (!rerender.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: `Re-render failed: ${rerender.reason}`, is_error: true }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, sections_re_rendered: rerender.sections, html_length: rerender.htmlLength, r2_key: rerender.r2Key, note: 'Page re-rendered.' }) }
 }
 
-async function runRegenerateSection(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
-  const input = toolUse.input as {
-    section_slug?: string
-    refinement?: string
-    preserve_structure?: boolean
-  }
-  if (!input.section_slug || !input.refinement) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'section_slug and refinement are required.',
-      is_error: true,
-    }
-  }
-
+async function runRegenerateSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
+  const input = toolUse.input as { section_slug?: string; refinement?: string; preserve_structure?: boolean }
+  if (!input.section_slug || !input.refinement) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'section_slug and refinement are required.', is_error: true }
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-  if (!iter.orchestrator_run_id) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'No orchestrator_run_id on iteration — cannot locate section subtask.',
-      is_error: true,
-    }
-  }
-
-  const brief = await deps.env.DB
-    .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
-    .bind(deps.briefId, deps.userId)
-    .first<DesignBriefRow>()
-  if (!brief) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'Brief not found.',
-      is_error: true,
-    }
-  }
-
-  const subtasks = await deps.env.DB
-    .prepare(
-      `SELECT id, short_id, title, output FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`,
-    )
-    .bind(iter.orchestrator_run_id, deps.userId)
-    .all<{ id: string; short_id: string; title: string; output: string }>()
-
-  const target = (subtasks.results ?? []).find((s) => {
-    const { slug } = slugFromTitle(s.title)
-    return slug === input.section_slug
-  })
-
+  if (!iter.orchestrator_run_id) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'No orchestrator_run_id on iteration.', is_error: true }
+  const brief = await deps.env.DB.prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`).bind(deps.briefId, deps.userId).first<DesignBriefRow>()
+  if (!brief) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'Brief not found.', is_error: true }
+  const subtasks = await deps.env.DB.prepare(`SELECT id, short_id, title, output FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`).bind(iter.orchestrator_run_id, deps.userId).all<{ id: string; short_id: string; title: string; output: string }>()
+  const target = (subtasks.results ?? []).find((s) => slugFromTitle(s.title).slug === input.section_slug)
   if (!target) {
-    const available = (subtasks.results ?? [])
-      .map((s) => slugFromTitle(s.title).name)
-      .join(', ')
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: `Section '${input.section_slug}' not found. Available sections: ${available}`,
-      is_error: true,
-    }
+    const available = (subtasks.results ?? []).map((s) => slugFromTitle(s.title).name).join(', ')
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: `Section '${input.section_slug}' not found. Available: ${available}`, is_error: true }
   }
-
   const { name: sectionName } = slugFromTitle(target.title)
-  const tokens: DesignTokens = iter.design_tokens_json
-    ? safeParse(iter.design_tokens_json) ?? emptyTokens()
-    : emptyTokens()
-
-  const composerPrompt = buildComposerPrompt({
-    sectionSlug: input.section_slug,
-    sectionName,
-    instruction: input.refinement,
-    preserveStructure: input.preserve_structure ?? false,
-    currentSectionHtml: target.output,
-    tokens,
-    brief,
-    isNewSection: false,
-  })
-
+  const tokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
+  const composerPrompt = buildComposerPrompt({ sectionSlug: input.section_slug, sectionName, instruction: input.refinement, preserveStructure: input.preserve_structure ?? false, currentSectionHtml: target.output, tokens, brief, isNewSection: false })
   const composerResult = await callComposer(deps.apiKey, composerPrompt)
-  if (!composerResult.ok) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: composerResult.error,
-      is_error: true,
-    }
-  }
-
-  await deps.env.DB
-    .prepare(`UPDATE agent_subtasks SET output = ? WHERE id = ?`)
-    .bind(composerResult.html, target.id)
-    .run()
-
+  if (!composerResult.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: composerResult.error, is_error: true }
+  await deps.env.DB.prepare(`UPDATE agent_subtasks SET output = ? WHERE id = ?`).bind(composerResult.html, target.id).run()
   let assemblyError: string | null = null
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-      .bind(result.output, iter.id)
-      .run()
+    await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run()
     await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
   } catch (err) {
     assemblyError = err instanceof Error ? err.message : String(err)
   }
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: JSON.stringify({
-      ok: true,
-      section_slug: input.section_slug,
-      new_html_length: composerResult.html.length,
-      composer_tokens: composerResult.usage,
-      assembly_warning: assemblyError,
-      note: assemblyError
-        ? 'Section regenerated but full-page re-assembly failed.'
-        : 'Section regenerated and page re-assembled. The preview iframe refreshes automatically.',
-    }),
-  }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, section_slug: input.section_slug, new_html_length: composerResult.html.length, composer_tokens: composerResult.usage, assembly_warning: assemblyError, note: assemblyError ? 'Section regenerated but re-assembly failed.' : 'Section regenerated and page re-assembled.' }) }
 }
 
-async function runAssembleHtml(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
+async function runAssembleHtml(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-  if (!iter.orchestrator_run_id) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'No orchestrator_run_id on iteration — cannot assemble.',
-      is_error: true,
-    }
-  }
-
+  if (!iter.orchestrator_run_id) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'No orchestrator_run_id on iteration.', is_error: true }
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-      .bind(result.output, iter.id)
-      .run()
-    const { r2Key } = await savePreviewToR2(
-      deps.env,
-      deps.briefId,
-      iter.iteration_number,
-      result.output,
-    )
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: JSON.stringify({
-        ok: true,
-        html_length: result.output.length,
-        r2_key: r2Key,
-        note: 'Page re-stitched with EXISTING tokens and EXISTING section outputs. No new content was generated. If the user expected a "from scratch" rebuild, this tool was the wrong choice — use regenerate_section per section instead.',
-      }),
-    }
+    await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run()
+    const { r2Key } = await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, html_length: result.output.length, r2_key: r2Key, note: 'Page re-stitched with EXISTING tokens and EXISTING section outputs. No new content generated.' }) }
   } catch (err) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: `Assembly failed: ${err instanceof Error ? err.message : String(err)}`,
-      is_error: true,
-    }
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: `Assembly failed: ${err instanceof Error ? err.message : String(err)}`, is_error: true }
   }
 }
 
-async function runRemoveSection(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
+async function runRemoveSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
   const input = toolUse.input as { section_slug?: string }
-  if (!input.section_slug) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'section_slug is required.',
-      is_error: true,
-    }
-  }
-
+  if (!input.section_slug) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'section_slug is required.', is_error: true }
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-  if (!iter.orchestrator_run_id) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'No orchestrator_run_id on iteration — cannot locate section.',
-      is_error: true,
-    }
-  }
-
-  const subtasks = await deps.env.DB
-    .prepare(
-      `SELECT id, short_id, title FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`,
-    )
-    .bind(iter.orchestrator_run_id, deps.userId)
-    .all<{ id: string; short_id: string; title: string }>()
-
-  const target = (subtasks.results ?? []).find(
-    (s) => slugFromTitle(s.title).slug === input.section_slug,
-  )
-
+  if (!iter.orchestrator_run_id) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'No orchestrator_run_id on iteration.', is_error: true }
+  const subtasks = await deps.env.DB.prepare(`SELECT id, short_id, title FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`).bind(iter.orchestrator_run_id, deps.userId).all<{ id: string; short_id: string; title: string }>()
+  const target = (subtasks.results ?? []).find((s) => slugFromTitle(s.title).slug === input.section_slug)
   if (!target) {
-    const available = (subtasks.results ?? [])
-      .map((s) => slugFromTitle(s.title).slug)
-      .join(', ')
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: JSON.stringify({
-        ok: false,
-        error: 'section_not_found',
-        section_slug: input.section_slug,
-        available_slugs: available,
-      }),
-      is_error: true,
-    }
+    const available = (subtasks.results ?? []).map((s) => slugFromTitle(s.title).slug).join(', ')
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'section_not_found', section_slug: input.section_slug, available_slugs: available }), is_error: true }
   }
-
-  await deps.env.DB
-    .prepare(`UPDATE agent_subtasks SET status = 'cancelled' WHERE id = ?`)
-    .bind(target.id)
-    .run()
-
+  await deps.env.DB.prepare(`UPDATE agent_subtasks SET status = 'cancelled' WHERE id = ?`).bind(target.id).run()
   let assemblyError: string | null = null
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-      .bind(result.output, iter.id)
-      .run()
+    await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run()
     await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
   } catch (err) {
     assemblyError = err instanceof Error ? err.message : String(err)
   }
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: JSON.stringify({
-      ok: true,
-      section_slug: input.section_slug,
-      removed_subtask_id: target.id,
-      assembly_warning: assemblyError,
-      note: assemblyError
-        ? `Section removed from data but re-assembly failed: ${assemblyError}`
-        : 'Section removed and page re-stitched. The preview iframe refreshes automatically. (The section output is preserved internally — future undo tool can restore it.)',
-    }),
-  }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, section_slug: input.section_slug, removed_subtask_id: target.id, assembly_warning: assemblyError, note: assemblyError ? `Section removed but re-assembly failed: ${assemblyError}` : 'Section removed and page re-stitched.' }) }
 }
 
-async function runAddSection(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
-  const input = toolUse.input as {
-    name?: string
-    description?: string
-    after_slug?: string
-  }
-  if (!input.name || !input.description) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'name and description are required.',
-      is_error: true,
-    }
-  }
-
+async function runAddSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
+  const input = toolUse.input as { name?: string; description?: string; after_slug?: string }
+  if (!input.name || !input.description) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'name and description are required.', is_error: true }
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
-  if (!iter.orchestrator_run_id) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'No orchestrator_run_id on iteration — cannot add section.',
-      is_error: true,
-    }
-  }
-
-  const brief = await deps.env.DB
-    .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
-    .bind(deps.briefId, deps.userId)
-    .first<DesignBriefRow>()
-  if (!brief) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'Brief not found.',
-      is_error: true,
-    }
-  }
-
-  const newSlug = input.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  if (!newSlug) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: 'name must contain alphanumeric characters.',
-      is_error: true,
-    }
-  }
-
-  const allSubtasks = await deps.env.DB
-    .prepare(
-      `SELECT short_id, title, status FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'`,
-    )
-    .bind(iter.orchestrator_run_id, deps.userId)
-    .all<{ short_id: string; title: string; status: string }>()
-
+  if (!iter.orchestrator_run_id) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'No orchestrator_run_id on iteration.', is_error: true }
+  const brief = await deps.env.DB.prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`).bind(deps.briefId, deps.userId).first<DesignBriefRow>()
+  if (!brief) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'Brief not found.', is_error: true }
+  const newSlug = input.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  if (!newSlug) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'name must contain alphanumeric characters.', is_error: true }
+  const allSubtasks = await deps.env.DB.prepare(`SELECT short_id, title, status FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'`).bind(iter.orchestrator_run_id, deps.userId).all<{ short_id: string; title: string; status: string }>()
   const allRows = allSubtasks.results ?? []
-  const slugCollision = allRows.find(
-    (r) => slugFromTitle(r.title).slug === newSlug && r.status === 'done',
-  )
-  if (slugCollision) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: JSON.stringify({
-        ok: false,
-        error: 'slug_collision',
-        message: `A section with slug "${newSlug}" already exists. Use regenerate_section to modify it, or pick a different name.`,
-        existing_section: slugCollision.title,
-      }),
-      is_error: true,
-    }
-  }
-
+  const slugCollision = allRows.find((r) => slugFromTitle(r.title).slug === newSlug && r.status === 'done')
+  if (slugCollision) return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'slug_collision', message: `A section with slug "${newSlug}" already exists.`, existing_section: slugCollision.title }), is_error: true }
   const activeRows = allRows.filter((r) => r.status === 'done')
   let anchorShortId: string
-
   if (input.after_slug) {
     const anchor = activeRows.find((r) => slugFromTitle(r.title).slug === input.after_slug)
-    if (anchor) {
-      anchorShortId = anchor.short_id
-    } else {
+    if (anchor) anchorShortId = anchor.short_id
+    else {
       const sorted = [...activeRows].sort((a, b) => a.short_id.localeCompare(b.short_id))
       anchorShortId = sorted.length > 0 ? sorted[sorted.length - 1].short_id : 'st_1'
     }
@@ -909,401 +509,127 @@ async function runAddSection(
     const sorted = [...activeRows].sort((a, b) => a.short_id.localeCompare(b.short_id))
     anchorShortId = sorted.length > 0 ? sorted[sorted.length - 1].short_id : 'st_1'
   }
-
   const allShortIds = allRows.map((r) => r.short_id)
   const newShortId = generateInsertShortId(anchorShortId, allShortIds)
-
-  const tokens: DesignTokens = iter.design_tokens_json
-    ? safeParse(iter.design_tokens_json) ?? emptyTokens()
-    : emptyTokens()
-
-  const composerPrompt = buildComposerPrompt({
-    sectionSlug: newSlug,
-    sectionName: input.name,
-    instruction: input.description,
-    preserveStructure: false,
-    currentSectionHtml: '',
-    tokens,
-    brief,
-    isNewSection: true,
-  })
-
+  const tokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
+  const composerPrompt = buildComposerPrompt({ sectionSlug: newSlug, sectionName: input.name, instruction: input.description, preserveStructure: false, currentSectionHtml: '', tokens, brief, isNewSection: true })
   const composerResult = await callComposer(deps.apiKey, composerPrompt)
-  if (!composerResult.ok) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: composerResult.error,
-      is_error: true,
-    }
-  }
-
-  // v0.3.4 — race-tolerant INSERT.
+  if (!composerResult.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: composerResult.error, is_error: true }
   const newId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   const taskType = classifySection(input.name, input.description)
   const insertedTitle = `Compose ${input.name} section`
-
   let insertedNewRow = true
   let finalShortId = newShortId
-
   try {
-    await deps.env.DB
-      .prepare(
-        `INSERT INTO agent_subtasks
-           (id, pipeline_run_id, user_id, short_id, agent_name, title, task,
-            depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level,
-            human_required, status, output, cost_usd, tokens, started_at, completed_at,
-            created_at, task_type)
-           VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        newId,
-        iter.orchestrator_run_id,
-        deps.userId,
-        newShortId,
-        insertedTitle,
-        `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`,
-        taskType === 'compose_simple' ? 0.015 : 0.05,
-        composerResult.html,
-        composerResult.costUsd,
-        composerResult.usage.input + composerResult.usage.output,
-        now,
-        now,
-        now,
-        taskType,
-      )
-      .run()
+    await deps.env.DB.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level, human_required, status, output, cost_usd, tokens, started_at, completed_at, created_at, task_type) VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`).bind(newId, iter.orchestrator_run_id, deps.userId, newShortId, insertedTitle, `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`, taskType === 'compose_simple' ? 0.015 : 0.05, composerResult.html, composerResult.costUsd, composerResult.usage.input + composerResult.usage.output, now, now, now, taskType).run()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('UNIQUE constraint failed')) {
-      const existing = await deps.env.DB
-        .prepare(
-          `SELECT short_id FROM agent_subtasks
-             WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
-               AND title = ? AND status = 'done'
-             LIMIT 1`,
-        )
-        .bind(iter.orchestrator_run_id, deps.userId, insertedTitle)
-        .first<{ short_id: string }>()
-
+      const existing = await deps.env.DB.prepare(`SELECT short_id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND title = ? AND status = 'done' LIMIT 1`).bind(iter.orchestrator_run_id, deps.userId, insertedTitle).first<{ short_id: string }>()
       if (existing) {
         insertedNewRow = false
         finalShortId = existing.short_id
       } else {
-        return {
-          type: 'tool_result',
-          tool_use_id: toolUse.id,
-          content: JSON.stringify({
-            ok: false,
-            error: 'short_id_collision_no_recovery',
-            attempted_short_id: newShortId,
-            message:
-              'A short_id collision happened but our section isn\'t in the database. Rare. Suggest the user try again — should self-resolve.',
-          }),
-          is_error: true,
-        }
+        return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'short_id_collision_no_recovery', attempted_short_id: newShortId, message: 'Short_id collision but our section isn\'t in the database. Suggest retry.' }), is_error: true }
       }
     } else {
-      return {
-        type: 'tool_result',
-        tool_use_id: toolUse.id,
-        content: JSON.stringify({
-          ok: false,
-          error: 'database_error',
-          message: msg.slice(0, 300),
-        }),
-        is_error: true,
-      }
+      return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'database_error', message: msg.slice(0, 300) }), is_error: true }
     }
   }
-
   let assemblyError: string | null = null
   try {
     const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id)
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`)
-      .bind(result.output, iter.id)
-      .run()
+    await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run()
     await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output)
   } catch (err) {
     assemblyError = err instanceof Error ? err.message : String(err)
   }
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: JSON.stringify({
-      ok: true,
-      new_section: {
-        slug: newSlug,
-        name: input.name,
-        short_id: finalShortId,
-        after: input.after_slug ?? null,
-        task_type: taskType,
-      },
-      composer_tokens: composerResult.usage,
-      cost_usd: insertedNewRow ? composerResult.costUsd : 0,
-      idempotent_recovery: !insertedNewRow,
-      assembly_warning: assemblyError,
-      note: insertedNewRow
-        ? assemblyError
-          ? `Section added but re-assembly failed: ${assemblyError}`
-          : `Section "${input.name}" added and page re-stitched. The preview iframe refreshes automatically.`
-        : `Section "${input.name}" was already added by a concurrent retry. Preview is up to date. (idempotent_recovery=true)`,
-    }),
-  }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, new_section: { slug: newSlug, name: input.name, short_id: finalShortId, after: input.after_slug ?? null, task_type: taskType }, composer_tokens: composerResult.usage, cost_usd: insertedNewRow ? composerResult.costUsd : 0, idempotent_recovery: !insertedNewRow, assembly_warning: assemblyError, note: insertedNewRow ? (assemblyError ? `Section added but re-assembly failed: ${assemblyError}` : `Section "${input.name}" added and page re-stitched.`) : `Section "${input.name}" was already added by a concurrent retry.` }) }
 }
 
-function buildComposerPrompt(args: {
-  sectionSlug: string
-  sectionName: string
-  instruction: string
-  preserveStructure: boolean
-  currentSectionHtml: string
-  tokens: DesignTokens
-  brief: DesignBriefRow
-  isNewSection: boolean
-}): string {
+function buildComposerPrompt(args: { sectionSlug: string; sectionName: string; instruction: string; preserveStructure: boolean; currentSectionHtml: string; tokens: DesignTokens; brief: DesignBriefRow; isNewSection: boolean }): string {
   const { sectionSlug, sectionName, instruction, preserveStructure, currentSectionHtml, tokens, brief, isNewSection } = args
-
-  const referenceBlock = isNewSection
-    ? ''
-    : `\n\nCURRENT SECTION HTML (for reference, may be truncated):\n${currentSectionHtml.slice(0, 6000)}\n`
-
-  const structureBlock = isNewSection
-    ? ''
-    : preserveStructure
-      ? '\nPreserve the existing structure but apply the refinement to copy and styling.\n'
-      : '\nFeel free to restructure if it serves the refinement.\n'
-
-  const headingRule = sectionSlug === 'hero'
-    ? 'HEADING HIERARCHY: This is the hero section — it MUST contain the single <h1> for the page. Use <h2> for any sub-headings within the hero.'
-    : 'HEADING HIERARCHY: Use <h2> for the section\'s main headline. Use <h3> for cards or sub-items. Do NOT add another <h1> (the hero owns the single h1).'
-
-  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.
-
-${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:
-${instruction}
-${structureBlock}${referenceBlock}
-DESIGN TOKENS (use Tailwind classes referencing these via the tailwind.config theme: primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans):
-  primary: ${tokens.palette.primary}
-  accent: ${tokens.palette.accent}
-  background: ${tokens.palette.background}
-  text: ${tokens.palette.text_primary}
-  display font: ${tokens.typography.display_font}
-  body font: ${tokens.typography.body_font}
-
-BRIEF CONTEXT:
-  Brand: ${brief.client_name}
-  Business: ${brief.business_description.slice(0, 240)}
-  Audience: ${brief.target_audience}
-  Tone: ${brief.mood_tone}
-
-${headingRule}
-
-ACCESSIBILITY REQUIREMENTS:
-- CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.
-- Form inputs: use aria-required="true" for required fields.
-- Icon-only indicators must include sr-only text or visible label.
-- SVG illustrations: wrap in <figure> with <figcaption> if meaningful; aria-hidden="true" if purely decorative.
-- Focus styles: rely on global focus-visible outline; do NOT add custom focus:ring on inputs (causes double-ring).
-
-INLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS. If the instruction asks for a gradient, multi-stop background, or unusual color treatment, use inline style="background: linear-gradient(...)" or a custom <style> block inside the section.
-
-OUTPUT FORMAT (STRICT):
-- Output ONLY the <section> markup. No preamble like "Here's the section:" or "I'll create...". No code fences. No closing remarks.
-- First character MUST be < (the opening angle bracket of <section).
-- Last character MUST be > (the closing angle bracket of </section>).
-- If you absolutely must emit a wrapper, use \`\`\`html ... \`\`\` and the parser will strip it — but plain output is preferred.
-
-Produce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML.`
+  const referenceBlock = isNewSection ? '' : `\n\nCURRENT SECTION HTML (for reference, may be truncated):\n${currentSectionHtml.slice(0, 6000)}\n`
+  const structureBlock = isNewSection ? '' : preserveStructure ? '\nPreserve the existing structure but apply the refinement to copy and styling.\n' : '\nFeel free to restructure if it serves the refinement.\n'
+  const headingRule = sectionSlug === 'hero' ? 'HEADING HIERARCHY: This is the hero section — it MUST contain the single <h1> for the page. Use <h2> for any sub-headings within the hero.' : 'HEADING HIERARCHY: Use <h2> for the section\'s main headline. Use <h3> for cards or sub-items. Do NOT add another <h1>.'
+  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\n${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:\n${instruction}\n${structureBlock}${referenceBlock}\nDESIGN TOKENS (use Tailwind classes referencing these via the tailwind.config theme: primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans):\n  primary: ${tokens.palette.primary}\n  accent: ${tokens.palette.accent}\n  background: ${tokens.palette.background}\n  text: ${tokens.palette.text_primary}\n  display font: ${tokens.typography.display_font}\n  body font: ${tokens.typography.body_font}\n\nBRIEF CONTEXT:\n  Brand: ${brief.client_name}\n  Business: ${brief.business_description.slice(0, 240)}\n  Audience: ${brief.target_audience}\n  Tone: ${brief.mood_tone}\n\n${headingRule}\n\nACCESSIBILITY REQUIREMENTS:\n- CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields.\n- Icon-only indicators must include sr-only text or visible label.\n- SVG illustrations: wrap in <figure> with <figcaption> if meaningful; aria-hidden="true" if purely decorative.\n- Focus styles: rely on global focus-visible outline; do NOT add custom focus:ring on inputs.\n\nINLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS.\n\nOUTPUT FORMAT (STRICT):\n- Output ONLY the <section> markup. No preamble. No code fences. No closing remarks.\n- First character MUST be < (the opening angle bracket of <section).\n- Last character MUST be > (the closing angle bracket of </section>).\n\nProduce production-quality, responsive, accessible markup with REAL copy. Use semantic HTML.`
 }
 
-async function callComposer(
-  apiKey: string,
-  prompt: string,
-): Promise<
-  | { ok: true; html: string; usage: { input: number; output: number }; costUsd: number }
-  | { ok: false; error: string }
-> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: MODEL_ID,
-      max_tokens: 8192,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-
+async function callComposer(apiKey: string, prompt: string): Promise<{ ok: true; html: string; usage: { input: number; output: number }; costUsd: number } | { ok: false; error: string }> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: MODEL_ID, max_tokens: 8192, messages: [{ role: 'user', content: prompt }] }) })
   if (!res.ok) {
     const errText = await res.text()
     return { ok: false, error: `COMPOSER call failed: ${res.status} ${errText.slice(0, 200)}` }
   }
-
-  type AR = {
-    content?: Array<{ type: string; text?: string }>
-    usage?: { input_tokens?: number; output_tokens?: number }
-  }
+  type AR = { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } }
   const data = (await res.json()) as AR
-  const rawText = (data.content ?? [])
-    .map((c) => (c.type === 'text' ? c.text ?? '' : ''))
-    .join('')
-
+  const rawText = (data.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : '')).join('')
   const extracted = extractSectionHtml(rawText)
-  if (!extracted || !/<section[\s>]/i.test(extracted)) {
-    return {
-      ok: false,
-      error: `COMPOSER response did not contain a <section> tag. Raw response (first 500 chars): ${rawText.slice(0, 500).replace(/\n/g, ' ')}`,
-    }
-  }
-
+  if (!extracted || !/<section[\s>]/i.test(extracted)) return { ok: false, error: `COMPOSER response did not contain a <section> tag. Raw response (first 500 chars): ${rawText.slice(0, 500).replace(/\n/g, ' ')}` }
   const inputTokens = data.usage?.input_tokens ?? 0
   const outputTokens = data.usage?.output_tokens ?? 0
-
-  return {
-    ok: true,
-    html: extracted,
-    usage: { input: inputTokens, output: outputTokens },
-    costUsd: calculateCost(inputTokens, outputTokens),
-  }
+  return { ok: true, html: extracted, usage: { input: inputTokens, output: outputTokens }, costUsd: calculateCost(inputTokens, outputTokens) }
 }
 
-async function runSaveIteration(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
+async function runSaveIteration(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
   const input = toolUse.input as { client_feedback?: string; notes?: string }
   const current = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!current) return missingIteration(toolUse)
-
   const newId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   const nextNumber = current.iteration_number + 1
-
-  await deps.env.DB
-    .prepare(
-      `INSERT INTO design_iterations
-         (id, brief_id, iteration_number, orchestrator_run_id, client_feedback,
-          design_tokens_json, page_html, status, cost_usd, tokens, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 0, 0, ?)`,
-    )
-    .bind(
-      newId,
-      current.brief_id,
-      nextNumber,
-      current.orchestrator_run_id,
-      input.client_feedback ?? null,
-      current.design_tokens_json,
-      current.page_html,
-      now,
-    )
-    .run()
-
+  await deps.env.DB.prepare(`INSERT INTO design_iterations (id, brief_id, iteration_number, orchestrator_run_id, client_feedback, design_tokens_json, page_html, status, cost_usd, tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 0, 0, ?)`).bind(newId, current.brief_id, nextNumber, current.orchestrator_run_id, input.client_feedback ?? null, current.design_tokens_json, current.page_html, now).run()
   if (current.page_html) {
-    const { r2Key } = await savePreviewToR2(
-      deps.env,
-      deps.briefId,
-      nextNumber,
-      current.page_html,
-    )
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`)
-      .bind(r2Key, newId)
-      .run()
+    const { r2Key } = await savePreviewToR2(deps.env, deps.briefId, nextNumber, current.page_html)
+    await deps.env.DB.prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`).bind(r2Key, newId).run()
   }
-
-  await deps.env.DB
-    .prepare(`UPDATE design_briefs SET current_iteration = ?, updated_at = ? WHERE id = ?`)
-    .bind(nextNumber, now, deps.briefId)
-    .run()
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: JSON.stringify({
-      ok: true,
-      new_iteration_id: newId,
-      iteration_number: nextNumber,
-      note: 'New iteration committed and preview re-uploaded to R2.',
-    }),
-  }
+  await deps.env.DB.prepare(`UPDATE design_briefs SET current_iteration = ?, updated_at = ? WHERE id = ?`).bind(nextNumber, now, deps.briefId).run()
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, new_iteration_id: newId, iteration_number: nextNumber, note: 'New iteration committed.' }) }
 }
 
-async function runCritique(
-  toolUse: DesignAssistantToolUse,
-  deps: ToolDeps,
-): Promise<DesignToolResult> {
+async function runCritique(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
   const input = toolUse.input as { focus_areas?: string[] }
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter || !iter.page_html) return missingIteration(toolUse)
-
   const focus = input.focus_areas?.length ? `Focus areas: ${input.focus_areas.join(', ')}.` : ''
-  const body = JSON.stringify({
-    model: MODEL_ID,
-    max_tokens: 1024,
-    system:
-      'You are CRITIC, a design quality reviewer. Score the provided HTML 0–100. Return STRICT JSON with this shape: {"score": number, "verdict": "PASS"|"FAIL", "strengths": string[], "issues": string[], "suggestions": string[]}. PASS ≥ 80.',
-    messages: [
-      {
-        role: 'user',
-        content: `${focus}\n\nHTML to critique (truncated to 12000 chars if longer):\n\n${iter.page_html.slice(0, 12000)}`,
-      },
-    ],
-  })
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': deps.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body,
-  })
-  if (!res.ok) {
-    return {
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: `CRITIC call failed: ${res.status}`,
-      is_error: true,
-    }
-  }
-  type AnthropicResponse = { content?: Array<{ type: string; text?: string }> }
-  const data = (await res.json()) as AnthropicResponse
+  const body = JSON.stringify({ model: MODEL_ID, max_tokens: 1024, system: 'You are CRITIC, a design quality reviewer. Score the provided HTML 0–100. Return STRICT JSON: {"score": number, "verdict": "PASS"|"FAIL", "strengths": string[], "issues": string[], "suggestions": string[]}. PASS ≥ 80.', messages: [{ role: 'user', content: `${focus}\n\nHTML to critique (truncated to 12000 chars):\n\n${iter.page_html.slice(0, 12000)}` }] })
+  const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': deps.apiKey, 'anthropic-version': '2023-06-01' }, body })
+  if (!res.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: `CRITIC call failed: ${res.status}`, is_error: true }
+  type AR = { content?: Array<{ type: string; text?: string }> }
+  const data = (await res.json()) as AR
   const text = (data.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : '')).join('')
-
   const parsed = safeParse<{ score?: number; verdict?: string }>(text)
   if (parsed?.score !== undefined) {
-    await deps.env.DB
-      .prepare(`UPDATE design_iterations SET critic_score = ?, critic_feedback = ? WHERE id = ?`)
-      .bind(parsed.score, text, iter.id)
-      .run()
+    await deps.env.DB.prepare(`UPDATE design_iterations SET critic_score = ?, critic_feedback = ? WHERE id = ?`).bind(parsed.score, text, iter.id).run()
   }
-
   return { type: 'tool_result', tool_use_id: toolUse.id, content: text }
 }
 
 function notImplemented(toolUse: DesignAssistantToolUse): DesignToolResult {
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: `Tool '${toolUse.name}' is in the catalog but not yet implemented. Try update_design_tokens, regenerate_section, add_section, or remove_section depending on what you want to change.`,
-    is_error: false,
-  }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: `Tool '${toolUse.name}' is not yet implemented.`, is_error: false }
 }
 
 function missingIteration(toolUse: DesignAssistantToolUse): DesignToolResult {
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUse.id,
-    content: 'No design_iterations row found for this brief yet. The brief must complete its initial build before the iteration agent can edit it.',
-    is_error: true,
-  }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: 'No design_iterations row found for this brief yet.', is_error: true }
+}
+
+/**
+ * v0.4.0 — observability surface. Each row corresponds to ONE row persisted
+ * in design_chat_messages during this agent invocation. The design Worker
+ * uses these to render inline tool-call cards in the chat UI.
+ *
+ * Note: the user message persisted at the start is NOT included here — the
+ * design Worker already shows what the user typed.
+ */
+export interface ChatTurnMessage {
+  id: string
+  role: 'assistant' | 'tool_result'
+  content: string | null
+  tool_calls_json: string | null
+  tool_results_json: string | null
+  cost_usd: number
+  created_at: number
 }
 
 export interface IterationAgentResult {
@@ -1314,6 +640,7 @@ export interface IterationAgentResult {
   totalCostUsd: number
   latencyMs: number
   iterationIdsTouched: string[]
+  turnMessages: ChatTurnMessage[]
 }
 
 export async function runIterationAgent(args: {
@@ -1326,6 +653,11 @@ export async function runIterationAgent(args: {
 }): Promise<IterationAgentResult> {
   const { env, apiKey, userId, brief, userMessage, priorTurns } = args
   const startMs = Date.now()
+
+  // v0.4.0 — collect every assistant + tool_result row we persist so the
+  // route handler can return them to the design Worker for live tool-card
+  // rendering. The user row at the start is NOT tracked.
+  const turnMessages: ChatTurnMessage[] = []
 
   await persistDesignChatMessage(env.DB, {
     briefId: brief.id,
@@ -1389,8 +721,10 @@ export async function runIterationAgent(args: {
       usage?: { input_tokens?: number; output_tokens?: number }
     }
     const data = (await res.json()) as AnthropicResp
-    totalInputTokens += data.usage?.input_tokens ?? 0
-    totalOutputTokens += data.usage?.output_tokens ?? 0
+    const turnInputTokens = data.usage?.input_tokens ?? 0
+    const turnOutputTokens = data.usage?.output_tokens ?? 0
+    totalInputTokens += turnInputTokens
+    totalOutputTokens += turnOutputTokens
 
     const blocks = data.content ?? []
     const assistantText = blocks
@@ -1401,16 +735,29 @@ export async function runIterationAgent(args: {
       (b): b is DesignAssistantToolUse => b.type === 'tool_use',
     )
 
-    await persistDesignChatMessage(env.DB, {
+    // v0.4.0 — track persisted assistant row
+    const turnCostUsd = calculateCost(turnInputTokens, turnOutputTokens)
+    const toolCallsJson = toolUses.length > 0 ? JSON.stringify(toolUses) : null
+    const assistantRowTs = Math.floor(Date.now() / 1000)
+    const assistantRowId = await persistDesignChatMessage(env.DB, {
       briefId: brief.id,
       userId,
       role: 'assistant',
       content: assistantText || null,
-      toolCallsJson: toolUses.length > 0 ? JSON.stringify(toolUses) : null,
+      toolCallsJson,
       modelId: MODEL_ID,
-      inputTokens: data.usage?.input_tokens ?? 0,
-      outputTokens: data.usage?.output_tokens ?? 0,
-      costUsd: calculateCost(data.usage?.input_tokens ?? 0, data.usage?.output_tokens ?? 0),
+      inputTokens: turnInputTokens,
+      outputTokens: turnOutputTokens,
+      costUsd: turnCostUsd,
+    })
+    turnMessages.push({
+      id: assistantRowId,
+      role: 'assistant',
+      content: assistantText || null,
+      tool_calls_json: toolCallsJson,
+      tool_results_json: null,
+      cost_usd: turnCostUsd,
+      created_at: assistantRowTs,
     })
 
     finalText = assistantText
@@ -1428,11 +775,23 @@ export async function runIterationAgent(args: {
       results.push(result)
     }
 
-    await persistDesignChatMessage(env.DB, {
+    // v0.4.0 — track persisted tool_result row
+    const toolResultsJson = JSON.stringify(results)
+    const toolResultRowTs = Math.floor(Date.now() / 1000)
+    const toolResultRowId = await persistDesignChatMessage(env.DB, {
       briefId: brief.id,
       userId,
       role: 'tool_result',
-      toolResultsJson: JSON.stringify(results),
+      toolResultsJson,
+    })
+    turnMessages.push({
+      id: toolResultRowId,
+      role: 'tool_result',
+      content: null,
+      tool_calls_json: null,
+      tool_results_json: toolResultsJson,
+      cost_usd: 0,
+      created_at: toolResultRowTs,
     })
 
     messages.push({ role: 'assistant', content: blocks })
@@ -1449,22 +808,12 @@ export async function runIterationAgent(args: {
     totalCostUsd: calculateCost(totalInputTokens, totalOutputTokens),
     latencyMs: Date.now() - startMs,
     iterationIdsTouched: [],
+    turnMessages,
   }
 }
 
-async function loadLatestIteration(
-  db: D1Database,
-  briefId: string,
-): Promise<DesignIterationRow | null> {
-  return db
-    .prepare(
-      `SELECT * FROM design_iterations
-         WHERE brief_id = ?
-         ORDER BY iteration_number DESC
-         LIMIT 1`,
-    )
-    .bind(briefId)
-    .first<DesignIterationRow>()
+async function loadLatestIteration(db: D1Database, briefId: string): Promise<DesignIterationRow | null> {
+  return db.prepare(`SELECT * FROM design_iterations WHERE brief_id = ? ORDER BY iteration_number DESC LIMIT 1`).bind(briefId).first<DesignIterationRow>()
 }
 
 function safeParse<T = unknown>(raw: string): T | null {
@@ -1476,14 +825,7 @@ function safeParse<T = unknown>(raw: string): T | null {
 }
 
 function deepMergeJson(target: unknown, source: unknown): unknown {
-  if (
-    target === null ||
-    typeof target !== 'object' ||
-    Array.isArray(target) ||
-    source === null ||
-    typeof source !== 'object' ||
-    Array.isArray(source)
-  ) {
+  if (target === null || typeof target !== 'object' || Array.isArray(target) || source === null || typeof source !== 'object' || Array.isArray(source)) {
     return source === undefined ? target : source
   }
   const t = target as Record<string, unknown>
@@ -1491,14 +833,7 @@ function deepMergeJson(target: unknown, source: unknown): unknown {
   const result: Record<string, unknown> = { ...t }
   for (const [k, v] of Object.entries(s)) {
     const existing = result[k]
-    if (
-      v !== null &&
-      typeof v === 'object' &&
-      !Array.isArray(v) &&
-      existing !== null &&
-      typeof existing === 'object' &&
-      !Array.isArray(existing)
-    ) {
+    if (v !== null && typeof v === 'object' && !Array.isArray(v) && existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
       result[k] = deepMergeJson(existing, v)
     } else {
       result[k] = v

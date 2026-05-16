@@ -1,15 +1,20 @@
 /**
- * POST /api/design/briefs/[id]/chat — Sprint 16 v0.3.0
+ * POST /api/design/briefs/[id]/chat — Sprint 16 v0.4.0
  *
  * Chat with the design iteration agent to refine a finished brief.
- * Loads prior chat history, runs the tool-use loop, persists all turns.
+ * Loads prior chat history, runs the tool-use loop, persists all turns,
+ * and returns the per-turn message rows so the design Worker can render
+ * inline tool-call cards.
  *
  * Request:  { message: string }
- * Response: { ok, final_text, tool_hops, cost_usd, tokens, latency_ms }
- *
- * Accepts auth via:
- * - Authorization: Bearer {token} (from design Worker cross-calls)
- * - @supabase/ssr session cookie (from direct Cockpit browser access)
+ * Response: {
+ *   ok, final_text, reply, agent, tool_hops, cost_usd,
+ *   input_tokens, output_tokens, latency_ms,
+ *   turn_messages: Array<{                       // v0.4.0
+ *     id, role, content, tool_calls_json,
+ *     tool_results_json, cost_usd, created_at
+ *   }>
+ * }
  */
 
 import { NextRequest } from 'next/server'
@@ -62,7 +67,6 @@ export async function POST(
     )
   }
 
-  // Permission check + load brief
   const brief = await env.DB
     .prepare(`SELECT * FROM design_briefs WHERE id = ? AND user_id = ?`)
     .bind(briefId, user.id)
@@ -77,7 +81,6 @@ export async function POST(
     )
   }
 
-  // Load prior turns for context
   const priorTurns = await loadDesignChatHistory(env.DB, briefId, user.id)
 
   try {
@@ -90,21 +93,20 @@ export async function POST(
       priorTurns,
     })
     return new Response(
-      JSON.stringify(
-        {
-          ok: true,
-          final_text: result.finalText,
-          reply: result.finalText,
-          agent: 'DESIGNER',
-          tool_hops: result.toolHops,
-          cost_usd: result.totalCostUsd,
-          input_tokens: result.totalInputTokens,
-          output_tokens: result.totalOutputTokens,
-          latency_ms: result.latencyMs,
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({
+        ok: true,
+        final_text: result.finalText,
+        reply: result.finalText,
+        agent: 'DESIGNER',
+        tool_hops: result.toolHops,
+        cost_usd: result.totalCostUsd,
+        input_tokens: result.totalInputTokens,
+        output_tokens: result.totalOutputTokens,
+        latency_ms: result.latencyMs,
+        // v0.4.0 — per-turn assistant + tool_result rows so the design
+        // Worker can render inline tool-call cards next to the chat reply.
+        turn_messages: result.turnMessages,
+      }),
       { headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
@@ -118,9 +120,6 @@ export async function POST(
   }
 }
 
-/**
- * GET /api/design/briefs/[id]/chat — list prior chat messages for the brief.
- */
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
