@@ -1,5 +1,5 @@
 /**
- * Design iteration agent — Sprint 16 v0.5.0 (live streaming) + Sprint 18N (scroll animations).
+ * Design iteration agent — Sprint 16 v0.5.0 (live streaming) + Sprint 18N (scroll animations + typography debt fix).
  *
  * v0.4.0: chat POST returned turn_messages array (all-at-once).
  *
@@ -15,6 +15,13 @@
  * add_section) about data-anim scroll animations. Same guidance block as
  * the initial-build COMPOSER in pipeline.ts, sourced from
  * buildScrollAnimationsBlock() so the two stay in sync.
+ *
+ * Sprint 18N typography debt fix (982e66e5): SAFE_TOKEN_KEYS.typography
+ * now whitelists font_serif/font_sans/font_mono so update_design_tokens
+ * can patch them. buildComposerPrompt's DESIGN TOKENS block exposes the
+ * trio when present so iteration-time COMPOSER (regenerate_section,
+ * add_section) emits font-serif / font-sans / font-mono Tailwind classes
+ * that match the initial-build output.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -59,7 +66,18 @@ const SAFE_TOKEN_KEYS: Record<string, Set<string>> = {
     'text_secondary',
     'border',
   ]),
-  typography: new Set(['display_font', 'body_font', 'scale']),
+  // Sprint 18N typography debt fix (982e66e5) — whitelist the new
+  // font_serif/font_sans/font_mono keys so update_design_tokens can
+  // patch them. Without these, the agent's patches to the trio would
+  // get rejected as unsupported_token_keys.
+  typography: new Set([
+    'display_font',
+    'body_font',
+    'scale',
+    'font_serif',
+    'font_sans',
+    'font_mono',
+  ]),
   spacing: new Set(['scale', 'container_max_width', 'section_padding']),
   motion: new Set(['transition_speed', 'easing']),
 }
@@ -114,7 +132,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   {
     name: 'update_design_tokens',
     description:
-      'Swap an EXISTING token VALUE that the page already uses via Tailwind classes (e.g. primary color, accent color, display font, section padding). The HTML is then re-rendered with the new value.\n\nUse for: "change primary color to navy", "switch display font to Playfair", "tighten section padding".\n\nDO NOT use for: gradients, backgrounds with multiple colors, new visual elements, structural changes, copy changes, layout changes. For those, use regenerate_section.\n\nThe only valid keys are: palette.{primary, primary_dark, primary_light, accent, background, surface, text_primary, text_secondary, border}, typography.{display_font, body_font}, spacing.{section_padding, container_max_width}, motion.{transition_speed, easing}. Anything else will be rejected — the HTML does not read those keys.',
+      'Swap an EXISTING token VALUE that the page already uses via Tailwind classes (e.g. primary color, accent color, display font, section padding). The HTML is then re-rendered with the new value.\n\nUse for: "change primary color to navy", "switch display font to Playfair", "set serif font to Lora", "tighten section padding".\n\nDO NOT use for: gradients, backgrounds with multiple colors, new visual elements, structural changes, copy changes, layout changes. For those, use regenerate_section.\n\nThe only valid keys are: palette.{primary, primary_dark, primary_light, accent, background, surface, text_primary, text_secondary, border}, typography.{display_font, body_font, font_serif, font_sans, font_mono}, spacing.{section_padding, container_max_width}, motion.{transition_speed, easing}. Anything else will be rejected — the HTML does not read those keys. The typography.font_serif/font_sans/font_mono fields are optional richer-hierarchy slots (Sprint 18N) — set them only when the design clearly needs a serif, distinct sans, or monospace font beyond the display/body pair.',
     input_schema: { type: 'object', properties: { patch: { type: 'object', description: 'Partial DesignTokens object.' }, rationale: { type: 'string', description: 'One-sentence explanation.' } }, required: ['patch'] },
   },
   { name: 'apply_token_to_html', description: 'Force a full HTML re-render using the current design tokens. Rarely needed.', input_schema: { type: 'object', properties: {} } },
@@ -330,7 +348,27 @@ function buildComposerPrompt(args: { sectionSlug: string; sectionName: string; i
   const referenceBlock = isNewSection ? '' : `\n\nCURRENT SECTION HTML (for reference, may be truncated):\n${currentSectionHtml.slice(0, 6000)}\n`
   const structureBlock = isNewSection ? '' : preserveStructure ? '\nPreserve the existing structure but apply the refinement to copy and styling.\n' : '\nFeel free to restructure if it serves the refinement.\n'
   const headingRule = sectionSlug === 'hero' ? 'HEADING HIERARCHY: This is the hero section — it MUST contain the single <h1>.' : 'HEADING HIERARCHY: Use <h2> for the section\'s main headline. Use <h3> for cards. Do NOT add another <h1>.'
-  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\n${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:\n${instruction}\n${structureBlock}${referenceBlock}\nDESIGN TOKENS:\n  primary: ${tokens.palette.primary}\n  accent: ${tokens.palette.accent}\n  background: ${tokens.palette.background}\n  text: ${tokens.palette.text_primary}\n  display font: ${tokens.typography.display_font}\n  body font: ${tokens.typography.body_font}\n\nBRIEF CONTEXT:\n  Brand: ${brief.client_name}\n  Business: ${brief.business_description.slice(0, 240)}\n  Audience: ${brief.target_audience}\n  Tone: ${brief.mood_tone}\n\n${headingRule}\n\nACCESSIBILITY: CTA contrast ≥ 4.5:1. Use bg-primary text-white OR bg-white text-primary border-2 border-primary. Forms: aria-required. SVG illustrations: aria-hidden="true" or with figcaption. Don't add custom focus:ring on inputs.\n\n${buildScrollAnimationsBlock()}\n\nINLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS.\n\nOUTPUT FORMAT (STRICT):\n- Output ONLY the <section> markup. No preamble. No code fences.\n- First character MUST be <. Last character MUST be >.\n\nProduce production-quality, responsive, accessible markup with REAL copy.`
+
+  // Sprint 18N typography debt fix (982e66e5) — build the DESIGN TOKENS block
+  // dynamically so font_serif/font_sans/font_mono are surfaced to COMPOSER
+  // only when the tokens actually specify them. Avoids polluting the prompt
+  // with empty rows for briefs that don't use a multi-font hierarchy.
+  const typographyLines: string[] = [
+    `  display font (use via font-display class): ${tokens.typography.display_font}`,
+    `  body font: ${tokens.typography.body_font}`,
+  ]
+  if (tokens.typography.font_serif) typographyLines.push(`  serif font (use via font-serif class — editorial headings, blockquotes, brand moments): ${tokens.typography.font_serif}`)
+  if (tokens.typography.font_sans) typographyLines.push(`  sans font (use via font-sans class — body running text, overrides body_font): ${tokens.typography.font_sans}`)
+  if (tokens.typography.font_mono) typographyLines.push(`  mono font (use via font-mono class — code snippets, technical annotations): ${tokens.typography.font_mono}`)
+
+  const tokensBlock = `DESIGN TOKENS:
+  primary: ${tokens.palette.primary}
+  accent: ${tokens.palette.accent}
+  background: ${tokens.palette.background}
+  text: ${tokens.palette.text_primary}
+${typographyLines.join('\n')}`
+
+  return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\n${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:\n${instruction}\n${structureBlock}${referenceBlock}\n${tokensBlock}\n\nBRIEF CONTEXT:\n  Brand: ${brief.client_name}\n  Business: ${brief.business_description.slice(0, 240)}\n  Audience: ${brief.target_audience}\n  Tone: ${brief.mood_tone}\n\n${headingRule}\n\nACCESSIBILITY: CTA contrast ≥ 4.5:1. Use bg-primary text-white OR bg-white text-primary border-2 border-primary. Forms: aria-required. SVG illustrations: aria-hidden="true" or with figcaption. Don't add custom focus:ring on inputs.\n\n${buildScrollAnimationsBlock()}\n\nINLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS.\n\nOUTPUT FORMAT (STRICT):\n- Output ONLY the <section> markup. No preamble. No code fences.\n- First character MUST be <. Last character MUST be >.\n\nProduce production-quality, responsive, accessible markup with REAL copy.`
 }
 
 async function callComposer(apiKey: string, prompt: string): Promise<{ ok: true; html: string; usage: { input: number; output: number }; costUsd: number } | { ok: false; error: string }> {
