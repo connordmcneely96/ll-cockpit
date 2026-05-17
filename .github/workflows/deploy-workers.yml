@@ -1,6 +1,7 @@
 name: Deploy Standalone Workers
 
 on:
+  # Manual trigger — pick any worker
   workflow_dispatch:
     inputs:
       worker:
@@ -11,8 +12,68 @@ on:
           - knowledge-embed
           - knowledge-mcp
 
+  # Auto-trigger on push to main when worker source changes
+  push:
+    branches:
+      - main
+    paths:
+      - 'workers/knowledge-mcp/**'
+      - 'workers/knowledge-embed/**'
+
 jobs:
-  deploy-worker:
+  # ── Auto-deploy job (push trigger) ──────────────────────────────────────────
+  auto-deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Detect changed workers
+        id: changes
+        run: |
+          git fetch origin main --depth=2
+          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^workers/' | cut -d'/' -f2 | sort -u)
+          echo "workers=$CHANGED" >> $GITHUB_OUTPUT
+          echo "Changed workers: $CHANGED"
+
+      - name: Deploy knowledge-mcp
+        if: contains(steps.changes.outputs.workers, 'knowledge-mcp')
+        run: |
+          npm ci --no-audit --no-fund
+          cd workers/knowledge-mcp
+          npm install --no-audit --no-fund
+          npx wrangler deploy
+
+      - name: Deploy knowledge-embed
+        if: contains(steps.changes.outputs.workers, 'knowledge-embed')
+        run: |
+          npm ci --no-audit --no-fund
+          cd workers/knowledge-embed
+          npm install --no-audit --no-fund
+          npx wrangler deploy
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Auto Worker Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Changed workers: \`${{ steps.changes.outputs.workers }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Actor: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+  # ── Manual deploy job (workflow_dispatch trigger) ────────────────────────────
+  manual-deploy:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -44,7 +105,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### Worker Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### Manual Worker Deploy Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Worker: \`${{ github.event.inputs.worker }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Actor: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
