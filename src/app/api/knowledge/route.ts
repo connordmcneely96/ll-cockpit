@@ -62,8 +62,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const { DB, KNOWLEDGE_QUEUE } = getBindings();
-  const reindexSecret = (getBindings() as Record<string, unknown>)['REINDEX_SECRET'] as string | undefined;
+  const bindings = getBindings() as unknown as Record<string, unknown>;
+  const { DB, KNOWLEDGE_QUEUE } = bindings as { DB: D1Database; KNOWLEDGE_QUEUE: Queue };
+  const reindexSecret = bindings['REINDEX_SECRET'] as string | undefined;
   const providedSecret = searchParams.get('secret');
   if (reindexSecret && providedSecret !== reindexSecret) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
