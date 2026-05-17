@@ -62,58 +62,101 @@ function str(v: unknown): string {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  if (searchParams.get('reindex') !== '1') {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
-
   const bindings = getBindings() as unknown as Record<string, unknown>;
   const DB = bindings['DB'] as D1Database;
   const KNOWLEDGE_QUEUE = bindings['KNOWLEDGE_QUEUE'] as Queue;
-  const reindexSecret = bindings['REINDEX_SECRET'] as string | undefined;
-  const providedSecret = searchParams.get('secret');
-  if (reindexSecret && providedSecret !== reindexSecret) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const KNOWLEDGE_VECTORIZE = bindings['KNOWLEDGE_VECTORIZE'] as VectorizeIndex;
+  const AI = bindings['AI'] as Ai;
 
-  const [nodes, items] = await Promise.all([
-    DB.prepare('SELECT id, title, category, content, tags, source FROM study_nodes').all(),
-    DB.prepare('SELECT id, sprint_number, title, description, status, agent, category FROM sprint_items').all(),
-  ]);
+  // ── SEARCH endpoint (ChatGPT Action) ──────────────────────────────────────
+  // GET /api/knowledge?q=<query>&limit=<n>
+  // Plain JSON, no OAuth, no SSE — compatible with ChatGPT Custom GPT Actions.
+  const query = searchParams.get('q');
+  if (query) {
+    const limit = Math.min(parseInt(searchParams.get('limit') ?? '5', 10), 10);
 
-  let queued = 0;
+    const embedding = await AI.run('@cf/baai/bge-base-en-v1.5', {
+      text: query,
+    }) as { data: number[][] };
 
-  for (const row of nodes.results as Record<string, unknown>[]) {
-    // Inline embed content — avoids strict type constraint on buildEmbedContent
-    const embedContent = [str(row.title), str(row.category), str(row.content), str(row.tags)]
-      .filter(Boolean).join(' | ');
-    await KNOWLEDGE_QUEUE.send({
-      id: row.id,
-      table: 'study_nodes',
-      content: embedContent,
-      metadata: { type: 'study_node', title: str(row.title) },
+    if (!embedding?.data?.[0]) {
+      return NextResponse.json({ error: 'Embedding failed' }, { status: 500 });
+    }
+
+    const results = await KNOWLEDGE_VECTORIZE.query(embedding.data[0], {
+      topK: limit,
+      returnMetadata: 'all',
     });
-    queued++;
+
+    const enriched = await Promise.all(
+      results.matches.map(async (match) => {
+        const sepIdx = match.id.indexOf('::');
+        if (sepIdx === -1) return null;
+        const table = match.id.slice(0, sepIdx);
+        const id = match.id.slice(sepIdx + 2);
+        if (!id || (table !== 'study_nodes' && table !== 'sprint_items')) return null;
+        const row = await DB.prepare(
+          `SELECT * FROM ${table} WHERE id = ?`
+        ).bind(id).first();
+        if (!row) return null;
+        return { score: match.score, type: table, ...row };
+      })
+    );
+
+    const filtered = enriched.filter(Boolean);
+    return NextResponse.json({ results: filtered });
   }
 
-  for (const row of items.results as Record<string, unknown>[]) {
-    const embedContent = [
-      `Sprint ${str(row.sprint_number)}`,
-      str(row.title),
-      str(row.description),
-      str(row.agent),
-      str(row.category),
-      str(row.status),
-    ].filter(Boolean).join(' | ');
-    await KNOWLEDGE_QUEUE.send({
-      id: row.id,
-      table: 'sprint_items',
-      content: embedContent,
-      metadata: { type: 'sprint_item', title: str(row.title) },
-    });
-    queued++;
+  // ── REINDEX endpoint ───────────────────────────────────────────────────────
+  // GET /api/knowledge?reindex=1&secret=<secret>
+  if (searchParams.get('reindex') === '1') {
+    const reindexSecret = bindings['REINDEX_SECRET'] as string | undefined;
+    const providedSecret = searchParams.get('secret');
+    if (reindexSecret && providedSecret !== reindexSecret) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const [nodes, items] = await Promise.all([
+      DB.prepare('SELECT id, title, category, content, tags, source FROM study_nodes').all(),
+      DB.prepare('SELECT id, sprint_number, title, description, status, agent, category FROM sprint_items').all(),
+    ]);
+
+    let queued = 0;
+
+    for (const row of nodes.results as Record<string, unknown>[]) {
+      const embedContent = [str(row.title), str(row.category), str(row.content), str(row.tags)]
+        .filter(Boolean).join(' | ');
+      await KNOWLEDGE_QUEUE.send({
+        id: row.id,
+        table: 'study_nodes',
+        content: embedContent,
+        metadata: { type: 'study_node', title: str(row.title) },
+      });
+      queued++;
+    }
+
+    for (const row of items.results as Record<string, unknown>[]) {
+      const embedContent = [
+        `Sprint ${str(row.sprint_number)}`,
+        str(row.title),
+        str(row.description),
+        str(row.agent),
+        str(row.category),
+        str(row.status),
+      ].filter(Boolean).join(' | ');
+      await KNOWLEDGE_QUEUE.send({
+        id: row.id,
+        table: 'sprint_items',
+        content: embedContent,
+        metadata: { type: 'sprint_item', title: str(row.title) },
+      });
+      queued++;
+    }
+
+    return NextResponse.json({ queued });
   }
 
-  return NextResponse.json({ queued });
+  return NextResponse.json({ error: 'Not found' }, { status: 404 });
 }
 
 export async function POST(req: NextRequest) {
