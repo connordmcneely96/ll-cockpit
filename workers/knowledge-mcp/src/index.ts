@@ -32,6 +32,9 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
     // Multi-tenant: swap this.props.tenantId in for all queries
     const tenantId = this.props.tenantId ?? 'default';
 
+    // ─────────────────────────────────────────────
+    // TOOL: search_knowledge
+    // ─────────────────────────────────────────────
     this.server.registerTool(
       'search_knowledge',
       {
@@ -58,16 +61,10 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
         const results = await this.env.KNOWLEDGE_VECTORIZE.query(embedding.data[0], {
           topK: cappedLimit,
           returnMetadata: 'all',
-          // Multi-tenant: uncomment and use tenantId filter
-          // filter: { tenant_id: tenantId },
         });
 
-        // Use allSettled so a single bad vector (e.g. ORACLE's research-{id} format)
-        // doesn't crash the entire search response.
         const settled = await Promise.allSettled(
           results.matches.map(async (match) => {
-            // Only enrich study_nodes/sprint_items vectors (table::id format).
-            // ORACLE writes research-{id} vectors to the same index — skip those.
             const sepIdx = match.id.indexOf('::');
             if (sepIdx === -1) return null;
             const table = match.id.slice(0, sepIdx);
@@ -95,6 +92,9 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
       }
     );
 
+    // ─────────────────────────────────────────────
+    // TOOL: get_sprint_status
+    // ─────────────────────────────────────────────
     this.server.registerTool(
       'get_sprint_status',
       {
@@ -130,13 +130,98 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
         };
       }
     );
+
+    // ─────────────────────────────────────────────
+    // TOOL: seed_knowledge
+    // ─────────────────────────────────────────────
+    this.server.registerTool(
+      'seed_knowledge',
+      {
+        description:
+          'Add a new sprint item or study node to the NEXUS knowledge base. Use this to log sprint plans, architecture decisions, working rules, and reference nodes so they persist across sessions.',
+        inputSchema: {
+          title: z.string().describe('Short title for the item (used in sprint status views)'),
+          description: z.string().describe('Full content — architecture details, build steps, verification criteria, decisions'),
+          type: z.enum(['sprint_item', 'study_node']).optional().describe('Type of knowledge: sprint_item (actionable) or study_node (reference). Defaults to sprint_item.'),
+          sprint_number: z.number().optional().describe('Sprint number. Use 0 for global reference nodes.'),
+          status: z.string().optional().describe('Status: todo, in_progress, done, reference. Defaults to todo.'),
+          priority: z.number().optional().describe('Priority: 1 (high) to 3 (low). Defaults to 2.'),
+          agent: z.string().optional().describe('Primary agent this item belongs to (e.g. nexus, forge, scout)'),
+          category: z.string().optional().describe('Category tag (e.g. infrastructure, agent-worker, hermes-parity, reference)'),
+          tags: z.string().optional().describe('Comma-separated tags for search'),
+        },
+      },
+      async ({ title, description, type = 'sprint_item', sprint_number = 0, status = 'todo', priority = 2, agent, category, tags }) => {
+        const id = crypto.randomUUID();
+        const now = Math.floor(Date.now() / 1000);
+
+        // sprint_items and study_nodes share the same table for simplicity
+        // type is stored as category prefix if study_node
+        const effectiveCategory = type === 'study_node'
+          ? `study_node${category ? ':' + category : ''}`
+          : (category ?? null);
+
+        await this.env.DB.prepare(
+          `INSERT INTO sprint_items
+            (id, sprint_number, title, description, status, priority, agent, category, tenant_id, embed_status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+        )
+          .bind(id, sprint_number, title, description, status, priority, agent ?? null, effectiveCategory, tenantId, now, now)
+          .run();
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ ok: true, id, type, title, status }),
+          }],
+        };
+      }
+    );
+
+    // ─────────────────────────────────────────────
+    // TOOL: update_sprint_status
+    // ─────────────────────────────────────────────
+    this.server.registerTool(
+      'update_sprint_status',
+      {
+        description:
+          'Update the status of a sprint item by ID. Use this to mark items as in_progress or done as work progresses.',
+        inputSchema: {
+          id: z.string().describe('The sprint item ID to update'),
+          status: z.enum(['todo', 'in_progress', 'done']).describe('New status'),
+          notes: z.string().optional().describe('Optional completion notes to append to description'),
+        },
+      },
+      async ({ id, status, notes }) => {
+        const now = Math.floor(Date.now() / 1000);
+        const completedAt = status === 'done' ? now : null;
+
+        if (notes) {
+          const existing = await this.env.DB.prepare(
+            'SELECT description FROM sprint_items WHERE id = ? AND tenant_id = ?'
+          ).bind(id, tenantId).first<{ description: string }>();
+
+          const updatedDescription = existing
+            ? `${existing.description}\n\n--- COMPLETION NOTES ---\n${notes}`
+            : notes;
+
+          await this.env.DB.prepare(
+            'UPDATE sprint_items SET status = ?, completed_at = ?, updated_at = ?, description = ?, embed_status = ? WHERE id = ? AND tenant_id = ?'
+          ).bind(status, completedAt, now, updatedDescription, 'pending', id, tenantId).run();
+        } else {
+          await this.env.DB.prepare(
+            'UPDATE sprint_items SET status = ?, completed_at = ?, updated_at = ?, embed_status = ? WHERE id = ? AND tenant_id = ?'
+          ).bind(status, completedAt, now, 'pending', id, tenantId).run();
+        }
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, id, status }) }],
+        };
+      }
+    );
   }
 }
 
-// OAuthProvider wraps everything:
-// - Routes /mcp traffic to McpAgent (the actual MCP tools)
-// - Routes everything else to the Hono auth app (handles /authorize, /approve)
-// - Handles /token and /register automatically
 export default new OAuthProvider({
   apiRoute: '/mcp',
   apiHandler: KnowledgeMCP.serve('/mcp') as any,
