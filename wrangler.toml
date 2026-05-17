@@ -28,6 +28,10 @@ binding = "AI"
 binding = "KNOWLEDGE_VECTORIZE"
 index_name = "nexus-knowledge"
 
+[[vectorize]]
+binding = "ORACLE_VECTORIZE"
+index_name = "oracle-research"
+
 # ORACLE runs at 7am CST (1pm UTC) every day
 # Also runs hourly fetch-only to keep queue fresh
 [triggers]
