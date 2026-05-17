@@ -1,0 +1,50 @@
+name: Deploy Standalone Workers
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker:
+        description: 'Worker to deploy'
+        required: true
+        type: choice
+        options:
+          - knowledge-embed
+          - knowledge-mcp
+
+jobs:
+  deploy-worker:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install root deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Install worker deps
+        run: |
+          cd workers/${{ github.event.inputs.worker }}
+          npm install --no-audit --no-fund
+
+      - name: Deploy worker
+        run: |
+          cd workers/${{ github.event.inputs.worker }}
+          npx wrangler deploy
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Worker Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Worker: \`${{ github.event.inputs.worker }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Actor: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
