@@ -56,6 +56,10 @@ interface KnowledgeRequestBody {
   data: Record<string, unknown>;
 }
 
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : String(v ?? '');
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   if (searchParams.get('reindex') !== '1') {
@@ -63,7 +67,8 @@ export async function GET(req: NextRequest) {
   }
 
   const bindings = getBindings() as unknown as Record<string, unknown>;
-  const { DB, KNOWLEDGE_QUEUE } = bindings as { DB: D1Database; KNOWLEDGE_QUEUE: Queue };
+  const DB = bindings['DB'] as D1Database;
+  const KNOWLEDGE_QUEUE = bindings['KNOWLEDGE_QUEUE'] as Queue;
   const reindexSecret = bindings['REINDEX_SECRET'] as string | undefined;
   const providedSecret = searchParams.get('secret');
   if (reindexSecret && providedSecret !== reindexSecret) {
@@ -76,14 +81,35 @@ export async function GET(req: NextRequest) {
   ]);
 
   let queued = 0;
+
   for (const row of nodes.results as Record<string, unknown>[]) {
-    const embedContent = buildEmbedContent('study_node', row as Parameters<typeof buildEmbedContent>[1]);
-    await KNOWLEDGE_QUEUE.send({ id: row.id, table: 'study_nodes', content: embedContent, metadata: { type: 'study_node', title: row.title as string } });
+    // Inline embed content — avoids strict type constraint on buildEmbedContent
+    const embedContent = [str(row.title), str(row.category), str(row.content), str(row.tags)]
+      .filter(Boolean).join(' | ');
+    await KNOWLEDGE_QUEUE.send({
+      id: row.id,
+      table: 'study_nodes',
+      content: embedContent,
+      metadata: { type: 'study_node', title: str(row.title) },
+    });
     queued++;
   }
+
   for (const row of items.results as Record<string, unknown>[]) {
-    const embedContent = buildEmbedContent('sprint_item', row as Parameters<typeof buildEmbedContent>[1]);
-    await KNOWLEDGE_QUEUE.send({ id: row.id, table: 'sprint_items', content: embedContent, metadata: { type: 'sprint_item', title: row.title as string } });
+    const embedContent = [
+      `Sprint ${str(row.sprint_number)}`,
+      str(row.title),
+      str(row.description),
+      str(row.agent),
+      str(row.category),
+      str(row.status),
+    ].filter(Boolean).join(' | ');
+    await KNOWLEDGE_QUEUE.send({
+      id: row.id,
+      table: 'sprint_items',
+      content: embedContent,
+      metadata: { type: 'sprint_item', title: str(row.title) },
+    });
     queued++;
   }
 
