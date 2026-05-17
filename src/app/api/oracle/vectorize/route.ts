@@ -11,7 +11,12 @@ export async function POST(req: NextRequest) {
     const batchSize = body.batch_size ?? 5
 
     if (!env.AI) return NextResponse.json({ ok: false, error: 'Workers AI binding not available' }, { status: 503 })
-    if (!env.KNOWLEDGE_VECTORIZE) return NextResponse.json({ ok: false, error: 'Vectorize binding not available' }, { status: 503 })
+
+    // ORACLE research vectors go to oracle-research index, NOT nexus-knowledge.
+    // This prevents research-${id} vector IDs from contaminating the knowledge
+    // base search which expects table::id format.
+    const vectorize = (env as unknown as Record<string, unknown>)['ORACLE_VECTORIZE'] as VectorizeIndex | undefined
+    if (!vectorize) return NextResponse.json({ ok: false, error: 'ORACLE_VECTORIZE binding not available — add [[vectorize]] binding in wrangler.toml and create oracle-research index' }, { status: 503 })
 
     const items = await env.DB.prepare(
       "SELECT * FROM research_queue WHERE status = 'summarized' ORDER BY relevance_score DESC LIMIT ?"
@@ -40,7 +45,7 @@ export async function POST(req: NextRequest) {
 
         const vectorId = `research-${item.id}`
 
-        await env.KNOWLEDGE_VECTORIZE.upsert([{
+        await vectorize.upsert([{
           id: vectorId,
           values: vector,
           metadata: {
