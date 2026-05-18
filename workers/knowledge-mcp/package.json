@@ -1,18 +1,20 @@
 {
   "name": "knowledge-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "NEXUS knowledge base MCP Worker",
   "main": "src/index.ts",
   "scripts": {
-    "deploy": "workers-mcp docgen src/index.ts && wrangler deploy",
+    "deploy": "wrangler deploy",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.0.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.12.3",
+    "hono": "^4.7.10",
     "workers-mcp": "^0.0.13",
     "zod": "^4.4.2"
   }
