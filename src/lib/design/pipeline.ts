@@ -21,6 +21,11 @@
  * registers all four slots (display, sans, serif, mono) so COMPOSER can apply
  * `font-serif` to editorial headings, `font-mono` to code, etc. Existing
  * briefs with only display_font + body_font render identically.
+ *
+ * Sprint 18K (A2) — renderFullHtml now injects data-nexus-id="${section.slug}"
+ * on the opening <section> tag of every COMPOSER output. This attribute is the
+ * Phase B hook for the visual editor (Sprint 18U click-to-select) and for
+ * SSE file_read events emitted by the design worker's files API.
  */
 
 import type {
@@ -402,7 +407,13 @@ export function renderFullHtml({
     .map((s) => `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`)
     .join('\n        ')
 
-  const sectionMarkup = sections.map((s) => s.html).join('\n\n  ')
+  // Sprint 18K (A2) — inject data-nexus-id on the opening <section> tag so Phase B
+  // visual editor (Sprint 18U click-to-select) and SSE file_read events can
+  // reference elements by slug without parsing the DOM at runtime.
+  const sectionMarkup = sections
+    .map((s) => s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`))
+    .join('\n\n  ')
+
   const fontParam = (name: string) => name.replace(/ /g, '+')
 
   // Collect unique Google Fonts to load. Dedupe via Set so e.g. when
@@ -575,6 +586,125 @@ export async function savePreviewToR2(
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// SPRINT 18K — PROJECT FILE WRITES
+// Writes individual project files to R2 at design/{briefId}/files/{path}
+// and logs each write to design_brief_files. Called fire-and-forget from
+// finalizeIterationIfReady — non-fatal, preview unaffected if this fails.
+// ──────────────────────────────────────────────────────────────────────
+
+export async function writeProjectFilesToR2(
+  env: CloudflareEnv,
+  briefId: string,
+  iterationId: string,
+  userId: string,
+  html: string,
+  sections: DesignSection[],
+  tokens: DesignTokens | null,
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000)
+  const enc = new TextEncoder()
+
+  type FileEntry = {
+    path: string
+    r2Key: string
+    type: 'html' | 'css' | 'jsx' | 'json'
+    source: 'assembler' | 'composer' | 'designer'
+    content: string
+  }
+
+  const files: FileEntry[] = []
+
+  // 1. design-tokens.json — from DESIGNER output
+  if (tokens) {
+    const content = JSON.stringify(tokens, null, 2)
+    files.push({
+      path: 'design-tokens.json',
+      r2Key: `design/${briefId}/files/design-tokens.json`,
+      type: 'json',
+      source: 'designer',
+      content,
+    })
+  }
+
+  // 2. pages/index.html — full assembled page from ASSEMBLER
+  files.push({
+    path: 'pages/index.html',
+    r2Key: `design/${briefId}/files/pages/index.html`,
+    type: 'html',
+    source: 'assembler',
+    content: html,
+  })
+
+  // 3. stylesheets/styles.css — extracted <style> block from assembled HTML
+  const styleMatch = html.match(/<style[^>]*>([\s\S]*?)<\/style>/i)
+  if (styleMatch) {
+    const content = styleMatch[1].trim()
+    if (content) {
+      files.push({
+        path: 'stylesheets/styles.css',
+        r2Key: `design/${briefId}/files/stylesheets/styles.css`,
+        type: 'css',
+        source: 'assembler',
+        content,
+      })
+    }
+  }
+
+  // 4. components/app.jsx — extracted <script type="text/jsx"> if present
+  const jsxMatch = html.match(/<script[^>]*type=["']text\/jsx["'][^>]*>([\s\S]*?)<\/script>/i)
+  if (jsxMatch) {
+    const content = jsxMatch[1].trim()
+    if (content) {
+      files.push({
+        path: 'components/app.jsx',
+        r2Key: `design/${briefId}/files/components/app.jsx`,
+        type: 'jsx',
+        source: 'assembler',
+        content,
+      })
+    }
+  }
+
+  // 5. components/{slug}.html — one per COMPOSER section (mid-stream visibility)
+  for (const section of sections) {
+    const path = `components/${section.slug}.html`
+    files.push({
+      path,
+      r2Key: `design/${briefId}/files/${path}`,
+      type: 'html',
+      source: 'composer',
+      content: section.html,
+    })
+  }
+
+  // Write to R2 + log to design_brief_files in sequence.
+  // INSERT OR REPLACE is safe on re-finalization (idempotent).
+  for (const f of files) {
+    const bytes = enc.encode(f.content)
+    const contentType =
+      f.type === 'json' ? 'application/json' :
+      f.type === 'css'  ? 'text/css; charset=utf-8' :
+      f.type === 'jsx'  ? 'text/javascript; charset=utf-8' :
+      'text/html; charset=utf-8'
+
+    await env.R2.put(f.r2Key, bytes, {
+      httpMetadata: { contentType },
+      customMetadata: { brief_id: briefId, iteration_id: iterationId, source: f.source },
+    })
+
+    const fileId = crypto.randomUUID()
+    await env.DB
+      .prepare(
+        `INSERT OR REPLACE INTO design_brief_files
+           (id, brief_id, iteration_id, user_id, file_path, r2_key, file_type, source, byte_size, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(fileId, briefId, iterationId, userId, f.path, f.r2Key, f.type, f.source, bytes.byteLength, now)
+      .run()
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // LAZY FINALIZER
 // ──────────────────────────────────────────────────────────────────────
 
@@ -596,12 +726,23 @@ export async function finalizeIterationIfReady(
   if (iteration.preview_r2_key) return { finalized: false, reason: 'already finalized' }
   if (run.status !== 'completed') return { finalized: false, reason: `run status: ${run.status}` }
 
+  // Sprint 18K (A3) — SELECT now includes `title` so we can extract COMPOSER
+  // section slugs for per-file R2 writes. ORDER BY short_id ASC preserves
+  // section order from the DAG.
   const subtasks = await env.DB
-    .prepare(`SELECT agent_name, output, status, cost_usd, tokens FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ?`)
+    .prepare(
+      `SELECT agent_name, title, output, status, cost_usd, tokens
+       FROM agent_subtasks
+       WHERE pipeline_run_id = ? AND user_id = ?
+       ORDER BY short_id ASC`,
+    )
     .bind(run.id, brief.user_id)
-    .all<{ agent_name: string; output: string | null; status: string; cost_usd: number; tokens: number }>()
+    .all<{ agent_name: string; title: string | null; output: string | null; status: string; cost_usd: number; tokens: number }>()
 
   const byAgent: Record<string, { latestOutput: string; cost: number; tokens: number }> = {}
+  // Sprint 18K (A3) — collect ALL COMPOSER sections in DAG order (not just last).
+  const composerSections: DesignSection[] = []
+
   for (const row of subtasks.results ?? []) {
     if (row.status === 'done' && row.output) {
       const prev = byAgent[row.agent_name]
@@ -609,6 +750,15 @@ export async function finalizeIterationIfReady(
         latestOutput: row.output,
         cost: (prev?.cost ?? 0) + (row.cost_usd ?? 0),
         tokens: (prev?.tokens ?? 0) + (row.tokens ?? 0),
+      }
+      if (row.agent_name === 'composer') {
+        const match = (row.title ?? '').match(/Compose\s+(.+?)\s+section/i)
+        const name = match
+          ? match[1]
+          : (row.title ?? '').replace(/Compose\s+/i, '').replace(/\s+section/i, '').trim()
+        const slug =
+          name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'section'
+        composerSections.push({ slug, name, html: extractSectionHtml(row.output) })
       }
     }
   }
@@ -638,7 +788,13 @@ export async function finalizeIterationIfReady(
   const totalTokens = Object.values(byAgent).reduce((sum, a) => sum + a.tokens, 0)
 
   await env.DB
-    .prepare(`UPDATE design_iterations SET design_tokens_json = ?, page_html = ?, critic_score = ?, critic_feedback = ?, preview_r2_key = ?, preview_url = ?, status = 'ready', cost_usd = ?, tokens = ?, completed_at = ? WHERE id = ?`)
+    .prepare(
+      `UPDATE design_iterations
+       SET design_tokens_json = ?, page_html = ?, critic_score = ?, critic_feedback = ?,
+           preview_r2_key = ?, preview_url = ?, status = 'ready',
+           cost_usd = ?, tokens = ?, completed_at = ?
+       WHERE id = ?`,
+    )
     .bind(
       designerJson ? JSON.stringify(designerJson) : null,
       html,
@@ -654,9 +810,28 @@ export async function finalizeIterationIfReady(
     .run()
 
   await env.DB
-    .prepare(`UPDATE design_briefs SET status = 'preview_ready', preview_url = ?, total_cost_usd = total_cost_usd + ?, total_tokens = total_tokens + ?, updated_at = ? WHERE id = ?`)
+    .prepare(
+      `UPDATE design_briefs
+       SET status = 'preview_ready', preview_url = ?,
+           total_cost_usd = total_cost_usd + ?, total_tokens = total_tokens + ?,
+           updated_at = ?
+       WHERE id = ?`,
+    )
     .bind(previewUrl, totalCost, totalTokens, now, brief.id)
     .run()
+
+  // Sprint 18K (A3) — write individual project files to R2 + log to design_brief_files.
+  // Fire-and-forget: preview is already saved above, these writes are non-blocking.
+  // Errors are logged but do not affect the finalization result or user experience.
+  void writeProjectFilesToR2(
+    env,
+    brief.id,
+    iteration.id,
+    brief.user_id,
+    html,
+    composerSections,
+    designerJson as DesignTokens | null,
+  ).catch((err) => console.error('writeProjectFilesToR2 non-fatal', err))
 
   return {
     finalized: true,
