@@ -1,3 +1,4 @@
+// knowledge-mcp v1.1.0 — 4 tools: search_knowledge, get_sprint_status, seed_knowledge, update_sprint_status
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
@@ -24,7 +25,7 @@ export interface Env {
 export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer({
     name: 'nexus-knowledge-mcp',
-    version: '1.0.0',
+    version: '1.1.0',
   });
 
   async init() {
@@ -155,8 +156,6 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
         const id = crypto.randomUUID();
         const now = Math.floor(Date.now() / 1000);
 
-        // sprint_items and study_nodes share the same table for simplicity
-        // type is stored as category prefix if study_node
         const effectiveCategory = type === 'study_node'
           ? `study_node${category ? ':' + category : ''}`
           : (category ?? null);
