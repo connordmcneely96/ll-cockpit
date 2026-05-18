@@ -26,6 +26,11 @@
  * on the opening <section> tag of every COMPOSER output. This attribute is the
  * Phase B hook for the visual editor (Sprint 18U click-to-select) and for
  * SSE file_read events emitted by the design worker's files API.
+ *
+ * Sprint 18K (A3 fix) — writeProjectFilesToR2 is now awaited in
+ * finalizeIterationIfReady. The previous void/.catch() pattern works in Node.js
+ * but CF Workers terminates execution when the Response is returned, abandoning
+ * any unresolved promises before the R2 writes complete.
  */
 
 import type {
@@ -157,8 +162,6 @@ export function buildDesignBuildDAG(
       `<design_system_content>\n${attachedSystem.design_md.slice(0, 12000)}\n</design_system_content>\n`
     : ''
 
-  // Sprint 18N — scroll animations block shared by every COMPOSER task. Generated
-  // once per DAG build so the preset list stays consistent across all sections.
   const scrollAnimationsBlock = buildScrollAnimationsBlock()
 
   // st_1: DESIGNER
@@ -395,29 +398,21 @@ export function renderFullHtml({
   const t = tokens.typography
   const displayFont = t.display_font || 'Inter'
   const bodyFont = t.body_font || 'Inter'
-  // Sprint 18N typography debt fix (982e66e5) — resolve the rich font hierarchy.
-  // sansFont prefers the explicit font_sans when set (e.g. attached design system
-  // distinguishes a UI sans from a body sans), otherwise falls back to body_font
-  // for backwards compatibility with existing briefs.
   const sansFont = t.font_sans || bodyFont
-  const serifFont = t.font_serif // optional — Tailwind serif default fires if absent
-  const monoFont = t.font_mono   // optional — Tailwind mono default fires if absent
+  const serifFont = t.font_serif
+  const monoFont = t.font_mono
 
   const navLinks = sections
     .map((s) => `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`)
     .join('\n        ')
 
-  // Sprint 18K (A2) — inject data-nexus-id on the opening <section> tag so Phase B
-  // visual editor (Sprint 18U click-to-select) and SSE file_read events can
-  // reference elements by slug without parsing the DOM at runtime.
+  // Sprint 18K (A2) — inject data-nexus-id on the opening <section> tag.
   const sectionMarkup = sections
     .map((s) => s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`))
     .join('\n\n  ')
 
   const fontParam = (name: string) => name.replace(/ /g, '+')
 
-  // Collect unique Google Fonts to load. Dedupe via Set so e.g. when
-  // display_font === body_font we don't request the same family twice.
   const fontsToLoad = new Set<string>([displayFont, sansFont])
   if (serifFont) fontsToLoad.add(serifFont)
   if (monoFont) fontsToLoad.add(monoFont)
@@ -425,10 +420,6 @@ export function renderFullHtml({
     .map((f) => `family=${fontParam(f)}:wght@400;500;600;700`)
     .join('&')
 
-  // Tailwind theme font slots. Always emit all four so COMPOSER can use
-  // font-display, font-sans, font-serif, font-mono uniformly. When the
-  // attached system doesn't specify serif/mono, fall through to safe system
-  // fallbacks — Tailwind's own defaults are Georgia + ui-monospace.
   const tailwindFontFamily = [
     `display: ['${displayFont}', 'system-ui', 'sans-serif']`,
     `sans: ['${sansFont}', 'system-ui', 'sans-serif']`,
@@ -587,9 +578,6 @@ export async function savePreviewToR2(
 
 // ──────────────────────────────────────────────────────────────────────
 // SPRINT 18K — PROJECT FILE WRITES
-// Writes individual project files to R2 at design/{briefId}/files/{path}
-// and logs each write to design_brief_files. Called fire-and-forget from
-// finalizeIterationIfReady — non-fatal, preview unaffected if this fails.
 // ──────────────────────────────────────────────────────────────────────
 
 export async function writeProjectFilesToR2(
@@ -614,7 +602,6 @@ export async function writeProjectFilesToR2(
 
   const files: FileEntry[] = []
 
-  // 1. design-tokens.json — from DESIGNER output
   if (tokens) {
     const content = JSON.stringify(tokens, null, 2)
     files.push({
@@ -626,7 +613,6 @@ export async function writeProjectFilesToR2(
     })
   }
 
-  // 2. pages/index.html — full assembled page from ASSEMBLER
   files.push({
     path: 'pages/index.html',
     r2Key: `design/${briefId}/files/pages/index.html`,
@@ -635,7 +621,6 @@ export async function writeProjectFilesToR2(
     content: html,
   })
 
-  // 3. stylesheets/styles.css — extracted <style> block from assembled HTML
   const styleMatch = html.match(/<style[^>]*>([\s\S]*?)<\/style>/i)
   if (styleMatch) {
     const content = styleMatch[1].trim()
@@ -650,7 +635,6 @@ export async function writeProjectFilesToR2(
     }
   }
 
-  // 4. components/app.jsx — extracted <script type="text/jsx"> if present
   const jsxMatch = html.match(/<script[^>]*type=["']text\/jsx["'][^>]*>([\s\S]*?)<\/script>/i)
   if (jsxMatch) {
     const content = jsxMatch[1].trim()
@@ -665,7 +649,6 @@ export async function writeProjectFilesToR2(
     }
   }
 
-  // 5. components/{slug}.html — one per COMPOSER section (mid-stream visibility)
   for (const section of sections) {
     const path = `components/${section.slug}.html`
     files.push({
@@ -677,8 +660,6 @@ export async function writeProjectFilesToR2(
     })
   }
 
-  // Write to R2 + log to design_brief_files in sequence.
-  // INSERT OR REPLACE is safe on re-finalization (idempotent).
   for (const f of files) {
     const bytes = enc.encode(f.content)
     const contentType =
@@ -726,9 +707,6 @@ export async function finalizeIterationIfReady(
   if (iteration.preview_r2_key) return { finalized: false, reason: 'already finalized' }
   if (run.status !== 'completed') return { finalized: false, reason: `run status: ${run.status}` }
 
-  // Sprint 18K (A3) — SELECT now includes `title` so we can extract COMPOSER
-  // section slugs for per-file R2 writes. ORDER BY short_id ASC preserves
-  // section order from the DAG.
   const subtasks = await env.DB
     .prepare(
       `SELECT agent_name, title, output, status, cost_usd, tokens
@@ -740,7 +718,6 @@ export async function finalizeIterationIfReady(
     .all<{ agent_name: string; title: string | null; output: string | null; status: string; cost_usd: number; tokens: number }>()
 
   const byAgent: Record<string, { latestOutput: string; cost: number; tokens: number }> = {}
-  // Sprint 18K (A3) — collect ALL COMPOSER sections in DAG order (not just last).
   const composerSections: DesignSection[] = []
 
   for (const row of subtasks.results ?? []) {
@@ -821,17 +798,22 @@ export async function finalizeIterationIfReady(
     .run()
 
   // Sprint 18K (A3) — write individual project files to R2 + log to design_brief_files.
-  // Fire-and-forget: preview is already saved above, these writes are non-blocking.
-  // Errors are logged but do not affect the finalization result or user experience.
-  void writeProjectFilesToR2(
-    env,
-    brief.id,
-    iteration.id,
-    brief.user_id,
-    html,
-    composerSections,
-    designerJson as DesignTokens | null,
-  ).catch((err) => console.error('writeProjectFilesToR2 non-fatal', err))
+  // Awaited (not fire-and-forget) because CF Workers terminates execution when the
+  // Response is returned, abandoning any unresolved void promises before R2 writes
+  // complete. Non-fatal: errors are caught and logged; preview is already saved above.
+  try {
+    await writeProjectFilesToR2(
+      env,
+      brief.id,
+      iteration.id,
+      brief.user_id,
+      html,
+      composerSections,
+      designerJson as DesignTokens | null,
+    )
+  } catch (err) {
+    console.error('writeProjectFilesToR2 non-fatal', err)
+  }
 
   return {
     finalized: true,
