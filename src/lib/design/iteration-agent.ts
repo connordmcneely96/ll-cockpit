@@ -44,6 +44,12 @@
  * already in executeAssembler (pipeline.ts). The other re-rendering
  * iteration tools were already correct — they route through
  * executeAssembler.
+ *
+ * Sprint 18Z: rerenderAndPersist now also threads a FeedbackContext
+ * (briefId + iterationNumber) so the Tweaks Panel's "Send notes to
+ * designer" section survives iteration rerenders. Same class of bug
+ * as the 18Y-bugfix above — every rerender path must thread the
+ * panel's required context.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -70,6 +76,7 @@ import {
   savePreviewToR2,
   classifySection,
   buildScrollAnimationsBlock,
+  type FeedbackContext,
 } from './pipeline'
 
 const MODEL_ID = 'claude-sonnet-4-5'
@@ -243,7 +250,17 @@ async function rerenderAndPersist(deps: ToolDeps, iter: DesignIterationRow, toke
   const rows = await deps.env.DB.prepare(`SELECT short_id, title, output FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done' AND output IS NOT NULL ORDER BY short_id ASC`).bind(iter.orchestrator_run_id, deps.userId).all<{ short_id: string; title: string; output: string }>()
   if (!rows.results || rows.results.length === 0) return { ok: false, reason: 'no COMPOSER section outputs found' }
   const sections: DesignSection[] = rows.results.map((row) => { const { name, slug } = slugFromTitle(row.title); return { name, slug, html: extractSectionHtml(row.output) } })
-  const newHtml = renderFullHtml({ brief, tokens, sections, skills })
+  // Sprint 18Z — thread feedbackContext so the rerendered HTML keeps the
+  // panel's "Send notes to designer" section. Without this, iteration tools
+  // that drive a rerender (update_design_tokens, apply_token_to_html) would
+  // produce HTML missing the feedback feature even though it survives in the
+  // initial-build path. Same class of bug as Sprint 18Y-bugfix Lesson 8 —
+  // every rerender path must thread the panel's required context.
+  const feedbackContext: FeedbackContext = {
+    briefId: deps.briefId,
+    iterationNumber: iter.iteration_number ?? null,
+  }
+  const newHtml = renderFullHtml({ brief, tokens, sections, skills, feedbackContext })
   await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(newHtml, iter.id).run()
   const { r2Key } = await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, newHtml)
   if (!iter.preview_r2_key) await deps.env.DB.prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`).bind(r2Key, iter.id).run()

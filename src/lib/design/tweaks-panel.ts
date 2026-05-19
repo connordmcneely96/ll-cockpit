@@ -1,7 +1,7 @@
 /**
- * Sprint 18Y — Tweaks Panel runtime engine.
+ * Sprint 18Y → 18Z — Tweaks Panel runtime engine.
  *
- * Three exports consumed by renderFullHtml() in pipeline.ts:
+ * Four exports consumed by renderFullHtml() in pipeline.ts:
  *
  *   deriveDarkPalette()           — derives a sensible dark palette from light tokens
  *   generateAccentAlternates()    — produces 5 named accent alternates via HSL rotation
@@ -11,7 +11,9 @@
  * The TweaksPanel is a fixed-position runtime toolbar (bottom-right corner) that:
  *   1. Toggles light/dark mode by adding/removing the 'dark' class on <html>
  *   2. Swaps the --accent CSS custom property from the generated accent alternates
- *   3. Persists preferences to localStorage (graceful no-op in private mode)
+ *   3. (Sprint 18Z) Lets the viewer send a feedback note back to the designer via
+ *      POST /api/design/briefs/[id]/feedback
+ *   4. Persists preferences to localStorage (graceful no-op in private mode)
  *
  * Only injected when the brief's skills array includes 'tweaks-panel'.
  * No npm dependencies — pure math + vanilla DOM, fully CF Workers compatible.
@@ -111,16 +113,29 @@ export function generateAccentAlternates(
 // TWEAKS PANEL — inline IIFE <script> injected before </body>
 // ─────────────────────────────────────────────────────────────────────
 
-export function buildTweaksPanelScript(
-  accentAlternates: Array<{ name: string; hex: string }>,
-): string {
-  const altJson = JSON.stringify(accentAlternates)
+export interface BuildTweaksPanelOptions {
+  accentAlternates: Array<{ name: string; hex: string }>
+  /** Sprint 18Z — POST target for the feedback endpoint. Pass null/empty to
+   *  disable the feedback section (panel stays as Sprint 18Y v1). */
+  feedbackApiUrl?: string | null
+  /** Sprint 18Z — iteration_number to attach to the feedback row. */
+  iterationNumber?: number | null
+}
+
+export function buildTweaksPanelScript(opts: BuildTweaksPanelOptions): string {
+  const altJson = JSON.stringify(opts.accentAlternates)
+  const feedbackUrl = opts.feedbackApiUrl ?? ''
+  const iterNum = opts.iterationNumber ?? null
+  const feedbackEnabled = Boolean(feedbackUrl)
 
   return `<script id="nexus-tweaks-panel">
 (function() {
   'use strict';
   var ALT = ${altJson};
   var SK = 'nexus_design_tweaks';
+  var FB_URL = ${JSON.stringify(feedbackUrl)};
+  var FB_ITER = ${JSON.stringify(iterNum)};
+  var FB_ON = ${JSON.stringify(feedbackEnabled)};
   function load() { try { return JSON.parse(localStorage.getItem(SK) || '{}'); } catch(e) { return {}; } }
   function save(p) { try { localStorage.setItem(SK, JSON.stringify(p)); } catch(e) {} }
 
@@ -147,7 +162,7 @@ export function buildTweaksPanelScript(
       '-webkit-backdrop-filter:blur(12px);border:1px solid rgba(0,0,0,0.12);' +
       'border-radius:12px;padding:10px 12px;' +
       'box-shadow:0 4px 24px rgba(0,0,0,0.12);display:flex;flex-direction:column;' +
-      'gap:8px;min-width:148px;' +
+      'gap:8px;min-width:148px;max-width:260px;' +
       'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:11px;}' +
       '.dark #nexus-tweaks{background:rgba(30,41,59,0.92);border-color:rgba(255,255,255,0.1);}' +
       '#nxt-lbl{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;' +
@@ -171,6 +186,30 @@ export function buildTweaksPanelScript(
       '.nxsw:hover{transform:scale(1.28);}' +
       '.nxsw.on{border-color:rgba(0,0,0,0.45);}' +
       '.dark .nxsw.on{border-color:rgba(255,255,255,0.65);}' +
+      // Sprint 18Z — feedback section
+      '#nxt-fb-lbl{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;' +
+      'opacity:.45;color:inherit;margin-top:4px;}' +
+      '.dark #nxt-fb-lbl{color:#f1f5f9;}' +
+      '#nxt-fb-ta{width:100%;min-height:54px;max-height:160px;resize:vertical;' +
+      'border:1px solid rgba(0,0,0,0.18);border-radius:6px;padding:6px 8px;' +
+      'font-family:inherit;font-size:11px;color:inherit;background:rgba(255,255,255,0.5);' +
+      'box-sizing:border-box;}' +
+      '.dark #nxt-fb-ta{background:rgba(0,0,0,0.25);border-color:rgba(255,255,255,0.18);color:#f1f5f9;}' +
+      '#nxt-fb-ta:focus{outline:1px solid rgba(0,0,0,0.4);outline-offset:0;}' +
+      '.dark #nxt-fb-ta:focus{outline-color:rgba(255,255,255,0.5);}' +
+      '#nxt-fb-row{display:flex;align-items:center;gap:6px;justify-content:space-between;}' +
+      '#nxt-fb-send{background:var(--primary, #4f46e5);color:#fff;border:none;border-radius:6px;' +
+      'padding:5px 10px;font-size:10.5px;font-weight:600;cursor:pointer;letter-spacing:.02em;' +
+      'transition:opacity .15s;font-family:inherit;}' +
+      '#nxt-fb-send:hover:not(:disabled){opacity:.88;}' +
+      '#nxt-fb-send:disabled{opacity:.4;cursor:not-allowed;}' +
+      '#nxt-fb-status{font-size:10px;opacity:.55;color:inherit;flex:1;text-align:right;}' +
+      '.dark #nxt-fb-status{color:#f1f5f9;}' +
+      '#nxt-fb-status.ok{color:#059669;opacity:.95;}' +
+      '#nxt-fb-status.err{color:#dc2626;opacity:.95;}' +
+      '.dark #nxt-fb-status.ok{color:#34d399;}' +
+      '.dark #nxt-fb-status.err{color:#f87171;}' +
+      // Reset
       '#nxt-rst{background:none;border:none;font-size:10px;color:rgba(0,0,0,0.38);' +
       'cursor:pointer;padding:0;text-align:left;}' +
       '.dark #nxt-rst{color:rgba(255,255,255,0.35);}' +
@@ -229,6 +268,72 @@ export function buildTweaksPanelScript(
         swCon.appendChild(sw);
       });
       panel.appendChild(swCon);
+    }
+
+    // ── Sprint 18Z — Feedback section ──
+    if (FB_ON) {
+      var fbLbl = document.createElement('div');
+      fbLbl.id = 'nxt-fb-lbl';
+      fbLbl.textContent = 'Send notes to designer';
+      panel.appendChild(fbLbl);
+
+      var ta = document.createElement('textarea');
+      ta.id = 'nxt-fb-ta';
+      ta.placeholder = "What's working? What's not? Anything to tweak…";
+      ta.maxLength = 2000;
+      panel.appendChild(ta);
+
+      var fbRow = document.createElement('div');
+      fbRow.id = 'nxt-fb-row';
+      var send = document.createElement('button');
+      send.id = 'nxt-fb-send';
+      send.textContent = 'Send';
+      send.type = 'button';
+      var status = document.createElement('span');
+      status.id = 'nxt-fb-status';
+      status.textContent = '';
+      fbRow.appendChild(send);
+      fbRow.appendChild(status);
+      panel.appendChild(fbRow);
+
+      send.onclick = function() {
+        var notes = (ta.value || '').trim();
+        if (!notes) {
+          status.className = 'err';
+          status.textContent = 'Type a note first';
+          return;
+        }
+        send.disabled = true;
+        status.className = '';
+        status.textContent = 'Sending…';
+        var payload = { notes: notes };
+        if (FB_ITER !== null) payload.iteration_number = FB_ITER;
+        fetch(FB_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function(r) {
+          if (r.ok) {
+            ta.value = '';
+            status.className = 'ok';
+            status.textContent = 'Sent ✓';
+            setTimeout(function() { status.textContent = ''; status.className = ''; }, 4000);
+          } else {
+            return r.json().then(function(j) {
+              status.className = 'err';
+              status.textContent = (j && j.error) ? j.error : ('Error ' + r.status);
+            }).catch(function() {
+              status.className = 'err';
+              status.textContent = 'Error ' + r.status;
+            });
+          }
+        }).catch(function() {
+          status.className = 'err';
+          status.textContent = 'Network error';
+        }).then(function() {
+          send.disabled = false;
+        });
+      };
     }
 
     // ── Reset button ──
