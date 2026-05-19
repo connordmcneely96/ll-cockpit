@@ -877,7 +877,7 @@ export async function finalizeIterationIfReady(
 
   return {
     finalized: true,
-    repo_url: previewUrl,
+    preview_url: previewUrl,
     critic_score: criticScore ?? undefined,
     critic_pass: criticPass ?? undefined,
   }
