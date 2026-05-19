@@ -1,8 +1,11 @@
-# GitHub Actions — Cloudflare deploy on push to main
+# GitHub Actions — Cloudflare deploy on push to main, build verification on PRs
 #
-# Triggers on every push to `main`. Writes NEXT_PUBLIC_* env vars to .env.production
-# (Next.js auto-loads this at build time), applies any pending D1 migrations, then
-# deploys the worker via `npm run deploy`.
+# Push to main: writes NEXT_PUBLIC_* env vars to .env.production (Next.js auto-loads
+# this at build time), applies any pending D1 migrations, then deploys the worker
+# via `npm run deploy`.
+#
+# Pull request to main: runs the OpenNext build only (no deploy, no D1 migrations,
+# no lockfile commit-back). Surfaces build failures before merge instead of after.
 #
 # Required GitHub repo secrets:
 #   - CLOUDFLARE_API_TOKEN            (Workers Scripts + KV + R2 + AI + Queues + Vectorize + D1 Edit + Account Settings:Read)
@@ -17,11 +20,13 @@ name: Deploy to Cloudflare
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-main
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || 'deploy-main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   deploy:
@@ -55,7 +60,7 @@ jobs:
           fi
 
       - name: Commit regenerated lockfile
-        if: env.LOCKFILE_REGENERATED == 'true'
+        if: github.event_name == 'push' && env.LOCKFILE_REGENERATED == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -84,21 +89,34 @@ jobs:
           fi
 
       - name: Apply D1 migrations (remote)
+        if: github.event_name != 'pull_request'
         run: npx wrangler d1 migrations apply ll-cockpit-db --remote
         continue-on-error: false
 
+      - name: Build (PR verification — no deploy)
+        if: github.event_name == 'pull_request'
+        run: npx --no @opennextjs/cloudflare build
+
       - name: Build + Deploy to Cloudflare Workers
+        if: github.event_name != 'pull_request'
         run: npm run deploy
 
       - name: Deploy summary
         if: always()
         run: |
-          echo "### Deploy summary" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "### PR Build Verification summary" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Deploy summary" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Event: \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Actor: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- Branch: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker URL: https://ll-cockpit.connorpattern.workers.dev" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "- Worker URL: https://ll-cockpit.connorpattern.workers.dev" >> $GITHUB_STEP_SUMMARY
+          fi
           if [ "${LOCKFILE_REGENERATED}" = "true" ]; then
-            echo "- ⚠ Lockfile was out of sync and has been regenerated + committed" >> $GITHUB_STEP_SUMMARY
+            echo "- ⚠ Lockfile was out of sync and has been regenerated" >> $GITHUB_STEP_SUMMARY
           fi
