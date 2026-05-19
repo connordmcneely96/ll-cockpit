@@ -28,7 +28,7 @@
  *   - Emits all palette values as CSS custom properties on :root (light mode)
  *   - Emits :root.dark {} overrides derived from palette_dark tokens
  *     (or auto-derived by deriveDarkPalette() when absent)
- *   - Sets tailwind.config darkMode:'class' so all bg-*/text-*/border-* utilities
+ *   - Sets tailwind.config darkMode:'class' so all bg-*, text-*, and border-* utilities
  *     respond to the .dark class on <html>
  *   - Tailwind color values reference var(--*) custom properties so toggling
  *     the CSS vars is sufficient for full dark mode
@@ -877,7 +877,7 @@ export async function finalizeIterationIfReady(
 
   return {
     finalized: true,
-    preview_url: previewUrl,
+    repo_url: previewUrl,
     critic_score: criticScore ?? undefined,
     critic_pass: criticPass ?? undefined,
   }
