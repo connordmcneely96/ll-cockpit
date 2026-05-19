@@ -1,5 +1,5 @@
 /**
- * POST /api/design/briefs — Sprint 16 → 18E (attached design systems)
+ * POST /api/design/briefs — Sprint 16 → 18E (attached design systems) → 18Y-Followup (skills opt-in)
  * GET /api/design/briefs — list user's briefs
  *
  * Sprint 18E addition: brief input may include attached_design_system_slug.
@@ -8,6 +8,12 @@
  * attached system's tokens verbatim.
  *
  * Sprint 18G: maxParallel: 4 (was 8) for rate-limit safety.
+ *
+ * Sprint 18Y-Followup (May 19 2026): POST now reads `body.skills?: string[]`
+ * and persists to design_briefs.skills as a JSON-stringified array. Validated
+ * against KNOWN_SKILLS allowlist so typos return 400 at the API boundary
+ * rather than failing silently in renderFullHtml's skill check. Empty/missing
+ * arrays write NULL (semantically identical, cleaner storage).
  *
  * Accepts auth via:
  * - Authorization: Bearer {token} (from design Worker cross-calls)
@@ -28,6 +34,17 @@ interface DesignBriefInputExt extends DesignBriefInput {
   attached_design_system_slug?: string
 }
 
+// Sprint 18Y-Followup — Canonical allowlist of skill slugs that the rendered
+// HTML knows how to inject. Adding a new skill: (1) implement the injection
+// inside renderFullHtml in src/lib/design/pipeline.ts, (2) add the slug here,
+// (3) optionally surface a chip in DesignClient.tsx.
+//
+// IMPORTANT: the strings here must EXACTLY match the substring checks done
+// inside renderFullHtml (currently `skills.includes('tweaks-panel')`).
+// Drift between this allowlist and renderFullHtml = silent panel-stripping.
+export const KNOWN_SKILLS = ['tweaks-panel'] as const
+export type KnownSkill = (typeof KNOWN_SKILLS)[number]
+
 async function getUserFromRequest(req: NextRequest): Promise<User | null> {
   const authHeader = req.headers.get('authorization')
   if (authHeader?.startsWith('Bearer ')) {
@@ -39,6 +56,34 @@ async function getUserFromRequest(req: NextRequest): Promise<User | null> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   return user ?? null
+}
+
+// Sprint 18Y-Followup — Validate body.skills against KNOWN_SKILLS allowlist.
+// Returns the canonical JSON-stringified array (or null for empty/missing)
+// and an error string on rejection. Single source of truth — both POST and
+// PATCH consume this so the validation contract stays uniform.
+export function validateSkills(input: unknown):
+  | { ok: true; value: string | null }
+  | { ok: false; error: string } {
+  if (input === undefined || input === null) return { ok: true, value: null }
+  if (!Array.isArray(input)) {
+    return { ok: false, error: 'skills must be an array of strings or omitted' }
+  }
+  if (input.length === 0) return { ok: true, value: null }
+  for (const item of input) {
+    if (typeof item !== 'string') {
+      return { ok: false, error: 'every entry in skills must be a string' }
+    }
+    if (!(KNOWN_SKILLS as readonly string[]).includes(item)) {
+      return {
+        ok: false,
+        error: `unknown skill "${item}". Known skills: ${KNOWN_SKILLS.join(', ')}`,
+      }
+    }
+  }
+  // Dedupe — set semantics, ordering preserved by first-occurrence
+  const unique = Array.from(new Set(input as string[]))
+  return { ok: true, value: JSON.stringify(unique) }
 }
 
 export async function POST(req: NextRequest) {
@@ -62,6 +107,12 @@ export async function POST(req: NextRequest) {
     if (!body[f] || (typeof body[f] === 'string' && !(body[f] as string).trim())) {
       return new Response(JSON.stringify({ error: `${f} is required` }), { status: 400 })
     }
+  }
+
+  // Sprint 18Y-Followup — validate skills BEFORE doing any expensive work
+  const skillsCheck = validateSkills(body.skills)
+  if (!skillsCheck.ok) {
+    return new Response(JSON.stringify({ error: skillsCheck.error }), { status: 400 })
   }
 
   const env = getBindings()
@@ -95,8 +146,8 @@ export async function POST(req: NextRequest) {
     `INSERT INTO design_briefs
      (id, user_id, client_name, business_description, target_audience, mood_tone,
       style_references, must_have_sections, brand_colors, constraints,
-      status, current_iteration, attached_design_system_slug, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'building', 1, ?, ?, ?)`,
+      status, current_iteration, attached_design_system_slug, skills, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'building', 1, ?, ?, ?, ?)`,
   ).bind(
     briefId, user.id, body.client_name, body.business_description,
     body.target_audience, body.mood_tone,
@@ -105,6 +156,7 @@ export async function POST(req: NextRequest) {
     body.brand_colors ?? null,
     body.constraints ?? null,
     body.attached_design_system_slug ?? null,
+    skillsCheck.value,
     now, now,
   ).run()
 
@@ -145,6 +197,7 @@ export async function POST(req: NextRequest) {
         slug: attachedSystem.slug,
         name: attachedSystem.name,
       } : null,
+      skills: skillsCheck.value ? JSON.parse(skillsCheck.value) : [],
       summary: decomposition.summary,
       subtask_count: decomposition.subtasks.length,
       sections_detected: decomposition.subtasks.filter((s) => s.agent === 'COMPOSER').length,
