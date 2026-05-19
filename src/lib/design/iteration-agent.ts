@@ -1,5 +1,5 @@
 /**
- * Design iteration agent — Sprint 16 v0.5.0 (live streaming) + Sprint 18N (scroll animations + typography debt fix).
+ * Design iteration agent — Sprint 16 v0.5.0 (live streaming) + Sprint 18N (scroll animations + typography debt fix) + Sprint 16 v0.6 (StreamEvent taxonomy expansion, 529 backoff, design_commit + verify_started/done emit threading).
  *
  * v0.4.0: chat POST returned turn_messages array (all-at-once).
  *
@@ -22,6 +22,17 @@
  * trio when present so iteration-time COMPOSER (regenerate_section,
  * add_section) emits font-serif / font-sans / font-mono Tailwind classes
  * that match the initial-build output.
+ *
+ * Sprint 16 v0.6:
+ * - StreamEvent union expanded with file_created, file_edited,
+ *   design_commit, verify_started, verify_done, retry_attempt.
+ * - fetchWithRetry wraps all Anthropic calls in runIterationAgent;
+ *   retries up to 4× on HTTP 529 with 1/2/4/8s delays, emitting
+ *   retry_attempt before each wait.
+ * - executeIterationTool accepts optional emit and threads it to
+ *   runUpdateDesignTokens (emits design_commit after token DB write)
+ *   and runCritique (emits verify_started before fetch,
+ *   verify_done after parse).
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -187,14 +198,16 @@ interface ToolDeps {
   briefId: string
 }
 
-export async function executeIterationTool(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
+// Sprint 16 v0.6 — emit is threaded to runUpdateDesignTokens and runCritique
+// so those tools can fire design_commit / verify_started / verify_done events.
+export async function executeIterationTool(toolUse: DesignAssistantToolUse, deps: ToolDeps, emit?: EmitFn): Promise<DesignToolResult> {
   try {
     switch (toolUse.name) {
-      case 'update_design_tokens': return await runUpdateDesignTokens(toolUse, deps)
+      case 'update_design_tokens': return await runUpdateDesignTokens(toolUse, deps, emit)
       case 'apply_token_to_html': return await runApplyTokenToHtml(toolUse, deps)
       case 'regenerate_section': return await runRegenerateSection(toolUse, deps)
       case 'save_iteration': return await runSaveIteration(toolUse, deps)
-      case 'critique': return await runCritique(toolUse, deps)
+      case 'critique': return await runCritique(toolUse, deps, emit)
       case 'assemble_html': return await runAssembleHtml(toolUse, deps)
       case 'add_section': return await runAddSection(toolUse, deps)
       case 'remove_section': return await runRemoveSection(toolUse, deps)
@@ -222,7 +235,9 @@ async function rerenderAndPersist(deps: ToolDeps, iter: DesignIterationRow, toke
   return { ok: true, sections: sections.length, htmlLength: newHtml.length, r2Key }
 }
 
-async function runUpdateDesignTokens(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
+// Sprint 16 v0.6 — emits design_commit after the token DB write so the
+// ChatPane can render a DesignCommitCard with the live palette/font snapshot.
+async function runUpdateDesignTokens(toolUse: DesignAssistantToolUse, deps: ToolDeps, emit?: EmitFn): Promise<DesignToolResult> {
   const input = toolUse.input as { patch?: Partial<DesignTokens>; rationale?: string }
   if (!input.patch || typeof input.patch !== 'object') return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'patch must be an object.' }), is_error: true }
   const unsafePaths = findUnsafePaths(input.patch as Record<string, unknown>)
@@ -233,6 +248,19 @@ async function runUpdateDesignTokens(toolUse: DesignAssistantToolUse, deps: Tool
   const merged = deepMergeJson(currentTokens, input.patch) as DesignTokens
   if (input.rationale) merged.rationale = input.rationale
   await deps.env.DB.prepare(`UPDATE design_iterations SET design_tokens_json = ? WHERE id = ?`).bind(JSON.stringify(merged), iter.id).run()
+  // Sprint 16 v0.6 — emit design_commit so the ChatPane can show a token snapshot card.
+  await emit?.({
+    type: 'design_commit',
+    font_type: merged.typography.display_font,
+    palette: [
+      merged.palette.primary,
+      merged.palette.accent,
+      merged.palette.background,
+      merged.palette.text_primary,
+    ],
+    accent: merged.palette.accent,
+    rhythm: (merged.spacing as { section_padding?: string } | undefined)?.section_padding ?? 'default',
+  })
   const rerender = await rerenderAndPersist(deps, iter, merged)
   return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, updated_keys: Object.keys(input.patch), tokens: merged, rerender: rerender.ok ? { ok: true, sections_re_rendered: rerender.sections, r2_key: rerender.r2Key } : { ok: false, reason: rerender.reason }, note: rerender.ok ? 'Tokens patched and page re-rendered.' : `Tokens patched but auto re-render failed (${rerender.reason}).` }) }
 }
@@ -361,12 +389,7 @@ function buildComposerPrompt(args: { sectionSlug: string; sectionName: string; i
   if (tokens.typography.font_sans) typographyLines.push(`  sans font (use via font-sans class — body running text, overrides body_font): ${tokens.typography.font_sans}`)
   if (tokens.typography.font_mono) typographyLines.push(`  mono font (use via font-mono class — code snippets, technical annotations): ${tokens.typography.font_mono}`)
 
-  const tokensBlock = `DESIGN TOKENS:
-  primary: ${tokens.palette.primary}
-  accent: ${tokens.palette.accent}
-  background: ${tokens.palette.background}
-  text: ${tokens.palette.text_primary}
-${typographyLines.join('\n')}`
+  const tokensBlock = `DESIGN TOKENS:\n  primary: ${tokens.palette.primary}\n  accent: ${tokens.palette.accent}\n  background: ${tokens.palette.background}\n  text: ${tokens.palette.text_primary}\n${typographyLines.join('\n')}`
 
   return `SECTION-ONLY MODE. ${isNewSection ? 'Compose' : 'Regenerate'} ONLY the <section id="${sectionSlug}"> markup for the "${sectionName}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.\n\n${isNewSection ? 'SECTION SPEC' : 'REFINEMENT INSTRUCTION'}:\n${instruction}\n${structureBlock}${referenceBlock}\n${tokensBlock}\n\nBRIEF CONTEXT:\n  Brand: ${brief.client_name}\n  Business: ${brief.business_description.slice(0, 240)}\n  Audience: ${brief.target_audience}\n  Tone: ${brief.mood_tone}\n\n${headingRule}\n\nACCESSIBILITY: CTA contrast ≥ 4.5:1. Use bg-primary text-white OR bg-white text-primary border-2 border-primary. Forms: aria-required. SVG illustrations: aria-hidden="true" or with figcaption. Don't add custom focus:ring on inputs.\n\n${buildScrollAnimationsBlock()}\n\nINLINE STYLES ARE FINE FOR GRADIENTS AND ONE-OFF EFFECTS.\n\nOUTPUT FORMAT (STRICT):\n- Output ONLY the <section> markup. No preamble. No code fences.\n- First character MUST be <. Last character MUST be >.\n\nProduce production-quality, responsive, accessible markup with REAL copy.`
 }
@@ -397,10 +420,15 @@ async function runSaveIteration(toolUse: DesignAssistantToolUse, deps: ToolDeps)
   return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, new_iteration_id: newId, iteration_number: nextNumber, note: 'New iteration committed.' }) }
 }
 
-async function runCritique(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
+// Sprint 16 v0.6 — emits verify_started before the CRITIC fetch and
+// verify_done after the score is parsed, so ChatPane can show a live
+// VerifyCard that transitions from pending to scored.
+async function runCritique(toolUse: DesignAssistantToolUse, deps: ToolDeps, emit?: EmitFn): Promise<DesignToolResult> {
   const input = toolUse.input as { focus_areas?: string[] }
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter || !iter.page_html) return missingIteration(toolUse)
+  // Sprint 16 v0.6 — emit verify_started so ChatPane can show VerifyCard in pending state.
+  await emit?.({ type: 'verify_started', focus_areas: input.focus_areas })
   const focus = input.focus_areas?.length ? `Focus areas: ${input.focus_areas.join(', ')}.` : ''
   const body = JSON.stringify({ model: MODEL_ID, max_tokens: 1024, system: 'You are CRITIC, a design quality reviewer. Score 0–100. Return STRICT JSON: {"score": number, "verdict": "PASS"|"FAIL", "strengths": string[], "issues": string[], "suggestions": string[]}. PASS ≥ 80.', messages: [{ role: 'user', content: `${focus}\n\nHTML (truncated to 12000 chars):\n\n${iter.page_html.slice(0, 12000)}` }] })
   const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': deps.apiKey, 'anthropic-version': '2023-06-01' }, body })
@@ -409,7 +437,17 @@ async function runCritique(toolUse: DesignAssistantToolUse, deps: ToolDeps): Pro
   const data = (await res.json()) as AR
   const text = (data.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : '')).join('')
   const parsed = safeParse<{ score?: number; verdict?: string }>(text)
-  if (parsed?.score !== undefined) await deps.env.DB.prepare(`UPDATE design_iterations SET critic_score = ?, critic_feedback = ? WHERE id = ?`).bind(parsed.score, text, iter.id).run()
+  if (parsed?.score !== undefined) {
+    await deps.env.DB.prepare(`UPDATE design_iterations SET critic_score = ?, critic_feedback = ? WHERE id = ?`).bind(parsed.score, text, iter.id).run()
+    // Sprint 16 v0.6 — emit verify_done so ChatPane transitions VerifyCard from pending to scored.
+    await emit?.({
+      type: 'verify_done',
+      score: parsed.score,
+      verdict: (parsed.verdict === 'PASS' || parsed.verdict === 'FAIL')
+        ? (parsed.verdict as 'PASS' | 'FAIL')
+        : parsed.score >= 80 ? 'PASS' : 'FAIL',
+    })
+  }
   return { type: 'tool_result', tool_use_id: toolUse.id, content: text }
 }
 
@@ -426,6 +464,9 @@ export interface ChatTurnMessage {
   created_at: number
 }
 
+// Sprint 16 v0.6 — expanded with file_created, file_edited, design_commit,
+// verify_started, verify_done, retry_attempt. The ChatPane mirrors this
+// union in its own local StreamEvent type.
 export type StreamEvent =
   | { type: 'turn_start'; turn_index: number }
   | { type: 'agent_text'; turn_index: number; text: string }
@@ -442,6 +483,12 @@ export type StreamEvent =
       content: string
       is_error: boolean
     }
+  | { type: 'file_created'; filename: string; file_type: string }
+  | { type: 'file_edited'; filename: string }
+  | { type: 'design_commit'; font_type: string; palette: string[]; accent: string; rhythm: string }
+  | { type: 'verify_started'; focus_areas?: string[] }
+  | { type: 'verify_done'; score: number; verdict: 'PASS' | 'FAIL' }
+  | { type: 'retry_attempt'; attempt: number; max_attempts: number; delay_ms: number }
   | {
       type: 'done'
       final_text: string
@@ -464,6 +511,22 @@ export interface IterationAgentResult {
   latencyMs: number
   iterationIdsTouched: string[]
   turnMessages: ChatTurnMessage[]
+}
+
+// Sprint 16 v0.6 — wraps the Anthropic fetch with 529-aware exponential
+// backoff. Retries up to 4 times (1/2/4/8s delays). CF Workers compatible:
+// uses new Promise<void>(r => setTimeout(r, ms)) rather than Node's timers.
+async function fetchWithRetry(url: string, init: RequestInit, emit?: EmitFn): Promise<Response> {
+  const delays = [1000, 2000, 4000, 8000]
+  let attempt = 0
+  while (true) {
+    const res = await fetch(url, init)
+    if (res.status !== 529 || attempt >= delays.length) return res
+    attempt += 1
+    const delayMs = delays[attempt - 1]
+    await emit?.({ type: 'retry_attempt', attempt, max_attempts: 4, delay_ms: delayMs })
+    await new Promise<void>((r) => setTimeout(r, delayMs))
+  }
 }
 
 export async function runIterationAgent(args: {
@@ -510,11 +573,13 @@ export async function runIterationAgent(args: {
   while (toolHops < MAX_TOOL_HOPS) {
     await emit({ type: 'turn_start', turn_index: turnIndex })
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    // Sprint 16 v0.6 — use fetchWithRetry so 529 Overloaded responses
+    // are retried automatically, with retry_attempt events emitted to the UI.
+    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: MODEL_ID, max_tokens: MAX_TOKENS_PER_CALL, system, tools, messages }),
-    })
+    }, emit)
     if (!res.ok) {
       const err = await res.text()
       throw new Error(`Anthropic API error ${res.status}: ${err.slice(0, 400)}`)
@@ -581,7 +646,9 @@ export async function runIterationAgent(args: {
 
     const results: DesignToolResult[] = []
     for (const toolUse of toolUses) {
-      const result = await executeIterationTool(toolUse, { env, apiKey, userId, briefId: brief.id })
+      // Sprint 16 v0.6 — pass emit so runUpdateDesignTokens and runCritique
+      // can fire their respective semantic events.
+      const result = await executeIterationTool(toolUse, { env, apiKey, userId, briefId: brief.id }, emit)
       results.push(result)
       await emit({
         type: 'tool_result',
