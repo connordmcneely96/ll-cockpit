@@ -66,9 +66,20 @@ import {
 } from './tweaks-panel'
 
 // Sprint 18Z — Cockpit API base URL where the feedback POST is routed.
-// Hardcoded for v1; promote to env var (env.COCKPIT_BASE_URL) when needed
-// for staging environments.
-export const COCKPIT_BASE_URL = 'https://cockpit.leadershiplegacydigital.com'
+//
+// VERIFIED LIVE 2026-05-19 via browser DevTools Network tab. The original
+// Sprint 18Z bake-in used `cockpit.leadershiplegacydigital.com` (per the
+// project memory at the time), which did NOT resolve in DNS — every feedback
+// POST failed with `net::ERR_NAME_NOT_RESOLVED`. The canonical worker
+// hostname is the workers.dev domain below; the custom subdomain may be
+// planned but is not currently wired up.
+//
+// IF you later wire up a custom domain (e.g. cockpit.leadershiplegacydigital.com):
+//   1. confirm DNS resolves via `dig` or browser before changing this constant
+//   2. confirm the worker is bound to that hostname via wrangler routes
+//   3. test a real Send-notes click before merging
+// Don't trust documentation that says "is deployed at X" — test reachability.
+export const COCKPIT_BASE_URL = 'https://ll-cockpit.connorpattern.workers.dev'
 
 // ──────────────────────────────────────────────────────────────────────
 // SECTION CLASSIFICATION — Sprint 18F cost optimization
