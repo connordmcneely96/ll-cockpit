@@ -33,6 +33,17 @@
  *   runUpdateDesignTokens (emits design_commit after token DB write)
  *   and runCritique (emits verify_started before fetch,
  *   verify_done after parse).
+ *
+ * Sprint 18Y-bugfix: rerenderAndPersist now SELECTs `skills` from
+ * design_briefs and threads it through to renderFullHtml so the
+ * Tweaks Panel IIFE is preserved when iteration tools re-render the
+ * page. Previously the helper SELECTed only client_name +
+ * business_description and the call to renderFullHtml defaulted
+ * skills=[], silently stripping the panel from any rerender driven
+ * by update_design_tokens or apply_token_to_html. Mirrors the pattern
+ * already in executeAssembler (pipeline.ts). The other re-rendering
+ * iteration tools were already correct — they route through
+ * executeAssembler.
  */
 
 import type { D1Database } from '@cloudflare/workers-types'
@@ -223,12 +234,16 @@ export async function executeIterationTool(toolUse: DesignAssistantToolUse, deps
 
 async function rerenderAndPersist(deps: ToolDeps, iter: DesignIterationRow, tokens: DesignTokens): Promise<{ ok: true; sections: number; htmlLength: number; r2Key: string } | { ok: false; reason: string }> {
   if (!iter.orchestrator_run_id) return { ok: false, reason: 'no orchestrator_run_id on iteration' }
-  const brief = await deps.env.DB.prepare(`SELECT client_name, business_description FROM design_briefs WHERE id = ? AND user_id = ?`).bind(deps.briefId, deps.userId).first<{ client_name: string; business_description: string }>()
+  // Sprint 18Y-bugfix — include skills so renderFullHtml preserves the Tweaks Panel IIFE.
+  const brief = await deps.env.DB.prepare(`SELECT client_name, business_description, skills FROM design_briefs WHERE id = ? AND user_id = ?`).bind(deps.briefId, deps.userId).first<{ client_name: string; business_description: string; skills: string | null }>()
   if (!brief) return { ok: false, reason: 'brief not found' }
+  const skills: string[] = brief.skills
+    ? (() => { try { return JSON.parse(brief.skills) as string[] } catch { return [] } })()
+    : []
   const rows = await deps.env.DB.prepare(`SELECT short_id, title, output FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done' AND output IS NOT NULL ORDER BY short_id ASC`).bind(iter.orchestrator_run_id, deps.userId).all<{ short_id: string; title: string; output: string }>()
   if (!rows.results || rows.results.length === 0) return { ok: false, reason: 'no COMPOSER section outputs found' }
   const sections: DesignSection[] = rows.results.map((row) => { const { name, slug } = slugFromTitle(row.title); return { name, slug, html: extractSectionHtml(row.output) } })
-  const newHtml = renderFullHtml({ brief, tokens, sections })
+  const newHtml = renderFullHtml({ brief, tokens, sections, skills })
   await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(newHtml, iter.id).run()
   const { r2Key } = await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, newHtml)
   if (!iter.preview_r2_key) await deps.env.DB.prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`).bind(r2Key, iter.id).run()
