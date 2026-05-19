@@ -1,0 +1,27 @@
+-- Sprint 18Y — add `skills` column to design_briefs
+--
+-- The Tweaks Panel feature (PR #69) and its iteration-agent counterpart
+-- (PR #72) both SELECT `skills` from design_briefs and pass the parsed
+-- JSON array through to renderFullHtml. The column was never added in
+-- a migration when PR #69 shipped, which caused executeAssembler to
+-- fail with SQLITE_ERROR on the first fresh brief tonight (May 19, 2026).
+--
+-- The column was applied directly to production D1 on May 19 at 05:32 UTC
+-- via the Cloudflare MCP `d1_database_query` tool to unblock the failed
+-- assembler run. This file records that change in the migration history.
+-- The corresponding d1_migrations row was inserted at the same time so
+-- this file is a no-op when re-run against production (wrangler will
+-- skip it).
+--
+-- Column semantics: JSON-encoded array of skill slugs. Currently the
+-- only known skill is 'tweaks-panel' (runtime dark mode + accent picker).
+-- NULL is treated as empty array by both consumer code paths
+-- (executeAssembler in pipeline.ts and rerenderAndPersist in
+-- iteration-agent.ts), so existing rows do not require backfill.
+--
+-- Note: skills (plural, this column) is conceptually distinct from
+-- skill_hint (singular TEXT, added in migration 0012). skill_hint is a
+-- prompt-shaping hint for DESIGNER; skills enables runtime skill panels.
+-- They are not aliases.
+
+ALTER TABLE design_briefs ADD COLUMN skills TEXT;
