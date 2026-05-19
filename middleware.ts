@@ -30,9 +30,18 @@ export async function middleware(request: NextRequest) {
 
   // Public API routes — no auth required
   // PaaS note: replace with API key validation (x-api-key header) before multi-tenant launch
+  //
+  // Sprint 18Z bugfix: the feedback POST endpoint is intentionally public —
+  // anyone with a brief's preview URL submits notes from the runtime Tweaks
+  // Panel without authenticating. Without this exception, the middleware
+  // returned a 307 redirect to /login on the OPTIONS preflight (or the POST
+  // itself), which the browser surfaced as "Network error" in the panel UI.
+  // Pattern: /api/design/briefs/{uuid}/feedback — regex anchors to exactly
+  // that shape so adjacent routes still require auth.
   const isPublicApi =
     pathname === '/api/health' ||
-    pathname === '/api/knowledge'
+    pathname === '/api/knowledge' ||
+    /^\/api\/design\/briefs\/[^/]+\/feedback$/.test(pathname)
 
   if (!user && !isAuthPath && !isPublicApi) {
     const loginUrl = new URL('/login', request.url)
