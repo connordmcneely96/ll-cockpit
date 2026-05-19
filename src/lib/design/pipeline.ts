@@ -1,5 +1,5 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F → Sprint 18E → Sprint 18N → Sprint 18Y.
+ * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F → Sprint 18E → Sprint 18N → Sprint 18Y → Sprint 18Z.
  *
  * Per-section architecture:
  *   buildDesignBuildDAG(brief, iter, feedback, attachedSystem?) → DecompositionResult
@@ -36,6 +36,12 @@
  *     skills array includes 'tweaks-panel'
  *   - executeAssembler now SELECTs skills from design_briefs and passes the
  *     parsed array through to renderFullHtml
+ *
+ * Sprint 18Z — renderFullHtml now accepts an optional feedbackContext
+ * { briefId, iterationNumber } that wires the Tweaks Panel's "Send notes to
+ * designer" feature. When omitted, the panel renders as the Sprint 18Y v1
+ * (no feedback section). The feedback API URL is constructed from
+ * COCKPIT_BASE_URL (hardcoded for v1; env-driven later).
  */
 
 import type {
@@ -58,6 +64,11 @@ import {
   deriveDarkPalette,
   generateAccentAlternates,
 } from './tweaks-panel'
+
+// Sprint 18Z — Cockpit API base URL where the feedback POST is routed.
+// Hardcoded for v1; promote to env var (env.COCKPIT_BASE_URL) when needed
+// for staging environments.
+export const COCKPIT_BASE_URL = 'https://cockpit.leadershiplegacydigital.com'
 
 // ──────────────────────────────────────────────────────────────────────
 // SECTION CLASSIFICATION — Sprint 18F cost optimization
@@ -396,21 +407,36 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Sprint 18Y — renderFullHtml now accepts an optional `skills` array.
+ * Sprint 18Z — feedbackContext threaded through so the Tweaks Panel can offer
+ * a "Send notes to designer" form. Optional — when omitted, the panel renders
+ * as Sprint 18Y v1 (no feedback section).
+ */
+export interface FeedbackContext {
+  briefId: string
+  iterationNumber: number | null
+}
+
+/**
+ * Sprint 18Y — renderFullHtml accepts an optional `skills` array.
  * When skills includes 'tweaks-panel', the TweaksPanel IIFE is injected
  * before </body>. CSS custom properties on :root / :root.dark enable
  * runtime dark mode and accent swapping without regeneration.
+ *
+ * Sprint 18Z — optional feedbackContext enables the panel's "Send notes
+ * to designer" section. When omitted, the panel renders the Sprint 18Y v1.
  */
 export function renderFullHtml({
   brief,
   tokens,
   sections,
   skills = [],
+  feedbackContext,
 }: {
   brief: { client_name: string; business_description: string }
   tokens: DesignTokens
   sections: DesignSection[]
   skills?: string[]
+  feedbackContext?: FeedbackContext
 }): string {
   const p = tokens.palette
   const t = tokens.typography
@@ -426,9 +452,20 @@ export function renderFullHtml({
   // Sprint 18Y — resolve accent alternates (from tokens or derive from accent colour)
   const accents = tokens.palette_accent_alternates ?? generateAccentAlternates(p.accent)
 
-  // Sprint 18Y — inject TweaksPanel when skill is active
+  // Sprint 18Y → 18Z — inject TweaksPanel when skill is active.
+  // 18Z: thread feedbackContext into the panel so the "Send notes to designer"
+  // section can POST to the feedback endpoint. When feedbackContext is absent
+  // (e.g. legacy callers, internal previews without a known brief id), the
+  // panel falls back to the Sprint 18Y v1 layout (no feedback section).
+  const feedbackApiUrl = feedbackContext
+    ? `${COCKPIT_BASE_URL}/api/design/briefs/${feedbackContext.briefId}/feedback`
+    : null
   const tweaksPanelHtml = skills.includes('tweaks-panel')
-    ? buildTweaksPanelScript(accents)
+    ? buildTweaksPanelScript({
+        accentAlternates: accents,
+        feedbackApiUrl,
+        iterationNumber: feedbackContext?.iterationNumber ?? null,
+      })
     : ''
 
   const navLinks = sections
@@ -601,10 +638,12 @@ export async function executeAssembler(
 
   // Sprint 18Y — fetch skills alongside brief metadata so TweaksPanel is
   // injected into the HTML when the brief has 'tweaks-panel' in its skills.
+  // Sprint 18Z — also fetch brief.id and current_iteration so we can build a
+  // feedbackContext for the TweaksPanel's "Send notes to designer" section.
   const brief = await env.DB
-    .prepare(`SELECT client_name, business_description, skills FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
+    .prepare(`SELECT id, client_name, business_description, skills, current_iteration FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
     .bind(pipelineRunId, userId)
-    .first<{ client_name: string; business_description: string; skills: string | null }>()
+    .first<{ id: string; client_name: string; business_description: string; skills: string | null; current_iteration: number | null }>()
 
   if (!brief) throw new Error('ASSEMBLER: brief metadata not found for this run')
 
@@ -612,7 +651,15 @@ export async function executeAssembler(
     ? (() => { try { return JSON.parse(brief.skills) as string[] } catch { return [] } })()
     : []
 
-  const html = renderFullHtml({ brief, tokens: designTokens, sections, skills })
+  // Sprint 18Z — build the feedbackContext now that we have brief.id and
+  // current_iteration. Even if skills doesn't include tweaks-panel, this is
+  // a cheap no-op inside renderFullHtml.
+  const feedbackContext: FeedbackContext = {
+    briefId: brief.id,
+    iterationNumber: brief.current_iteration ?? null,
+  }
+
+  const html = renderFullHtml({ brief, tokens: designTokens, sections, skills, feedbackContext })
   return { output: html, cost_usd: 0, tokens: 0 }
 }
 
