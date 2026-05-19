@@ -334,6 +334,8 @@ export interface DesignBriefInput {
   must_have_sections: string
   brand_colors?: string
   constraints?: string
+  // Sprint 18Y — runtime tweaks-panel skill opt-in
+  skills?: string[]
 }
 
 export interface DesignBriefRow {
@@ -355,6 +357,8 @@ export interface DesignBriefRow {
   pages_deployment_url: string | null
   total_cost_usd: number
   total_tokens: number
+  // Sprint 18Y — JSON array string e.g. '["tweaks-panel"]'; added in Sprint 18D migration
+  skills?: string | null
   created_at: number
   updated_at: number
 }
@@ -399,10 +403,6 @@ export interface DesignTokens {
     // richer font hierarchy beyond display/body, so e.g. Notion's
     // Inter + Lora + JetBrains Mono triad carries through to the rendered
     // HTML. All three optional — existing tokens stay backwards compatible.
-    // COMPOSER uses these via Tailwind classes:
-    //   font_serif  -> font-serif  (editorial headings, blockquotes, brand)
-    //   font_sans   -> font-sans   (overrides body_font if present, body running text)
-    //   font_mono   -> font-mono   (code snippets, technical annotations)
     font_serif?: string
     font_sans?: string
     font_mono?: string
@@ -417,6 +417,20 @@ export interface DesignTokens {
     easing?: string
   }
   rationale?: string
+  // Sprint 18Y — runtime dark mode + accent picker
+  // If DESIGNER includes these, they are used directly.
+  // If absent, deriveDarkPalette() and generateAccentAlternates() fill them in
+  // at render time inside renderFullHtml().
+  palette_dark?: {
+    primary: string
+    accent: string
+    background: string
+    surface?: string
+    text_primary: string
+    text_secondary?: string
+    border?: string
+  }
+  palette_accent_alternates?: Array<{ name: string; hex: string }>
 }
 
 export interface DesignSection {

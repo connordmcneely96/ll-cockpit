@@ -1,5 +1,5 @@
 /**
- * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F → Sprint 18E → Sprint 18N (scroll animations + typography debt fix).
+ * Design Build pipeline helpers — Sprint 16 v0.2.1 → Sprint 18F → Sprint 18E → Sprint 18N → Sprint 18Y.
  *
  * Per-section architecture:
  *   buildDesignBuildDAG(brief, iter, feedback, attachedSystem?) → DecompositionResult
@@ -10,27 +10,32 @@
  *     - st_N+2: ASSEMBLER (deterministic scaffold + stitch, $0 cost)
  *     - st_N+3: CRITIC (reviews assembled page)
  *
- * Sprint 18N — every rendered page now ships with the data-anim scroll animation
+ * Sprint 18N — every rendered page ships with the data-anim scroll animation
  * scaffold: ANIMATION_PRESETS_CSS in the head, INTERSECTION_OBSERVER_SCRIPT before
  * </body>. COMPOSER prompt teaches the agent to emit data-anim attributes
  * contextually, tone-matched to the brief.
  *
- * Sprint 18N typography debt fix (982e66e5) — renderFullHtml now supports an
- * optional font_serif/font_sans/font_mono triad in DesignTokens.typography.
- * Custom Google Fonts are deduped and loaded together, and the Tailwind theme
- * registers all four slots (display, sans, serif, mono) so COMPOSER can apply
- * `font-serif` to editorial headings, `font-mono` to code, etc. Existing
- * briefs with only display_font + body_font render identically.
+ * Sprint 18N typography debt fix (982e66e5) — renderFullHtml supports an optional
+ * font_serif/font_sans/font_mono triad in DesignTokens.typography.
  *
- * Sprint 18K (A2) — renderFullHtml now injects data-nexus-id="${section.slug}"
- * on the opening <section> tag of every COMPOSER output. This attribute is the
- * Phase B hook for the visual editor (Sprint 18U click-to-select) and for
- * SSE file_read events emitted by the design worker's files API.
+ * Sprint 18K (A2) — renderFullHtml injects data-nexus-id="${section.slug}"
+ * on the opening <section> tag of every COMPOSER output.
  *
- * Sprint 18K (A3 fix) — writeProjectFilesToR2 is now awaited in
- * finalizeIterationIfReady. The previous void/.catch() pattern works in Node.js
- * but CF Workers terminates execution when the Response is returned, abandoning
- * any unresolved promises before the R2 writes complete.
+ * Sprint 18K (A3 fix) — writeProjectFilesToR2 is awaited in
+ * finalizeIterationIfReady.
+ *
+ * Sprint 18Y — renderFullHtml now:
+ *   - Emits all palette values as CSS custom properties on :root (light mode)
+ *   - Emits :root.dark {} overrides derived from palette_dark tokens
+ *     (or auto-derived by deriveDarkPalette() when absent)
+ *   - Sets tailwind.config darkMode:'class' so all bg-*/text-*/border-* utilities
+ *     respond to the .dark class on <html>
+ *   - Tailwind color values reference var(--*) custom properties so toggling
+ *     the CSS vars is sufficient for full dark mode
+ *   - Conditionally injects TweaksPanel IIFE before </body> when the brief's
+ *     skills array includes 'tweaks-panel'
+ *   - executeAssembler now SELECTs skills from design_briefs and passes the
+ *     parsed array through to renderFullHtml
  */
 
 import type {
@@ -48,6 +53,11 @@ import {
   INTERSECTION_OBSERVER_SCRIPT,
   animationPresetsForPrompt,
 } from './animation-presets'
+import {
+  buildTweaksPanelScript,
+  deriveDarkPalette,
+  generateAccentAlternates,
+} from './tweaks-panel'
 
 // ──────────────────────────────────────────────────────────────────────
 // SECTION CLASSIFICATION — Sprint 18F cost optimization
@@ -385,14 +395,22 @@ function escapeHtml(s: string): string {
   )
 }
 
+/**
+ * Sprint 18Y — renderFullHtml now accepts an optional `skills` array.
+ * When skills includes 'tweaks-panel', the TweaksPanel IIFE is injected
+ * before </body>. CSS custom properties on :root / :root.dark enable
+ * runtime dark mode and accent swapping without regeneration.
+ */
 export function renderFullHtml({
   brief,
   tokens,
   sections,
+  skills = [],
 }: {
   brief: { client_name: string; business_description: string }
   tokens: DesignTokens
   sections: DesignSection[]
+  skills?: string[]
 }): string {
   const p = tokens.palette
   const t = tokens.typography
@@ -401,6 +419,17 @@ export function renderFullHtml({
   const sansFont = t.font_sans || bodyFont
   const serifFont = t.font_serif
   const monoFont = t.font_mono
+
+  // Sprint 18Y — resolve dark palette (from tokens if DESIGNER provided it, else derive)
+  const dark = tokens.palette_dark ?? deriveDarkPalette(p)
+
+  // Sprint 18Y — resolve accent alternates (from tokens or derive from accent colour)
+  const accents = tokens.palette_accent_alternates ?? generateAccentAlternates(p.accent)
+
+  // Sprint 18Y — inject TweaksPanel when skill is active
+  const tweaksPanelHtml = skills.includes('tweaks-panel')
+    ? buildTweaksPanelScript(accents)
+    : ''
 
   const navLinks = sections
     .map((s) => `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`)
@@ -440,17 +469,18 @@ export function renderFullHtml({
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           colors: {
-            primary: '${p.primary}',
-            'primary-dark': '${p.primary_dark ?? p.primary}',
-            'primary-light': '${p.primary_light ?? p.primary}',
-            accent: '${p.accent}',
-            surface: '${p.surface ?? '#ffffff'}',
-            'text-primary': '${p.text_primary}',
-            'text-secondary': '${p.text_secondary ?? '#475569'}',
-            border: '${p.border ?? '#e2e8f0'}',
+            primary:          'var(--primary)',
+            'primary-dark':   'var(--primary-dark)',
+            'primary-light':  'var(--primary-light)',
+            accent:           'var(--accent)',
+            surface:          'var(--surface)',
+            'text-primary':   'var(--text-primary)',
+            'text-secondary': 'var(--text-secondary)',
+            border:           'var(--border)',
           },
           fontFamily: {
             ${tailwindFontFamily},
@@ -460,10 +490,35 @@ export function renderFullHtml({
     }
   </script>
   <style>
-    body { font-family: '${sansFont}', system-ui, sans-serif; background: ${p.background}; color: ${p.text_primary}; }
+    /* Sprint 18Y — design token CSS custom properties (light mode defaults) */
+    :root {
+      --primary:        ${p.primary};
+      --primary-dark:   ${p.primary_dark ?? p.primary};
+      --primary-light:  ${p.primary_light ?? p.primary};
+      --accent:         ${p.accent};
+      --accent-color:   ${p.accent};
+      --background:     ${p.background};
+      --surface:        ${p.surface ?? '#ffffff'};
+      --text-primary:   ${p.text_primary};
+      --text-secondary: ${p.text_secondary ?? '#475569'};
+      --border:         ${p.border ?? '#e2e8f0'};
+    }
+    /* Sprint 18Y — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
+    :root.dark {
+      color-scheme: dark;
+      --primary:        ${dark.primary};
+      --accent:         ${dark.accent};
+      --accent-color:   ${dark.accent};
+      --background:     ${dark.background};
+      --surface:        ${dark.surface ?? '#1e293b'};
+      --text-primary:   ${dark.text_primary};
+      --text-secondary: ${dark.text_secondary ?? '#94a3b8'};
+      --border:         ${dark.border ?? '#334155'};
+    }
+    body { font-family: '${sansFont}', system-ui, sans-serif; background: var(--background); color: var(--text-primary); }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-    .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: ${p.primary}; color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
-    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid ${p.primary}; outline-offset: 2px; border-radius: 2px; }
+    .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: var(--primary); color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
     .mobile-menu { display: none; }
     .mobile-menu.open { display: block; }
 
@@ -504,6 +559,7 @@ export function renderFullHtml({
   <script>
 ${INTERSECTION_OBSERVER_SCRIPT}
   </script>
+  ${tweaksPanelHtml}
 </body>
 </html>`
 }
@@ -543,14 +599,20 @@ export async function executeAssembler(
   if (!designTokens) throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
   if (sections.length === 0) throw new Error('ASSEMBLER: no COMPOSER section outputs found')
 
+  // Sprint 18Y — fetch skills alongside brief metadata so TweaksPanel is
+  // injected into the HTML when the brief has 'tweaks-panel' in its skills.
   const brief = await env.DB
-    .prepare(`SELECT client_name, business_description FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
+    .prepare(`SELECT client_name, business_description, skills FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
     .bind(pipelineRunId, userId)
-    .first<{ client_name: string; business_description: string }>()
+    .first<{ client_name: string; business_description: string; skills: string | null }>()
 
   if (!brief) throw new Error('ASSEMBLER: brief metadata not found for this run')
 
-  const html = renderFullHtml({ brief, tokens: designTokens, sections })
+  const skills: string[] = brief.skills
+    ? (() => { try { return JSON.parse(brief.skills) as string[] } catch { return [] } })()
+    : []
+
+  const html = renderFullHtml({ brief, tokens: designTokens, sections, skills })
   return { output: html, cost_usd: 0, tokens: 0 }
 }
 
@@ -797,10 +859,8 @@ export async function finalizeIterationIfReady(
     .bind(previewUrl, totalCost, totalTokens, now, brief.id)
     .run()
 
-  // Sprint 18K (A3) — write individual project files to R2 + log to design_brief_files.
-  // Awaited (not fire-and-forget) because CF Workers terminates execution when the
-  // Response is returned, abandoning any unresolved void promises before R2 writes
-  // complete. Non-fatal: errors are caught and logged; preview is already saved above.
+  // Sprint 18K (A3) — awaited (not fire-and-forget) because CF Workers terminates
+  // execution when the Response is returned, abandoning unresolved void promises.
   try {
     await writeProjectFilesToR2(
       env,
