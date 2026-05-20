@@ -39,7 +39,7 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
   async init() {
     // Single-tenant: tenantId is always 'default'
     // Multi-tenant: swap this.props.tenantId in for all queries
-    const tenantId = this.props.tenantId ?? 'default';
+    const tenantId = this.props?.tenantId ?? 'default';
 
     // ─────────────────────────────────────────────
     // TOOL: search_knowledge
@@ -73,7 +73,7 @@ export class KnowledgeMCP extends McpAgent<Env, Record<string, never>, Props> {
         });
 
         const settled = await Promise.allSettled(
-          results.matches.map(async (match) => {
+          results.matches.map(async (match): Promise<Record<string, unknown> | null> => {
             const sepIdx = match.id.indexOf('::');
             if (sepIdx === -1) return null;
             const table = match.id.slice(0, sepIdx);
