@@ -1,0 +1,12 @@
+-- NEXUS Thompson Sampling + Agent Accountability Schema
+-- Sprint 123A — 17 new tables, additive (no existing tables dropped)
+-- Run: wrangler d1 execute ll-cockpit-db --file=migrations/0025_nexus_thompson_sampling.sql --remote
+-- See full schema: nexus_ts_schema.sql (downloaded artifact from 2026-05-23 session)
+-- Apply via: wrangler d1 migrations apply ll-cockpit-db --remote
+-- Full file in project knowledge: Sprint 123A description
+
+-- This file intentionally references the downloaded nexus_ts_schema.sql.
+-- Copy its contents here after downloading and verifying via:
+--   ls ~\Downloads | Where-Object Name -Match 'nexus_ts_schema'
+-- Then apply:
+--   wrangler d1 execute ll-cockpit-db --file=migrations/0025_nexus_thompson_sampling.sql --remote

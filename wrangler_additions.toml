@@ -1,0 +1,30 @@
+# WRANGLER ADDITIONS — merge relevant sections into wrangler.toml
+# See full file: wrangler_additions.toml (downloaded 2026-05-23 session)
+#
+# QUEUES TO CREATE FIRST:
+#   wrangler queues create nexus-bandit-updates
+#   wrangler queues create nexus-daily-rollup
+#
+# KV TO CREATE:
+#   wrangler kv:namespace create BANDIT_COUNTERS
+#
+# CRON TRIGGERS:
+# [triggers]
+# crons = [
+#   '0 6 * * *',      # daily rollup (6am UTC)
+#   '0 */4 * * *',    # bandit flush (every 4 hours)
+#   '0 8 * * 0',      # META-COGNITION Sunday audit
+#   '0 12 * * *',     # ORACLE 7am EST digest
+# ]
+#
+# QUEUE BINDINGS:
+# [[queues.producers]]
+# queue   = 'nexus-bandit-updates'
+# binding = 'BANDIT_QUEUE'
+#
+# [[queues.consumers]]
+# queue             = 'nexus-bandit-updates'
+# max_batch_size    = 25
+# max_batch_timeout = 30
+# max_retries       = 3
+# dead_letter_queue = 'nexus-bandit-dlq'
