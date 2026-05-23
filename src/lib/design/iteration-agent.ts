@@ -169,7 +169,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   { name: 'save_iteration', description: 'Commit the current edit state as a new design_iteration row.', input_schema: { type: 'object', properties: { client_feedback: { type: 'string' }, notes: { type: 'string' } } } },
   { name: 'critique', description: 'Re-run CRITIC against the current HTML.', input_schema: { type: 'object', properties: { focus_areas: { type: 'array', items: { type: 'string' } } } } },
   { name: 'assemble_html', description: 'NO-OP RE-STITCH. Re-runs the deterministic ASSEMBLER on EXISTING outputs. No new content. Use ONLY for defensive re-stitch, NEVER for "rebuild from scratch".', input_schema: { type: 'object', properties: {} }, uses_code_execution: true },
-  { name: 'add_section', description: 'Insert a NEW section into the page. Runs COMPOSER to generate content. Idempotent against concurrent retries.', input_schema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, after_slug: { type: 'string' } }, required: ['name', 'description'] } },
+  { name: 'add_section', description: 'Insert a NEW section into the page. Runs COMPOSER to generate content. Idempotent against concurrent retries.', input_schema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, after_slug: { type: 'string' }, section_type_slug: { type: 'string', description: 'Optional: slug of a registered section type. If it resolves to a template-strategy block, the section renders from the fixed template instead of AI generation.' } }, required: ['name', 'description'] } },
   { name: 'remove_section', description: 'Soft-delete a section. Re-assembles the page after removal.', input_schema: { type: 'object', properties: { section_slug: { type: 'string' } }, required: ['section_slug'] } },
   { name: 'splice_section', description: 'Not implemented.', input_schema: { type: 'object', properties: { section_slug: { type: 'string' }, new_html: { type: 'string' } }, required: ['section_slug', 'new_html'] }, uses_code_execution: true },
   { name: 'apply_preset', description: 'Not implemented.', input_schema: { type: 'object', properties: { preset_name: { type: 'string' } }, required: ['preset_name'] } },
@@ -356,7 +356,7 @@ async function runRemoveSection(toolUse: DesignAssistantToolUse, deps: ToolDeps)
 }
 
 async function runAddSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
-  const input = toolUse.input as { name?: string; description?: string; after_slug?: string }
+  const input = toolUse.input as { name?: string; description?: string; after_slug?: string; section_type_slug?: string }
   if (!input.name || !input.description) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'name and description are required.', is_error: true }
   const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
   if (!iter) return missingIteration(toolUse)
@@ -379,17 +379,53 @@ async function runAddSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): P
   const allShortIds = allRows.map((r) => r.short_id)
   const newShortId = generateInsertShortId(anchorShortId, allShortIds)
   const tokens: DesignTokens = iter.design_tokens_json ? safeParse(iter.design_tokens_json) ?? emptyTokens() : emptyTokens()
-  const composerPrompt = buildComposerPrompt({ sectionSlug: newSlug, sectionName: input.name, instruction: input.description, preserveStructure: false, currentSectionHtml: '', tokens, brief, isNewSection: true })
-  const composerResult = await callComposer(deps.apiKey, composerPrompt)
-  if (!composerResult.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: composerResult.error, is_error: true }
+
+  // Template dispatch: if section_type_slug resolves to a template-strategy block,
+  // skip callComposer entirely and use the stored template_html directly.
+  let sectionHtml: string
+  let costUsd = 0
+  let usageTokens = { input: 0, output: 0 }
+  let resolvedName = input.name
+
+  if (input.section_type_slug) {
+    const sectionType = await deps.env.DB
+      .prepare(`SELECT slug, name, render_strategy, template_html FROM design_section_types WHERE slug = ? LIMIT 1`)
+      .bind(input.section_type_slug)
+      .first<{ slug: string; name: string; render_strategy: string; template_html: string | null }>()
+
+    if (sectionType && sectionType.render_strategy === 'template' && sectionType.template_html) {
+      // Template branch: use fixed HTML, no LLM call
+      sectionHtml = sectionType.template_html
+      resolvedName = sectionType.name
+      costUsd = 0
+      usageTokens = { input: 0, output: 0 }
+    } else {
+      // section_type_slug present but not a template block — fall through to COMPOSER
+      const composerPrompt = buildComposerPrompt({ sectionSlug: newSlug, sectionName: input.name, instruction: input.description, preserveStructure: false, currentSectionHtml: '', tokens, brief, isNewSection: true })
+      const composerResult = await callComposer(deps.apiKey, composerPrompt)
+      if (!composerResult.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: composerResult.error, is_error: true }
+      sectionHtml = composerResult.html
+      costUsd = composerResult.costUsd
+      usageTokens = composerResult.usage
+    }
+  } else {
+    // Free-text path: no section_type_slug provided
+    const composerPrompt = buildComposerPrompt({ sectionSlug: newSlug, sectionName: input.name, instruction: input.description, preserveStructure: false, currentSectionHtml: '', tokens, brief, isNewSection: true })
+    const composerResult = await callComposer(deps.apiKey, composerPrompt)
+    if (!composerResult.ok) return { type: 'tool_result', tool_use_id: toolUse.id, content: composerResult.error, is_error: true }
+    sectionHtml = composerResult.html
+    costUsd = composerResult.costUsd
+    usageTokens = composerResult.usage
+  }
+
   const newId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
-  const taskType = classifySection(input.name, input.description)
-  const insertedTitle = `Compose ${input.name} section`
+  const taskType = classifySection(resolvedName, input.description)
+  const insertedTitle = `Compose ${resolvedName} section`
   let insertedNewRow = true
   let finalShortId = newShortId
   try {
-    await deps.env.DB.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level, human_required, status, output, cost_usd, tokens, started_at, completed_at, created_at, task_type) VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`).bind(newId, iter.orchestrator_run_id, deps.userId, newShortId, insertedTitle, `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`, taskType === 'compose_simple' ? 0.015 : 0.05, composerResult.html, composerResult.costUsd, composerResult.usage.input + composerResult.usage.output, now, now, now, taskType).run()
+    await deps.env.DB.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, estimated_cost_usd, estimated_duration_seconds, risk_level, human_required, status, output, cost_usd, tokens, started_at, completed_at, created_at, task_type) VALUES (?, ?, ?, ?, 'composer', ?, ?, '[]', ?, 30, 'low', 0, 'done', ?, ?, ?, ?, ?, ?, ?)`).bind(newId, iter.orchestrator_run_id, deps.userId, newShortId, insertedTitle, `Added via iteration agent (add_section). Original instruction: ${input.description.slice(0, 500)}`, taskType === 'compose_simple' ? 0.015 : 0.05, sectionHtml, costUsd, usageTokens.input + usageTokens.output, now, now, now, taskType).run()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('UNIQUE constraint failed')) {
@@ -400,7 +436,7 @@ async function runAddSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): P
   }
   let assemblyError: string | null = null
   try { const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id); await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run(); await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output) } catch (err) { assemblyError = err instanceof Error ? err.message : String(err) }
-  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, new_section: { slug: newSlug, name: input.name, short_id: finalShortId, after: input.after_slug ?? null, task_type: taskType }, composer_tokens: composerResult.usage, cost_usd: insertedNewRow ? composerResult.costUsd : 0, idempotent_recovery: !insertedNewRow, assembly_warning: assemblyError, note: insertedNewRow ? (assemblyError ? `Section added but re-assembly failed: ${assemblyError}` : `Section "${input.name}" added and page re-stitched.`) : `Section "${input.name}" was already added by a concurrent retry.` }) }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, new_section: { slug: newSlug, name: resolvedName, short_id: finalShortId, after: input.after_slug ?? null, task_type: taskType }, composer_tokens: usageTokens, cost_usd: insertedNewRow ? costUsd : 0, idempotent_recovery: !insertedNewRow, assembly_warning: assemblyError, note: insertedNewRow ? (assemblyError ? `Section added but re-assembly failed: ${assemblyError}` : `Section "${resolvedName}" added and page re-stitched.`) : `Section "${resolvedName}" was already added by a concurrent retry.` }) }
 }
 
 function buildComposerPrompt(args: { sectionSlug: string; sectionName: string; instruction: string; preserveStructure: boolean; currentSectionHtml: string; tokens: DesignTokens; brief: DesignBriefRow; isNewSection: boolean }): string {
