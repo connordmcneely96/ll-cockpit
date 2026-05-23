@@ -18,6 +18,7 @@ import { createClient } from '@/lib/supabase-server'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { getBindings } from '@/lib/cloudflare'
 import { seedSectionTypes } from '@/lib/design/section-types-seeder'
+import { seedEngineeringPack } from '@/lib/design/engineering-pack-seeder'
 import type { User } from '@supabase/supabase-js'
 
 const ADMIN_USER_ID = '579acc61-b896-4a0e-bcee-6c369ee5f303'
@@ -71,6 +72,36 @@ export async function GET(req: NextRequest) {
     }
   } catch (err) {
     console.error('[section-types] auto-seed setup exception:', err)
+  }
+
+  // Gated engineering pack seed — runs one cheap COUNT per GET and only seeds
+  // when the domain pack is absent. Does NOT reuse the empty-check above because
+  // the table is non-empty after 119A's builtin seed.
+  try {
+    const packCount = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM design_section_types WHERE source = 'domain-pack:engineering'`)
+      .first<{ n: number }>()
+
+    if ((packCount?.n ?? 0) === 0) {
+      console.log('[section-types] engineering pack absent — seeding in background')
+      try {
+        const ctx = getCloudflareContext().ctx
+        ctx.waitUntil(
+          seedEngineeringPack(env)
+            .then((r) =>
+              console.log(
+                `[section-types] engineering pack seed complete: ${r.seeded} seeded, ${r.skipped} skipped`,
+              ),
+            )
+            .catch((err) => console.error('[section-types] engineering pack seed failed:', err)),
+        )
+      } catch (err) {
+        console.error('[section-types] waitUntil not available for eng pack, running inline:', err)
+        await seedEngineeringPack(env)
+      }
+    }
+  } catch (err) {
+    console.error('[section-types] engineering pack seed check exception:', err)
   }
 
   const url = new URL(req.url)
