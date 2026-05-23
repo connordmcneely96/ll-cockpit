@@ -64,6 +64,8 @@ import {
   deriveDarkPalette,
   generateAccentAlternates,
 } from './tweaks-panel'
+import { backfillBriefSections } from './brief-sections-backfill'
+import { listBriefSections } from './brief-sections'
 
 // Sprint 18Z — Cockpit API base URL where the feedback POST is routed.
 //
@@ -661,22 +663,61 @@ export async function executeAssembler(
   userId: string,
   pipelineRunId: string,
 ): Promise<{ output: string; cost_usd: number; tokens: number }> {
-  const rows = await env.DB
+  // Fetch brief first — needed for briefId (backfill), skills (TweaksPanel),
+  // and feedbackContext (Sprint 18Z). If brief can't be resolved, fall back
+  // to the short_id-ordered path (graceful degradation).
+  const brief = await env.DB
     .prepare(
-      `SELECT short_id, agent_name, title, output FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND status = 'done' AND output IS NOT NULL
-         ORDER BY short_id ASC`,
+      `SELECT id, client_name, business_description, skills, current_iteration
+       FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`,
     )
     .bind(pipelineRunId, userId)
-    .all<{ short_id: string; agent_name: string; title: string; output: string }>()
+    .first<{ id: string; client_name: string; business_description: string; skills: string | null; current_iteration: number | null }>()
 
-  let designTokens: DesignTokens | null = null
+  if (!brief) throw new Error('ASSEMBLER: brief metadata not found for this run')
+
+  // Sprint 119C-2 — (a) backfill first (idempotent no-op after first run),
+  // then (b) read order from the index table.
+  await backfillBriefSections(env, brief.id)
+  const indexRows = await listBriefSections(env, brief.id)
+
+  // Fetch DESIGNER tokens (separate query so it's independent of section ordering).
+  const designerRow = await env.DB
+    .prepare(
+      `SELECT output FROM agent_subtasks
+       WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'designer'
+         AND status = 'done' AND output IS NOT NULL
+       LIMIT 1`,
+    )
+    .bind(pipelineRunId, userId)
+    .first<{ output: string }>()
+  const designTokens: DesignTokens | null = designerRow
+    ? (extractJson(designerRow.output) as DesignTokens | null)
+    : null
+
+  if (!designTokens) throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
+
   const sections: DesignSection[] = []
 
-  for (const row of rows.results ?? []) {
-    if (row.agent_name === 'designer') {
-      designTokens = extractJson(row.output) as DesignTokens | null
-    } else if (row.agent_name === 'composer') {
+  if (indexRows.length > 0) {
+    // (b) NEW PATH: order from design_brief_sections, HTML from agent_subtasks.
+    const composerRows = await env.DB
+      .prepare(
+        `SELECT short_id, title, output FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
+           AND status = 'done' AND output IS NOT NULL`,
+      )
+      .bind(pipelineRunId, userId)
+      .all<{ short_id: string; title: string; output: string }>()
+
+    const byShortId = new Map<string, { short_id: string; title: string; output: string }>()
+    for (const row of composerRows.results ?? []) {
+      byShortId.set(row.short_id, row)
+    }
+
+    for (const indexRow of indexRows) {
+      const row = byShortId.get(indexRow.subtask_short_id)
+      if (!row) continue
       const match = row.title.match(/Compose\s+(.+?)\s+section/i)
       const name = match ? match[1] : row.title.replace(/Compose\s+/i, '').replace(/\s+section/i, '')
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
@@ -684,27 +725,34 @@ export async function executeAssembler(
     }
   }
 
-  if (!designTokens) throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
+  // (c) GRACEFUL FALLBACK: if index was empty even after backfill (e.g. brief
+  // has no done subtasks yet, or briefId couldn't be resolved), fall back to
+  // the original ORDER BY short_id ASC path. Never render empty.
+  if (sections.length === 0) {
+    const fallbackRows = await env.DB
+      .prepare(
+        `SELECT title, output FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer'
+           AND status = 'done' AND output IS NOT NULL
+         ORDER BY short_id ASC`,
+      )
+      .bind(pipelineRunId, userId)
+      .all<{ title: string; output: string }>()
+
+    for (const row of fallbackRows.results ?? []) {
+      const match = row.title.match(/Compose\s+(.+?)\s+section/i)
+      const name = match ? match[1] : row.title.replace(/Compose\s+/i, '').replace(/\s+section/i, '')
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+      sections.push({ slug, name, html: extractSectionHtml(row.output) })
+    }
+  }
+
   if (sections.length === 0) throw new Error('ASSEMBLER: no COMPOSER section outputs found')
-
-  // Sprint 18Y — fetch skills alongside brief metadata so TweaksPanel is
-  // injected into the HTML when the brief has 'tweaks-panel' in its skills.
-  // Sprint 18Z — also fetch brief.id and current_iteration so we can build a
-  // feedbackContext for the TweaksPanel's "Send notes to designer" section.
-  const brief = await env.DB
-    .prepare(`SELECT id, client_name, business_description, skills, current_iteration FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
-    .bind(pipelineRunId, userId)
-    .first<{ id: string; client_name: string; business_description: string; skills: string | null; current_iteration: number | null }>()
-
-  if (!brief) throw new Error('ASSEMBLER: brief metadata not found for this run')
 
   const skills: string[] = brief.skills
     ? (() => { try { return JSON.parse(brief.skills) as string[] } catch { return [] } })()
     : []
 
-  // Sprint 18Z — build the feedbackContext now that we have brief.id and
-  // current_iteration. Even if skills doesn't include tweaks-panel, this is
-  // a cheap no-op inside renderFullHtml.
   const feedbackContext: FeedbackContext = {
     briefId: brief.id,
     iterationNumber: brief.current_iteration ?? null,
