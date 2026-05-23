@@ -1,0 +1,20 @@
+-- NEXUS Supabase Semantic Search Layer
+-- Sprint 124 — SHIPPED 2026-05-23 to project lewmvmyettxryetzrxmv
+-- 5 migrations applied: pgvector ext, semantic_task_index, agent_knowledge_base,
+--                       bandit_context_vectors, HNSW indexes, functions + view
+--
+-- Tables live:
+--   semantic_task_index   — mirrors task_executions (D1), 1024-dim HNSW embeddings
+--   agent_knowledge_base  — RAG per agent, GIN index on domain_tags
+--   bandit_context_vectors — routing decision context, feeds META-COGNITION
+--
+-- Functions live:
+--   search_similar_tasks(query_embedding, filter_agent, filter_task_type, min_quality, result_limit)
+--   retrieve_agent_knowledge(query_embedding, target_agent, domain_filter, result_limit)
+--
+-- View live:
+--   model_routing_intelligence — ANCHOR dashboard feed
+--
+-- Embedding: CF Workers AI @cf/baai/bge-large-en-v1.5, 1024-dim, $0.204/MTok (NOT free)
+-- Sync: scripts/nexus_ops/daily_rollup.py → sync_to_supabase()
+-- Supabase project: lewmvmyettxryetzrxmv
