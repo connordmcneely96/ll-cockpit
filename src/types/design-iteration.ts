@@ -56,6 +56,7 @@ export type DesignToolName =
   | 'apply_token_to_html'        // re-runs the CSS var block in the <style> with new tokens
   | 'add_section'                // creates a new section slot + runs COMPOSER for it
   | 'remove_section'             // removes a section slot + HTML
+  | 'reorder_sections'           // reorders sections by updating sort_order in the index table
   | 'apply_preset'               // applies a saved preset (e.g. "more SaaS", "more luxury")
   | 'analyze_reference_url'      // Playwright + vision: scrapes a URL, extracts design notes
   | 'save_iteration'             // commits the current edit state as a new design_iteration row
