@@ -78,6 +78,7 @@ import {
   buildScrollAnimationsBlock,
   type FeedbackContext,
 } from './pipeline'
+import { slugFromTitle } from './section-slug'
 
 const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
@@ -126,18 +127,6 @@ function findUnsafePaths(patch: Record<string, unknown>, prefix = ''): string[] 
     }
   }
   return unsafe
-}
-
-function slugFromTitle(title: string): { name: string; slug: string } {
-  const match = title.match(/Compose\s+(.+?)\s+section/i)
-  const name = match
-    ? match[1]
-    : title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  return { name, slug }
 }
 
 function generateInsertShortId(afterShortId: string, allShortIds: string[]): string {
