@@ -427,6 +427,148 @@ export interface FeedbackContext {
   iterationNumber: number | null
 }
 
+function buildFontLinks(
+  displayFont: string,
+  sansFont: string,
+  serifFont: string | undefined,
+  monoFont: string | undefined,
+): string {
+  const fontParam = (name: string) => name.replace(/ /g, '+')
+  const fontsToLoad = new Set<string>([displayFont, sansFont])
+  if (serifFont) fontsToLoad.add(serifFont)
+  if (monoFont) fontsToLoad.add(monoFont)
+  const fontFamilyQs = Array.from(fontsToLoad)
+    .map((f) => `family=${fontParam(f)}:wght@400;500;600;700`)
+    .join('&')
+  return `  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?${fontFamilyQs}&display=swap" rel="stylesheet">`
+}
+
+function buildTailwindConfigScript(
+  displayFont: string,
+  sansFont: string,
+  serifFont: string | undefined,
+  monoFont: string | undefined,
+): string {
+  const tailwindFontFamily = [
+    `display: ['${displayFont}', 'system-ui', 'sans-serif']`,
+    `sans: ['${sansFont}', 'system-ui', 'sans-serif']`,
+    `serif: [${serifFont ? `'${serifFont}', ` : ''}'Georgia', 'serif']`,
+    `mono: [${monoFont ? `'${monoFont}', ` : ''}'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']`,
+  ].join(',\n            ')
+  return `  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary:          'var(--primary)',
+            'primary-dark':   'var(--primary-dark)',
+            'primary-light':  'var(--primary-light)',
+            accent:           'var(--accent)',
+            surface:          'var(--surface)',
+            'text-primary':   'var(--text-primary)',
+            'text-secondary': 'var(--text-secondary)',
+            border:           'var(--border)',
+          },
+          fontFamily: {
+            ${tailwindFontFamily},
+          },
+        },
+      },
+    }
+  </script>`
+}
+
+function buildRootCssVars(
+  palette: DesignTokens['palette'],
+  dark: NonNullable<DesignTokens['palette_dark']>,
+): string {
+  return `    /* Sprint 18Y — design token CSS custom properties (light mode defaults) */
+    :root {
+      --primary:        ${palette.primary};
+      --primary-dark:   ${palette.primary_dark ?? palette.primary};
+      --primary-light:  ${palette.primary_light ?? palette.primary};
+      --accent:         ${palette.accent};
+      --accent-color:   ${palette.accent};
+      --background:     ${palette.background};
+      --surface:        ${palette.surface ?? '#ffffff'};
+      --text-primary:   ${palette.text_primary};
+      --text-secondary: ${palette.text_secondary ?? '#475569'};
+      --border:         ${palette.border ?? '#e2e8f0'};
+    }
+    /* Sprint 18Y — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
+    :root.dark {
+      color-scheme: dark;
+      --primary:        ${dark.primary};
+      --accent:         ${dark.accent};
+      --accent-color:   ${dark.accent};
+      --background:     ${dark.background};
+      --surface:        ${dark.surface ?? '#1e293b'};
+      --text-primary:   ${dark.text_primary};
+      --text-secondary: ${dark.text_secondary ?? '#94a3b8'};
+      --border:         ${dark.border ?? '#334155'};
+    }`
+}
+
+function buildBaseStyles(sansFont: string): string {
+  return `    body { font-family: '${sansFont}', system-ui, sans-serif; background: var(--background); color: var(--text-primary); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: var(--primary); color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+    .mobile-menu { display: none; }
+    .mobile-menu.open { display: block; }
+
+    ${ANIMATION_PRESETS_CSS}`
+}
+
+function buildNavHeader(clientName: string, navLinks: string): string {
+  return `  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-border" role="banner">
+    <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between" aria-label="Main navigation">
+      <a href="#" class="font-display font-bold text-xl text-primary">${escapeHtml(clientName)}</a>
+      <div class="hidden md:flex items-center gap-8">
+        ${navLinks}
+      </div>
+      <button class="md:hidden p-2 text-text-primary" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu" onclick="const m=document.getElementById('mobile-menu');m.classList.toggle('open');this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true');">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+    </nav>
+    <div id="mobile-menu" class="mobile-menu md:hidden border-t border-border bg-white">
+      <div class="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-3">
+        ${navLinks}
+      </div>
+    </div>
+  </header>`
+}
+
+function buildSectionMarkup(sections: DesignSection[]): string {
+  // Sprint 18K (A2) — inject data-nexus-id on the opening <section> tag.
+  return sections
+    .map((s) => s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`))
+    .join('\n\n  ')
+}
+
+function buildFooter(clientName: string): string {
+  return `  <footer class="bg-primary text-white py-12 mt-16" role="contentinfo">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+        <p class="text-sm opacity-80">© ${new Date().getFullYear()} ${escapeHtml(clientName)}. All rights reserved.</p>
+        <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
+      </div>
+    </div>
+  </footer>`
+}
+
+function buildScripts(tweaksPanelHtml: string): string {
+  return `  <script>
+${INTERSECTION_OBSERVER_SCRIPT}
+  </script>
+  ${tweaksPanelHtml}`
+}
+
 /**
  * Sprint 18Y — renderFullHtml accepts an optional `skills` array.
  * When skills includes 'tweaks-panel', the TweaksPanel IIFE is injected
@@ -483,27 +625,6 @@ export function renderFullHtml({
     .map((s) => `<a href="#${s.slug}" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">${escapeHtml(s.name)}</a>`)
     .join('\n        ')
 
-  // Sprint 18K (A2) — inject data-nexus-id on the opening <section> tag.
-  const sectionMarkup = sections
-    .map((s) => s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`))
-    .join('\n\n  ')
-
-  const fontParam = (name: string) => name.replace(/ /g, '+')
-
-  const fontsToLoad = new Set<string>([displayFont, sansFont])
-  if (serifFont) fontsToLoad.add(serifFont)
-  if (monoFont) fontsToLoad.add(monoFont)
-  const fontFamilyQs = Array.from(fontsToLoad)
-    .map((f) => `family=${fontParam(f)}:wght@400;500;600;700`)
-    .join('&')
-
-  const tailwindFontFamily = [
-    `display: ['${displayFont}', 'system-ui', 'sans-serif']`,
-    `sans: ['${sansFont}', 'system-ui', 'sans-serif']`,
-    `serif: [${serifFont ? `'${serifFont}', ` : ''}'Georgia', 'serif']`,
-    `mono: [${monoFont ? `'${monoFont}', ` : ''}'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']`,
-  ].join(',\n            ')
-
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -511,103 +632,22 @@ export function renderFullHtml({
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(brief.client_name)}</title>
   <meta name="description" content="${escapeHtml(brief.business_description)}">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?${fontFamilyQs}&display=swap" rel="stylesheet">
+${buildFontLinks(displayFont, sansFont, serifFont, monoFont)}
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            primary:          'var(--primary)',
-            'primary-dark':   'var(--primary-dark)',
-            'primary-light':  'var(--primary-light)',
-            accent:           'var(--accent)',
-            surface:          'var(--surface)',
-            'text-primary':   'var(--text-primary)',
-            'text-secondary': 'var(--text-secondary)',
-            border:           'var(--border)',
-          },
-          fontFamily: {
-            ${tailwindFontFamily},
-          },
-        },
-      },
-    }
-  </script>
+${buildTailwindConfigScript(displayFont, sansFont, serifFont, monoFont)}
   <style>
-    /* Sprint 18Y — design token CSS custom properties (light mode defaults) */
-    :root {
-      --primary:        ${p.primary};
-      --primary-dark:   ${p.primary_dark ?? p.primary};
-      --primary-light:  ${p.primary_light ?? p.primary};
-      --accent:         ${p.accent};
-      --accent-color:   ${p.accent};
-      --background:     ${p.background};
-      --surface:        ${p.surface ?? '#ffffff'};
-      --text-primary:   ${p.text_primary};
-      --text-secondary: ${p.text_secondary ?? '#475569'};
-      --border:         ${p.border ?? '#e2e8f0'};
-    }
-    /* Sprint 18Y — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
-    :root.dark {
-      color-scheme: dark;
-      --primary:        ${dark.primary};
-      --accent:         ${dark.accent};
-      --accent-color:   ${dark.accent};
-      --background:     ${dark.background};
-      --surface:        ${dark.surface ?? '#1e293b'};
-      --text-primary:   ${dark.text_primary};
-      --text-secondary: ${dark.text_secondary ?? '#94a3b8'};
-      --border:         ${dark.border ?? '#334155'};
-    }
-    body { font-family: '${sansFont}', system-ui, sans-serif; background: var(--background); color: var(--text-primary); }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-    .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: var(--primary); color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
-    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
-    .mobile-menu { display: none; }
-    .mobile-menu.open { display: block; }
-
-    ${ANIMATION_PRESETS_CSS}
+${buildRootCssVars(p, dark)}
+${buildBaseStyles(sansFont)}
   </style>
 </head>
 <body>
   <a href="#main" class="skip-link sr-only">Skip to main content</a>
-  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-border" role="banner">
-    <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between" aria-label="Main navigation">
-      <a href="#" class="font-display font-bold text-xl text-primary">${escapeHtml(brief.client_name)}</a>
-      <div class="hidden md:flex items-center gap-8">
-        ${navLinks}
-      </div>
-      <button class="md:hidden p-2 text-text-primary" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu" onclick="const m=document.getElementById('mobile-menu');m.classList.toggle('open');this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true');">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
-        </svg>
-      </button>
-    </nav>
-    <div id="mobile-menu" class="mobile-menu md:hidden border-t border-border bg-white">
-      <div class="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-3">
-        ${navLinks}
-      </div>
-    </div>
-  </header>
+${buildNavHeader(brief.client_name, navLinks)}
   <main id="main" role="main">
-  ${sectionMarkup}
+  ${buildSectionMarkup(sections)}
   </main>
-  <footer class="bg-primary text-white py-12 mt-16" role="contentinfo">
-    <div class="max-w-7xl mx-auto px-6">
-      <div class="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
-        <p class="text-sm opacity-80">© ${new Date().getFullYear()} ${escapeHtml(brief.client_name)}. All rights reserved.</p>
-        <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
-      </div>
-    </div>
-  </footer>
-  <script>
-${INTERSECTION_OBSERVER_SCRIPT}
-  </script>
-  ${tweaksPanelHtml}
+${buildFooter(brief.client_name)}
+${buildScripts(tweaksPanelHtml)}
 </body>
 </html>`
 }
