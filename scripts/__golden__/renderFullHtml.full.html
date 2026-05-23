@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beta Corp</title>
+  <meta name="description" content="Enterprise SaaS platform">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Lora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary:          'var(--primary)',
+            'primary-dark':   'var(--primary-dark)',
+            'primary-light':  'var(--primary-light)',
+            accent:           'var(--accent)',
+            surface:          'var(--surface)',
+            'text-primary':   'var(--text-primary)',
+            'text-secondary': 'var(--text-secondary)',
+            border:           'var(--border)',
+          },
+          fontFamily: {
+            display: ['Playfair Display', 'system-ui', 'sans-serif'],
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            serif: ['Lora', 'Georgia', 'serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    /* Sprint 18Y — design token CSS custom properties (light mode defaults) */
+    :root {
+      --primary:        #0ea5e9;
+      --primary-dark:   #0284c7;
+      --primary-light:  #38bdf8;
+      --accent:         #f97316;
+      --accent-color:   #f97316;
+      --background:     #f8fafc;
+      --surface:        #ffffff;
+      --text-primary:   #0f172a;
+      --text-secondary: #64748b;
+      --border:         #cbd5e1;
+    }
+    /* Sprint 18Y — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
+    :root.dark {
+      color-scheme: dark;
+      --primary:        #38bdf8;
+      --accent:         #fb923c;
+      --accent-color:   #fb923c;
+      --background:     #0f172a;
+      --surface:        #1e293b;
+      --text-primary:   #f1f5f9;
+      --text-secondary: #94a3b8;
+      --border:         #334155;
+    }
+    body { font-family: 'Inter', system-ui, sans-serif; background: var(--background); color: var(--text-primary); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: var(--primary); color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+    .mobile-menu { display: none; }
+    .mobile-menu.open { display: block; }
+
+    /* Sprint 18N — scroll animation presets */
+
+[data-anim] {
+  opacity: 0;
+  transition:
+    opacity 700ms ease-out,
+    transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+[data-anim].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+[data-anim~="slide-up"] { transform: translateY(20px); }
+[data-anim~="slide-from-left"] { transform: translateX(-30px); }
+[data-anim~="slide-from-right"] { transform: translateX(30px); }
+[data-anim~="scale-in"] { transform: scale(0.95); }
+/* fade-in has no transform — base opacity transition handles it */
+
+/* stagger-children — direct child delays */
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(1) { transition-delay: 0ms; }
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(2) { transition-delay: 100ms; }
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(3) { transition-delay: 200ms; }
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(4) { transition-delay: 300ms; }
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(5) { transition-delay: 400ms; }
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(6) { transition-delay: 500ms; }
+[data-anim~="stagger-children"].is-visible > [data-anim]:nth-child(n+7) { transition-delay: 600ms; }
+
+/* parallax-bg — JS-driven scroll. Desktop only — mobile scroll listeners are jittery */
+[data-anim~="parallax-bg"] {
+  background-attachment: fixed;
+  background-size: cover;
+  background-position: center;
+}
+@media (max-width: 768px) {
+  [data-anim~="parallax-bg"] {
+    background-attachment: scroll;
+  }
+}
+
+/* sticky-scroll-reveal */
+[data-anim~="sticky-scroll-reveal"] {
+  position: sticky;
+  top: 4rem;
+}
+
+/* count-up — text is replaced by JS, but show dimmed pre-fire so layout doesn't shift */
+[data-anim~="count-up"]:not(.is-visible) {
+  opacity: 0.5;
+}
+
+/* text-reveal — word spans inserted by JS */
+[data-anim~="text-reveal"] .anim-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 400ms ease-out,
+    transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-anim~="text-reveal"].is-visible .anim-word {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-anim],
+  [data-anim].is-visible,
+  [data-anim] *,
+  [data-anim].is-visible * {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
+  </style>
+</head>
+<body>
+  <a href="#main" class="skip-link sr-only">Skip to main content</a>
+  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-border" role="banner">
+    <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between" aria-label="Main navigation">
+      <a href="#" class="font-display font-bold text-xl text-primary">Beta Corp</a>
+      <div class="hidden md:flex items-center gap-8">
+        <a href="#hero" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">Hero</a>
+        <a href="#features" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">Features</a>
+        <a href="#contact" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">Contact</a>
+      </div>
+      <button class="md:hidden p-2 text-text-primary" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu" onclick="const m=document.getElementById('mobile-menu');m.classList.toggle('open');this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true');">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+    </nav>
+    <div id="mobile-menu" class="mobile-menu md:hidden border-t border-border bg-white">
+      <div class="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-3">
+        <a href="#hero" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">Hero</a>
+        <a href="#features" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">Features</a>
+        <a href="#contact" class="text-sm font-medium text-text-primary hover:text-primary transition-colors">Contact</a>
+      </div>
+    </div>
+  </header>
+  <main id="main" role="main">
+  <section data-nexus-id="hero" id="hero"><h1>Power your enterprise</h1></section>
+
+  <section data-nexus-id="features" id="features"><h2>Key features</h2></section>
+
+  <section data-nexus-id="contact" id="contact"><h2>Get in touch</h2></section>
+  </main>
+  <footer class="bg-primary text-white py-12 mt-16" role="contentinfo">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+        <p class="text-sm opacity-80">© YEAR Beta Corp. All rights reserved.</p>
+        <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
+      </div>
+    </div>
+  </footer>
+  <script>
+(function() {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.querySelectorAll('[data-anim]').forEach(function (el) { el.classList.add('is-visible'); });
+    return;
+  }
+
+  /* text-reveal: split into per-word spans with cascading delays */
+  document.querySelectorAll('[data-anim~="text-reveal"]').forEach(function (el) {
+    if (el.dataset.animWordsSplit === '1') return;
+    var text = el.textContent || '';
+    var parts = text.split(/(\s+)/);
+    el.textContent = '';
+    var wordIndex = 0;
+    parts.forEach(function (part) {
+      if (/^\s+$/.test(part)) {
+        el.appendChild(document.createTextNode(part));
+      } else if (part.length > 0) {
+        var span = document.createElement('span');
+        span.className = 'anim-word';
+        span.style.transitionDelay = (wordIndex * 40) + 'ms';
+        span.textContent = part;
+        el.appendChild(span);
+        wordIndex++;
+      }
+    });
+    el.dataset.animWordsSplit = '1';
+  });
+
+  /* count-up: parse target, reset to 0 for stable layout */
+  document.querySelectorAll('[data-anim~="count-up"]').forEach(function (el) {
+    var raw = (el.textContent || '').trim();
+    var prefixMatch = raw.match(/^[^0-9.\-]+/);
+    var numMatch = raw.match(/[0-9][0-9,.]*/);
+    var suffixMatch = raw.replace(/^[^0-9.\-]*/, '').replace(/^[0-9.,\-]+/, '');
+    if (numMatch) {
+      var clean = numMatch[0].replace(/,/g, '');
+      var num = parseFloat(clean);
+      if (!isNaN(num)) {
+        el.dataset.animCountTarget = String(num);
+        el.dataset.animCountPrefix = prefixMatch ? prefixMatch[0] : '';
+        el.dataset.animCountSuffix = suffixMatch || '';
+        el.dataset.animCountIsInt = String(num % 1 === 0);
+        el.textContent = (el.dataset.animCountPrefix || '') + '0' + (el.dataset.animCountSuffix || '');
+      }
+    }
+  });
+
+  function runCountUp(el) {
+    var target = parseFloat(el.dataset.animCountTarget || '0');
+    var prefix = el.dataset.animCountPrefix || '';
+    var suffix = el.dataset.animCountSuffix || '';
+    var isInt = el.dataset.animCountIsInt === 'true';
+    var start = performance.now();
+    var duration = 1200;
+    function tick(now) {
+      var t = Math.min(1, (now - start) / duration);
+      var eased = 1 - Math.pow(1 - t, 3);
+      var v = target * eased;
+      var rendered = isInt ? Math.round(v).toLocaleString() : v.toFixed(1);
+      el.textContent = prefix + rendered + suffix;
+      if (t < 1) requestAnimationFrame(tick);
+      else el.textContent = prefix + (isInt ? target.toLocaleString() : target.toFixed(1)) + suffix;
+    }
+    requestAnimationFrame(tick);
+  }
+
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.1) {
+        entry.target.classList.add('is-visible');
+        if (entry.target.matches('[data-anim~="count-up"]') && entry.target.dataset.animCountTarget) {
+          runCountUp(entry.target);
+        }
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: [0.1, 0.25], rootMargin: '0px 0px -50px 0px' });
+
+  document.querySelectorAll('[data-anim]').forEach(function (el) { observer.observe(el); });
+
+  /* parallax-bg scroll handler */
+  var parallaxEls = document.querySelectorAll('[data-anim~="parallax-bg"]');
+  if (parallaxEls.length > 0 && window.innerWidth > 768) {
+    var ticking = false;
+    function updateParallax() {
+      parallaxEls.forEach(function (el) {
+        var rect = el.getBoundingClientRect();
+        var offset = rect.top * -0.5;
+        el.style.backgroundPositionY = 'calc(50% + ' + offset + 'px)';
+      });
+      ticking = false;
+    }
+    window.addEventListener('scroll', function () {
+      if (!ticking) {
+        window.requestAnimationFrame(updateParallax);
+        ticking = true;
+      }
+    }, { passive: true });
+    updateParallax();
+  }
+})();
+  </script>
+  <script id="nexus-tweaks-panel">
+(function() {
+  'use strict';
+  var ALT = [{"name":"Default","hex":"#f97316"},{"name":"Complement","hex":"#16c5f9"},{"name":"Warm","hex":"#ef4444"},{"name":"Cool","hex":"#a855f7"},{"name":"Mono","hex":"#9ca3af"}];
+  var SK = 'nexus_design_tweaks';
+  var FB_URL = "https://ll-cockpit.connorpattern.workers.dev/api/design/briefs/test-brief-id/feedback";
+  var FB_ITER = 2;
+  var FB_ON = true;
+  function load() { try { return JSON.parse(localStorage.getItem(SK) || '{}'); } catch(e) { return {}; } }
+  function save(p) { try { localStorage.setItem(SK, JSON.stringify(p)); } catch(e) {} }
+
+  // Apply saved preferences before first paint to avoid flash
+  var prefs = load();
+  if (prefs.dark) document.documentElement.classList.add('dark');
+  if (prefs.accent) {
+    document.documentElement.style.setProperty('--accent', prefs.accent);
+    document.documentElement.style.setProperty('--accent-color', prefs.accent);
+  }
+
+  function build() {
+    var panel = document.createElement('div');
+    panel.id = 'nexus-tweaks';
+    panel.setAttribute('aria-label', 'Design tweaks');
+    panel.setAttribute('role', 'toolbar');
+
+    // Styles injected into <head> at build time so they are available
+    // even before the panel DOM is created.
+    var st = document.createElement('style');
+    st.textContent =
+      '#nexus-tweaks{position:fixed;bottom:20px;right:20px;z-index:9999;' +
+      'background:rgba(255,255,255,0.92);backdrop-filter:blur(12px);' +
+      '-webkit-backdrop-filter:blur(12px);border:1px solid rgba(0,0,0,0.12);' +
+      'border-radius:12px;padding:10px 12px;' +
+      'box-shadow:0 4px 24px rgba(0,0,0,0.12);display:flex;flex-direction:column;' +
+      'gap:8px;min-width:148px;max-width:260px;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:11px;}' +
+      '.dark #nexus-tweaks{background:rgba(30,41,59,0.92);border-color:rgba(255,255,255,0.1);}' +
+      '#nxt-lbl{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;' +
+      'opacity:.45;color:inherit;}' +
+      '.dark #nxt-lbl{color:#f1f5f9;}' +
+      '#nxt-row{display:flex;align-items:center;gap:8px;}' +
+      '#nxt-btn{background:none;border:1px solid rgba(0,0,0,0.18);border-radius:6px;' +
+      'width:28px;height:22px;cursor:pointer;font-size:13px;display:flex;align-items:center;' +
+      'justify-content:center;padding:0;}' +
+      '.dark #nxt-btn{border-color:rgba(255,255,255,0.22);}' +
+      '#nxt-btn:hover{background:rgba(0,0,0,0.06);}' +
+      '.dark #nxt-btn:hover{background:rgba(255,255,255,0.08);}' +
+      '#nxt-ml{opacity:.55;font-size:11px;color:inherit;}' +
+      '.dark #nxt-ml{color:#f1f5f9;}' +
+      '#nxt-al{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;' +
+      'opacity:.45;color:inherit;}' +
+      '.dark #nxt-al{color:#f1f5f9;}' +
+      '#nxt-sw{display:flex;gap:4px;flex-wrap:wrap;}' +
+      '.nxsw{width:16px;height:16px;border-radius:50%;cursor:pointer;' +
+      'border:2px solid transparent;transition:transform .12s;flex-shrink:0;padding:0;}' +
+      '.nxsw:hover{transform:scale(1.28);}' +
+      '.nxsw.on{border-color:rgba(0,0,0,0.45);}' +
+      '.dark .nxsw.on{border-color:rgba(255,255,255,0.65);}' +
+      // Sprint 18Z — feedback section
+      '#nxt-fb-lbl{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;' +
+      'opacity:.45;color:inherit;margin-top:4px;}' +
+      '.dark #nxt-fb-lbl{color:#f1f5f9;}' +
+      '#nxt-fb-ta{width:100%;min-height:54px;max-height:160px;resize:vertical;' +
+      'border:1px solid rgba(0,0,0,0.18);border-radius:6px;padding:6px 8px;' +
+      'font-family:inherit;font-size:11px;color:inherit;background:rgba(255,255,255,0.5);' +
+      'box-sizing:border-box;}' +
+      '.dark #nxt-fb-ta{background:rgba(0,0,0,0.25);border-color:rgba(255,255,255,0.18);color:#f1f5f9;}' +
+      '#nxt-fb-ta:focus{outline:1px solid rgba(0,0,0,0.4);outline-offset:0;}' +
+      '.dark #nxt-fb-ta:focus{outline-color:rgba(255,255,255,0.5);}' +
+      '#nxt-fb-row{display:flex;align-items:center;gap:6px;justify-content:space-between;}' +
+      '#nxt-fb-send{background:var(--primary, #4f46e5);color:#fff;border:none;border-radius:6px;' +
+      'padding:5px 10px;font-size:10.5px;font-weight:600;cursor:pointer;letter-spacing:.02em;' +
+      'transition:opacity .15s;font-family:inherit;}' +
+      '#nxt-fb-send:hover:not(:disabled){opacity:.88;}' +
+      '#nxt-fb-send:disabled{opacity:.4;cursor:not-allowed;}' +
+      '#nxt-fb-status{font-size:10px;opacity:.55;color:inherit;flex:1;text-align:right;}' +
+      '.dark #nxt-fb-status{color:#f1f5f9;}' +
+      '#nxt-fb-status.ok{color:#059669;opacity:.95;}' +
+      '#nxt-fb-status.err{color:#dc2626;opacity:.95;}' +
+      '.dark #nxt-fb-status.ok{color:#34d399;}' +
+      '.dark #nxt-fb-status.err{color:#f87171;}' +
+      // Reset
+      '#nxt-rst{background:none;border:none;font-size:10px;color:rgba(0,0,0,0.38);' +
+      'cursor:pointer;padding:0;text-align:left;}' +
+      '.dark #nxt-rst{color:rgba(255,255,255,0.35);}' +
+      '#nxt-rst:hover{color:rgba(0,0,0,0.72);}' +
+      '.dark #nxt-rst:hover{color:rgba(255,255,255,0.72);}'
+    document.head.appendChild(st);
+
+    var lbl = document.createElement('div');
+    lbl.id = 'nxt-lbl';
+    lbl.textContent = 'Tweaks';
+    panel.appendChild(lbl);
+
+    // ── Dark mode row ──
+    var row = document.createElement('div');
+    row.id = 'nxt-row';
+    var isDark = document.documentElement.classList.contains('dark');
+    var btn = document.createElement('button');
+    btn.id = 'nxt-btn';
+    btn.title = 'Toggle light / dark mode';
+    btn.textContent = isDark ? '☀️' : '🌙';
+    btn.onclick = function() {
+      var d = document.documentElement.classList.toggle('dark');
+      btn.textContent = d ? '☀️' : '🌙';
+      var p = load(); p.dark = d; save(p);
+    };
+    row.appendChild(btn);
+    var ml = document.createElement('span');
+    ml.id = 'nxt-ml';
+    ml.textContent = 'Light / dark';
+    row.appendChild(ml);
+    panel.appendChild(row);
+
+    // ── Accent swatches (only when there are multiple alternates) ──
+    var swCon = null;
+    if (ALT && ALT.length > 1) {
+      var al = document.createElement('div');
+      al.id = 'nxt-al';
+      al.textContent = 'Accent';
+      panel.appendChild(al);
+      swCon = document.createElement('div');
+      swCon.id = 'nxt-sw';
+      var activeHex = prefs.accent || ALT[0].hex;
+      ALT.forEach(function(a) {
+        var sw = document.createElement('button');
+        sw.className = 'nxsw' + (a.hex === activeHex ? ' on' : '');
+        sw.style.background = a.hex;
+        sw.title = a.name;
+        sw.setAttribute('aria-label', 'Accent: ' + a.name);
+        sw.onclick = function() {
+          document.documentElement.style.setProperty('--accent', a.hex);
+          document.documentElement.style.setProperty('--accent-color', a.hex);
+          swCon.querySelectorAll('.nxsw').forEach(function(x) { x.classList.remove('on'); });
+          sw.classList.add('on');
+          var p = load(); p.accent = a.hex; save(p);
+        };
+        swCon.appendChild(sw);
+      });
+      panel.appendChild(swCon);
+    }
+
+    // ── Sprint 18Z — Feedback section ──
+    if (FB_ON) {
+      var fbLbl = document.createElement('div');
+      fbLbl.id = 'nxt-fb-lbl';
+      fbLbl.textContent = 'Send notes to designer';
+      panel.appendChild(fbLbl);
+
+      var ta = document.createElement('textarea');
+      ta.id = 'nxt-fb-ta';
+      ta.placeholder = "What's working? What's not? Anything to tweak…";
+      ta.maxLength = 2000;
+      panel.appendChild(ta);
+
+      var fbRow = document.createElement('div');
+      fbRow.id = 'nxt-fb-row';
+      var send = document.createElement('button');
+      send.id = 'nxt-fb-send';
+      send.textContent = 'Send';
+      send.type = 'button';
+      var status = document.createElement('span');
+      status.id = 'nxt-fb-status';
+      status.textContent = '';
+      fbRow.appendChild(send);
+      fbRow.appendChild(status);
+      panel.appendChild(fbRow);
+
+      send.onclick = function() {
+        var notes = (ta.value || '').trim();
+        if (!notes) {
+          status.className = 'err';
+          status.textContent = 'Type a note first';
+          return;
+        }
+        send.disabled = true;
+        status.className = '';
+        status.textContent = 'Sending…';
+        var payload = { notes: notes };
+        if (FB_ITER !== null) payload.iteration_number = FB_ITER;
+        fetch(FB_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function(r) {
+          if (r.ok) {
+            ta.value = '';
+            status.className = 'ok';
+            status.textContent = 'Sent ✓';
+            setTimeout(function() { status.textContent = ''; status.className = ''; }, 4000);
+          } else {
+            return r.json().then(function(j) {
+              status.className = 'err';
+              status.textContent = (j && j.error) ? j.error : ('Error ' + r.status);
+            }).catch(function() {
+              status.className = 'err';
+              status.textContent = 'Error ' + r.status;
+            });
+          }
+        }).catch(function() {
+          status.className = 'err';
+          status.textContent = 'Network error';
+        }).then(function() {
+          send.disabled = false;
+        });
+      };
+    }
+
+    // ── Reset button ──
+    var rst = document.createElement('button');
+    rst.id = 'nxt-rst';
+    rst.textContent = '↺ Reset';
+    rst.title = 'Reset to design defaults';
+    rst.onclick = function() {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.style.removeProperty('--accent');
+      document.documentElement.style.removeProperty('--accent-color');
+      btn.textContent = '🌙';
+      if (swCon) {
+        swCon.querySelectorAll('.nxsw').forEach(function(x, i) {
+          x.classList.toggle('on', i === 0);
+        });
+      }
+      try { localStorage.removeItem(SK); } catch(e) {}
+    };
+    panel.appendChild(rst);
+
+    document.body.appendChild(panel);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', build);
+  } else {
+    build();
+  }
+})();
+</script>
+</body>
+</html>
