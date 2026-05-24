@@ -78,6 +78,13 @@ import {
   buildScrollAnimationsBlock,
   type FeedbackContext,
 } from './pipeline'
+import { slugFromTitle } from './section-slug'
+import {
+  insertBriefSection,
+  markBriefSectionRemoved,
+  nextSortOrder,
+  reorderBriefSections,
+} from './brief-sections'
 
 const MODEL_ID = 'claude-sonnet-4-5'
 const MAX_TOKENS_PER_CALL = 4096
@@ -128,18 +135,6 @@ function findUnsafePaths(patch: Record<string, unknown>, prefix = ''): string[] 
   return unsafe
 }
 
-function slugFromTitle(title: string): { name: string; slug: string } {
-  const match = title.match(/Compose\s+(.+?)\s+section/i)
-  const name = match
-    ? match[1]
-    : title.replace(/^Compose\s+/i, '').replace(/\s+section$/i, '')
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  return { name, slug }
-}
-
 function generateInsertShortId(afterShortId: string, allShortIds: string[]): string {
   const prefix = `${afterShortId}_`
   const existingInserts = allShortIds.filter((s) => s.startsWith(prefix)).sort()
@@ -171,6 +166,7 @@ export const TOOL_DEFINITIONS: DesignToolDefinition[] = [
   { name: 'assemble_html', description: 'NO-OP RE-STITCH. Re-runs the deterministic ASSEMBLER on EXISTING outputs. No new content. Use ONLY for defensive re-stitch, NEVER for "rebuild from scratch".', input_schema: { type: 'object', properties: {} }, uses_code_execution: true },
   { name: 'add_section', description: 'Insert a NEW section into the page. Runs COMPOSER to generate content. Idempotent against concurrent retries.', input_schema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, after_slug: { type: 'string' }, section_type_slug: { type: 'string', description: 'Optional: slug of a registered section type. If it resolves to a template-strategy block, the section renders from the fixed template instead of AI generation.' } }, required: ['name', 'description'] } },
   { name: 'remove_section', description: 'Soft-delete a section. Re-assembles the page after removal.', input_schema: { type: 'object', properties: { section_slug: { type: 'string' } }, required: ['section_slug'] } },
+  { name: 'reorder_sections', description: 'Reorder the page sections. Provide the complete ordered array of section slugs (or short_ids) in the desired top-to-bottom order. Re-stitches the page.', input_schema: { type: 'object', properties: { ordered_slugs: { type: 'array', items: { type: 'string' } } }, required: ['ordered_slugs'] } },
   { name: 'splice_section', description: 'Not implemented.', input_schema: { type: 'object', properties: { section_slug: { type: 'string' }, new_html: { type: 'string' } }, required: ['section_slug', 'new_html'] }, uses_code_execution: true },
   { name: 'apply_preset', description: 'Not implemented.', input_schema: { type: 'object', properties: { preset_name: { type: 'string' } }, required: ['preset_name'] } },
   { name: 'analyze_reference_url', description: 'Not implemented.', input_schema: { type: 'object', properties: { url: { type: 'string' }, focus: { type: 'string', enum: ['layout', 'color', 'typography', 'tone', 'all'] } }, required: ['url'] }, requires_playwright: true },
@@ -229,6 +225,7 @@ export async function executeIterationTool(toolUse: DesignAssistantToolUse, deps
       case 'assemble_html': return await runAssembleHtml(toolUse, deps)
       case 'add_section': return await runAddSection(toolUse, deps)
       case 'remove_section': return await runRemoveSection(toolUse, deps)
+      case 'reorder_sections': return await runReorderSections(toolUse, deps)
       case 'splice_section':
       case 'apply_preset':
       case 'analyze_reference_url': return notImplemented(toolUse)
@@ -350,9 +347,38 @@ async function runRemoveSection(toolUse: DesignAssistantToolUse, deps: ToolDeps)
   const target = (subtasks.results ?? []).find((s) => slugFromTitle(s.title).slug === input.section_slug)
   if (!target) { const available = (subtasks.results ?? []).map((s) => slugFromTitle(s.title).slug).join(', '); return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'section_not_found', section_slug: input.section_slug, available_slugs: available }), is_error: true } }
   await deps.env.DB.prepare(`UPDATE agent_subtasks SET status = 'cancelled' WHERE id = ?`).bind(target.id).run()
+  // Sync removal in design_brief_sections index.
+  await markBriefSectionRemoved(deps.env, deps.briefId, target.short_id)
   let assemblyError: string | null = null
   try { const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id); await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run(); await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output) } catch (err) { assemblyError = err instanceof Error ? err.message : String(err) }
   return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, section_slug: input.section_slug, removed_subtask_id: target.id, assembly_warning: assemblyError, note: assemblyError ? `Section removed but re-assembly failed: ${assemblyError}` : 'Section removed and page re-stitched.' }) }
+}
+
+async function runReorderSections(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
+  const input = toolUse.input as { ordered_slugs?: string[] }
+  if (!input.ordered_slugs || !Array.isArray(input.ordered_slugs) || input.ordered_slugs.length === 0) {
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: 'ordered_slugs must be a non-empty array.', is_error: true }
+  }
+  const iter = await loadLatestIteration(deps.env.DB, deps.briefId)
+  if (!iter) return missingIteration(toolUse)
+  if (!iter.orchestrator_run_id) return { type: 'tool_result', tool_use_id: toolUse.id, content: 'No orchestrator_run_id on iteration.', is_error: true }
+  const subtasks = await deps.env.DB
+    .prepare(`SELECT short_id, title FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND agent_name = 'composer' AND status = 'done'`)
+    .bind(iter.orchestrator_run_id, deps.userId)
+    .all<{ short_id: string; title: string }>()
+  const rows = subtasks.results ?? []
+  const orderedShortIds: string[] = []
+  for (const slugOrId of input.ordered_slugs) {
+    const match = rows.find((r) => slugFromTitle(r.title).slug === slugOrId || r.short_id === slugOrId)
+    if (match) orderedShortIds.push(match.short_id)
+  }
+  if (orderedShortIds.length === 0) {
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'No matching sections found for the provided slugs.' }), is_error: true }
+  }
+  await reorderBriefSections(deps.env, deps.briefId, orderedShortIds)
+  let assemblyError: string | null = null
+  try { const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id); await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run(); await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output) } catch (err) { assemblyError = err instanceof Error ? err.message : String(err) }
+  return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, reordered: orderedShortIds.length, assembly_warning: assemblyError, note: assemblyError ? `Sections reordered but re-assembly failed: ${assemblyError}` : 'Sections reordered and page re-stitched.' }) }
 }
 
 async function runAddSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): Promise<DesignToolResult> {
@@ -434,6 +460,14 @@ async function runAddSection(toolUse: DesignAssistantToolUse, deps: ToolDeps): P
       else return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'short_id_collision_no_recovery', attempted_short_id: newShortId, message: 'Short_id collision but our section isn\'t in the database.' }), is_error: true }
     } else return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: false, error: 'database_error', message: msg.slice(0, 300) }), is_error: true }
   }
+  // Sync write to design_brief_sections index (idempotent — ON CONFLICT DO NOTHING).
+  await insertBriefSection(deps.env, {
+    briefId: deps.briefId,
+    subtaskShortId: finalShortId,
+    sectionSlug: newSlug,
+    sectionTypeSlug: input.section_type_slug ?? null,
+    sortOrder: await nextSortOrder(deps.env, deps.briefId),
+  })
   let assemblyError: string | null = null
   try { const result = await executeAssembler(deps.env, deps.userId, iter.orchestrator_run_id); await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(result.output, iter.id).run(); await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, result.output) } catch (err) { assemblyError = err instanceof Error ? err.message : String(err) }
   return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ ok: true, new_section: { slug: newSlug, name: resolvedName, short_id: finalShortId, after: input.after_slug ?? null, task_type: taskType }, composer_tokens: usageTokens, cost_usd: insertedNewRow ? costUsd : 0, idempotent_recovery: !insertedNewRow, assembly_warning: assemblyError, note: insertedNewRow ? (assemblyError ? `Section added but re-assembly failed: ${assemblyError}` : `Section "${resolvedName}" added and page re-stitched.`) : `Section "${resolvedName}" was already added by a concurrent retry.` }) }
