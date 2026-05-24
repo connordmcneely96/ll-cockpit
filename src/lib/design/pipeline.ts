@@ -64,6 +64,9 @@ import {
   deriveDarkPalette,
   generateAccentAlternates,
 } from './tweaks-panel'
+import { backfillBriefSections } from './brief-sections-backfill'
+import { listBriefSections } from './brief-sections'
+import { slugFromTitle } from './section-slug'
 
 // Sprint 18Z — Cockpit API base URL where the feedback POST is routed.
 //
@@ -661,36 +664,7 @@ export async function executeAssembler(
   userId: string,
   pipelineRunId: string,
 ): Promise<{ output: string; cost_usd: number; tokens: number }> {
-  const rows = await env.DB
-    .prepare(
-      `SELECT short_id, agent_name, title, output FROM agent_subtasks
-         WHERE pipeline_run_id = ? AND user_id = ? AND status = 'done' AND output IS NOT NULL
-         ORDER BY short_id ASC`,
-    )
-    .bind(pipelineRunId, userId)
-    .all<{ short_id: string; agent_name: string; title: string; output: string }>()
-
-  let designTokens: DesignTokens | null = null
-  const sections: DesignSection[] = []
-
-  for (const row of rows.results ?? []) {
-    if (row.agent_name === 'designer') {
-      designTokens = extractJson(row.output) as DesignTokens | null
-    } else if (row.agent_name === 'composer') {
-      const match = row.title.match(/Compose\s+(.+?)\s+section/i)
-      const name = match ? match[1] : row.title.replace(/Compose\s+/i, '').replace(/\s+section/i, '')
-      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-      sections.push({ slug, name, html: extractSectionHtml(row.output) })
-    }
-  }
-
-  if (!designTokens) throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
-  if (sections.length === 0) throw new Error('ASSEMBLER: no COMPOSER section outputs found')
-
-  // Sprint 18Y — fetch skills alongside brief metadata so TweaksPanel is
-  // injected into the HTML when the brief has 'tweaks-panel' in its skills.
-  // Sprint 18Z — also fetch brief.id and current_iteration so we can build a
-  // feedbackContext for the TweaksPanel's "Send notes to designer" section.
+  // Fetch brief first — needed for backfill, skills, and feedbackContext.
   const brief = await env.DB
     .prepare(`SELECT id, client_name, business_description, skills, current_iteration FROM design_briefs WHERE orchestrator_run_id = ? AND user_id = ? LIMIT 1`)
     .bind(pipelineRunId, userId)
@@ -698,13 +672,72 @@ export async function executeAssembler(
 
   if (!brief) throw new Error('ASSEMBLER: brief metadata not found for this run')
 
+  // Load all done subtasks indexed by short_id (unordered — order comes from index below).
+  const allRows = await env.DB
+    .prepare(
+      `SELECT short_id, agent_name, title, output FROM agent_subtasks
+         WHERE pipeline_run_id = ? AND user_id = ? AND status = 'done' AND output IS NOT NULL`,
+    )
+    .bind(pipelineRunId, userId)
+    .all<{ short_id: string; agent_name: string; title: string; output: string }>()
+
+  let designTokens: DesignTokens | null = null
+  const subtaskMap = new Map<string, { agent_name: string; title: string; output: string }>()
+
+  for (const row of allRows.results ?? []) {
+    subtaskMap.set(row.short_id, row)
+    if (row.agent_name === 'designer') {
+      designTokens = extractJson(row.output) as DesignTokens | null
+    }
+  }
+
+  if (!designTokens) throw new Error('ASSEMBLER: DESIGNER tokens not found in upstream context')
+
+  // Sprint 119C-2 — order from design_brief_sections index with graceful fallback.
+  // (a) Backfill runs first (idempotent, cheap no-op after first call).
+  // (b) Order comes from the index table (sort_order ASC).
+  // (c) Fallback to short_id ASC when the index has no active rows.
+  // (d) HTML always comes from agent_subtasks — this table is the HTML source of truth.
+  let sections: DesignSection[] = []
+  let usedIndex = false
+
+  try {
+    await backfillBriefSections(env, brief.id)
+    const indexRows = await listBriefSections(env, brief.id)
+    if (indexRows.length > 0) {
+      usedIndex = true
+      for (const indexRow of indexRows) {
+        const sub = subtaskMap.get(indexRow.subtask_short_id)
+        if (sub && sub.agent_name === 'composer') {
+          const { name, slug } = slugFromTitle(sub.title)
+          sections.push({ slug, name, html: extractSectionHtml(sub.output) })
+        }
+      }
+    }
+  } catch {
+    // Backfill or index read failed — fall through to short_id fallback.
+    usedIndex = false
+    sections = []
+  }
+
+  if (!usedIndex || sections.length === 0) {
+    // GRACEFUL FALLBACK: ORDER BY short_id ASC (original behavior, always safe).
+    sections = []
+    const fallbackRows = [...(allRows.results ?? [])].sort((a, b) => a.short_id.localeCompare(b.short_id))
+    for (const row of fallbackRows) {
+      if (row.agent_name === 'composer') {
+        const { name, slug } = slugFromTitle(row.title)
+        sections.push({ slug, name, html: extractSectionHtml(row.output) })
+      }
+    }
+  }
+
+  if (sections.length === 0) throw new Error('ASSEMBLER: no COMPOSER section outputs found')
+
   const skills: string[] = brief.skills
     ? (() => { try { return JSON.parse(brief.skills) as string[] } catch { return [] } })()
     : []
 
-  // Sprint 18Z — build the feedbackContext now that we have brief.id and
-  // current_iteration. Even if skills doesn't include tweaks-panel, this is
-  // a cheap no-op inside renderFullHtml.
   const feedbackContext: FeedbackContext = {
     briefId: brief.id,
     iterationNumber: brief.current_iteration ?? null,
