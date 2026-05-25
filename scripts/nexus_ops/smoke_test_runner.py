@@ -364,7 +364,7 @@ def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str)
     rows = d1.query_rows("""SELECT model_id, alpha, beta, n_trials, n_successes,
              CAST(n_successes AS REAL) / NULLIF(n_trials, 0) as win_rate
       FROM model_bandit_params WHERE agent=? AND task_type=? AND n_trials > 0
-      ORDER BY alpha DESC""", [agent, task_type])
+      ORDER BY alpha DESC, avg_quality DESC""", [agent, task_type])
     if not rows:
         return None
     winner = rows[0]
@@ -429,11 +429,12 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         if cfg.dry_run:
                             log.info(f"    [DRY] {case['name']} — skipped"); continue
                         response = call_model(model_id, provider, case["prompt"], cfg)
-                        if response["error"]:
-                            log.warning(f"    x {case['name']}: {response['error'][:100]}")
+                        if response["error"] or not response.get("output"):
+                            err_msg = response.get("error") or "null_output"
+                            log.warning(f"    x {case['name']}: {str(err_msg)[:100]}")
                             result = {"run_id": run_id, "agent": agent, "task_type": task_type, "model_id": model_id,
                                       "provider": provider, "case_name": case["name"], "difficulty": case.get("difficulty"),
-                                      "error": response["error"], "composite_score": 0.0, "verdict": "fail",
+                                      "error": err_msg, "composite_score": 0.0, "verdict": "fail",
                                       "bandit_reward": 0.0, "latency_ms": response["latency_ms"], "cost_usd": 0.0}
                         else:
                             scores = score_with_opus(case["prompt"], response["output"], case.get("criteria", {}), cfg)
