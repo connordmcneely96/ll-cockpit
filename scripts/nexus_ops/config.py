@@ -1,15 +1,6 @@
 """
 nexus_ops/config.py
 Shared config, path resolution, and backup utilities.
-All NEXUS scripts import from here. Nothing executes on import.
-
-Usage:
-    from nexus_ops.config import Config, D1Client, backup_d1, log
-
-Environment variables required (set in .env or shell):
-    CF_ACCOUNT_ID, CF_API_TOKEN, CF_D1_DATABASE_ID,
-    CF_R2_BUCKET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-    ANTHROPIC_API_KEY, VPS_TUNNEL_URL, VPS_TUNNEL_SECRET
 """
 
 from __future__ import annotations
@@ -36,7 +27,7 @@ BACKUP_DIR   = SCRIPTS_DIR / "backups" / "local"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# Load .env — checks scripts/ first, then project root, then CWD
+# Load .env — scripts/ first, then project root, then CWD
 for _env_path in [SCRIPTS_DIR / ".env", PROJECT_ROOT / ".env", Path(".env")]:
     if _env_path.exists():
         load_dotenv(_env_path, override=False)
@@ -89,6 +80,10 @@ class Config:
         self.vps_tunnel_url = os.getenv("VPS_TUNNEL_URL", "")
         self.vps_secret     = os.getenv("VPS_TUNNEL_SECRET", "")
         self.dry_run        = os.getenv("DRY_RUN", "false").lower() == "true"
+        # R2 S3-compatible credentials (separate from CF API token)
+        # Get from: dash.cloudflare.com -> R2 -> Manage R2 API tokens
+        self.r2_access_key  = os.getenv("R2_ACCESS_KEY_ID", "")
+        self.r2_secret_key  = os.getenv("R2_SECRET_ACCESS_KEY", "")
 
     @staticmethod
     def _req(key: str) -> str:
@@ -149,23 +144,44 @@ class D1Client:
 
 # ─────────────────────────────────────────────────────────────
 # R2 CLIENT
+# R2 uses S3-compatible API with AWS Signature V4.
+# Requires R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY from:
+#   dash.cloudflare.com -> R2 -> Manage R2 API tokens -> Create token
+#
+# If credentials are not set, R2 upload is SKIPPED gracefully.
+# Local backup always runs regardless.
 # ─────────────────────────────────────────────────────────────
 class R2Client:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self.endpoint = f"https://{cfg.cf_account_id}.r2.cloudflarestorage.com"
+        self._has_credentials = bool(cfg.r2_access_key and cfg.r2_secret_key)
+        if not self._has_credentials:
+            log.debug("R2 credentials not set — R2 uploads will be skipped (local backup still runs)")
 
     def upload_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
         if self.cfg.dry_run:
             log.info(f"[DRY RUN] Would upload {len(data)} bytes to R2:{key}")
             return key
-        url = f"{self.endpoint}/{self.cfg.cf_r2_bucket}/{key}"
-        resp = httpx.put(
-            url, content=data,
-            headers={"Authorization": f"Bearer {self.cfg.cf_api_token}", "Content-Type": content_type},
-            timeout=120.0,
-        )
-        resp.raise_for_status()
+        if not self._has_credentials:
+            log.debug(f"[R2 SKIP] {key} — no R2 credentials configured")
+            return key
+        try:
+            import boto3
+            from botocore.config import Config as BotoConfig
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=f"https://{self.cfg.cf_account_id}.r2.cloudflarestorage.com",
+                aws_access_key_id=self.cfg.r2_access_key,
+                aws_secret_access_key=self.cfg.r2_secret_key,
+                config=BotoConfig(signature_version="s3v4"),
+                region_name="auto",
+            )
+            s3.put_object(Bucket=self.cfg.cf_r2_bucket, Key=key, Body=data, ContentType=content_type)
+            log.debug(f"[R2 OK] uploaded {key}")
+        except ImportError:
+            log.debug("[R2 SKIP] boto3 not installed — run: pip install boto3")
+        except Exception as e:
+            log.warning(f"[R2 WARN] upload failed for {key}: {e} — local backup preserved")
         return key
 
     def upload_json(self, key: str, obj: Any) -> str:
@@ -174,15 +190,17 @@ class R2Client:
     def close(self) -> None:
         pass
 
-    def __enter__(self):          # ← fix: was missing
+    def __enter__(self):
         return self
 
-    def __exit__(self, *_):       # ← fix: was missing
+    def __exit__(self, *_):
         self.close()
 
 
 # ─────────────────────────────────────────────────────────────
 # BACKUP UTILITY
+# Local backup ALWAYS runs. R2 upload is best-effort.
+# Never raises — a backup failure must not stop the test run.
 # ─────────────────────────────────────────────────────────────
 def backup_d1(d1: D1Client, r2: R2Client, tables: List[str], label: str = "manual") -> Path:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
@@ -190,7 +208,7 @@ def backup_d1(d1: D1Client, r2: R2Client, tables: List[str], label: str = "manua
     local_dir = BACKUP_DIR / backup_name
     local_dir.mkdir(parents=True, exist_ok=True)
     r2_prefix = f"backups/d1/{backup_name}"
-    manifest = {"timestamp": ts, "label": label, "tables": {}}
+    manifest: Dict[str, Any] = {"timestamp": ts, "label": label, "tables": {}}
     total_rows = 0
 
     for table in tables:
@@ -199,17 +217,23 @@ def backup_d1(d1: D1Client, r2: R2Client, tables: List[str], label: str = "manua
             table_data = {"rows": rows, "count": len(rows)}
             manifest["tables"][table] = {"count": len(rows), "status": "ok"}
             total_rows += len(rows)
+            # Local backup — always
             (local_dir / f"{table}.json").write_text(json.dumps(table_data, indent=2))
+            # R2 backup — best-effort
             r2.upload_json(f"{r2_prefix}/{table}.json", table_data)
             log.debug(f"  backed up {table}: {len(rows)} rows")
         except Exception as e:
             manifest["tables"][table] = {"status": "error", "error": str(e)}
-            log.warning(f"  backup failed for {table}: {e}")
+            log.warning(f"  backup warning for {table}: {e}")
 
     manifest["total_rows"] = total_rows
-    (local_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    r2.upload_json(f"{r2_prefix}/manifest.json", manifest)
-    log.info(f"Backup complete -> {local_dir} | {total_rows} rows across {len(tables)} tables")
+    try:
+        (local_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        r2.upload_json(f"{r2_prefix}/manifest.json", manifest)  # best-effort
+    except Exception as e:
+        log.warning(f"  manifest write warning: {e}")
+
+    log.info(f"Backup -> {local_dir} | {total_rows} rows | R2: {'skipped (no creds)' if not r2._has_credentials else 'attempted'}")
     return local_dir
 
 
@@ -270,7 +294,7 @@ class AnthropicClient:
             timeout=120.0,
         )
 
-    def complete(self, model: str, prompt: str, system: str = "", max_tokens: int = 1024) -> Dict:
+    def complete(self, model: str, prompt: str, system: str = "", max_tokens: int = 2048) -> Dict:
         body: Dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -282,7 +306,7 @@ class AnthropicClient:
         resp.raise_for_status()
         return resp.json()
 
-    def complete_text(self, model: str, prompt: str, system: str = "", max_tokens: int = 1024) -> str:
+    def complete_text(self, model: str, prompt: str, system: str = "", max_tokens: int = 2048) -> str:
         data = self.complete(model, prompt, system, max_tokens)
         return data["content"][0]["text"]
 
@@ -307,7 +331,8 @@ class AnthropicClient:
 
 # ─────────────────────────────────────────────────────────────
 # CF WORKERS AI EMBEDDING
-# Cost: $0.204 per M input tokens (NOT free — Workers AI paid tier)
+# Cost: $0.204 per M input tokens (NOT free)
+# Requires VPS_TUNNEL_URL to proxy to CF Workers AI
 # ─────────────────────────────────────────────────────────────
 def generate_embedding(text: str, cfg: Config) -> List[float]:
     if not cfg.vps_tunnel_url:
