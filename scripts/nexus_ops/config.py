@@ -39,7 +39,16 @@ BACKUP_DIR   = SCRIPTS_DIR / "backups" / "local"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-load_dotenv(PROJECT_ROOT / ".env", override=False)
+# Load .env — checks scripts/ first (where Connor saves it), then project root
+_env_candidates = [
+    SCRIPTS_DIR / ".env",    # C:\Users\conno\ll-cockpit\scripts\.env  <- primary
+    PROJECT_ROOT / ".env",   # C:\Users\conno\ll-cockpit\.env          <- fallback
+    Path(".env"),            # CWD fallback
+]
+for _env_path in _env_candidates:
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+        break
 
 
 # ─────────────────────────────────────────────────────────────
@@ -297,12 +306,6 @@ class AnthropicClient:
             "claude-sonnet-4-6":         (3.00, 15.00),
             "claude-opus-4-7":           (5.00, 25.00),
         }
-        # Batch API rates (50% off)
-        batch_rates = {
-            "claude-haiku-4-5-20251001": (0.50, 2.50),
-            "claude-sonnet-4-6":         (1.50, 7.50),
-            "claude-opus-4-7":           (2.50, 12.50),
-        }
         r = rates.get(model, (3.00, 15.00))
         return (input_tokens * r[0] + output_tokens * r[1]) / 1_000_000
 
@@ -318,9 +321,7 @@ class AnthropicClient:
 
 # ─────────────────────────────────────────────────────────────
 # CF WORKERS AI EMBEDDING
-# Uses bge-large-en-v1.5 (1024-dim)
-# Cost: $0.204 per M input tokens (Workers AI paid tier)
-# Free tier: 10,000 neurons/day limit — not suitable for production
+# Cost: $0.204 per M input tokens (Workers AI paid tier — NOT free)
 # Called via VPS tunnel -> /embed -> CF Workers AI
 # ─────────────────────────────────────────────────────────────
 def generate_embedding(text: str, cfg: Config) -> List[float]:
@@ -346,4 +347,4 @@ BANDIT_TABLES = [
     "cost_ledger", "artifact_registry",
 ]
 
-TS_UPDATE_THRESHOLD = 5  # Thompson Sampling: update bandit after N new rewards per (task_type, model)
+TS_UPDATE_THRESHOLD = 5  # Thompson Sampling: update bandit after N new rewards per (agent, task_type, model)
