@@ -1,0 +1,25 @@
+            {
+                "name": "cf_worker_router",
+                "difficulty": "medium",
+                "prompt": """Write a Cloudflare Worker using Hono that routes POST /api/agent/run to 12 agent handlers based on the task_type field in the JSON body.
+
+Stack context:
+- Framework: Hono v4 on Cloudflare Workers
+- TypeScript with strict types
+- Agents: NEXUS, SCOUT, INTAKE, FORGE, ATLAS, HERALD, REEL, SENTINEL, DISPATCH, ANCHOR, ORACLE, HERMES
+- Each agent handler lives at /agents/{agent_name}/run (internal HTTP)
+- Env bindings: DB (D1Database), AGENT_PROMPTS (KVNamespace), ROUTER_URL (string)
+
+The router should:
+1. Parse and validate the request body (must have task_type and payload fields)
+2. Map task_type to the correct agent (e.g. code_generate → FORGE, content_write → HERALD, intent_classify → NEXUS)
+3. Forward the request to the agent's internal URL via fetch
+4. Return the agent response with proper error handling
+5. Return 404 for unknown task_types, 400 for missing fields
+
+Include TypeScript interfaces for the request/response shapes.""",
+                "criteria": {
+                    "must_include": ["Hono", "task_type", "TypeScript", "404", "400", "interface", "fetch"],
+                    "must_not_include": ["TODO", "placeholder"]
+                }
+            },
