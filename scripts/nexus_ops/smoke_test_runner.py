@@ -40,57 +40,27 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
         "intent_classify": [
             {
                 "name": "route_build_request", "difficulty": "easy",
-                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Route this request to the correct agent. DO NOT execute the task.
-
-Agents: FORGE (code), BUILDER (UI/Cockpit), HERALD (content/copy/LinkedIn), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering/API 610/FMEA), SENTINEL (QA), ANCHOR (analytics), ORACLE (research), DISPATCH (delivery)
-
-Request: "I need a landing page for my pump testing company. Clean design, show our API 610 compliance services."
-
-State: which agents handle this (BUILDER for build, HERALD for copy), why, and what brief to pass each. Use BUILDER and HERALD explicitly.""",
+                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Classify and route incoming requests to the correct agent. DO NOT execute tasks yourself.\n\nAgents: FORGE (code), BUILDER (UI/Cockpit/landing pages), HERALD (content/copy/LinkedIn), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering/API 610/FMEA), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: I need a landing page for my pump testing company. Clean design, show our API 610 compliance services.\n\nRoute to BUILDER for the build and HERALD for the copy. State which agents handle this, why, and what brief to pass. Use BUILDER, HERALD, design, and build explicitly.",
                 "criteria": {"must_include": ["BUILDER", "HERALD", "design", "build"], "must_not_include": ["I cannot", "I am unable"]}
             },
             {
                 "name": "route_engineering_question", "difficulty": "medium",
-                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Route this request to the correct agent. DO NOT answer the engineering question.
-
-Agents: FORGE (code), BUILDER (UI), HERALD (content), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering domain — API 610, ASME, FMEA, pump calculations), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)
-
-Request: "What's the maximum allowable working pressure for a carbon steel pump casing at 300°F per API 610?"
-
-State: route to ATLAS for this engineering question, explain why, and note what API 610 and engineering context ATLAS needs.""",
+                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Classify and route incoming requests. DO NOT answer engineering questions yourself.\n\nAgents: FORGE (code), BUILDER (UI), HERALD (content), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering specialist — API 610, ASME, FMEA, pump calculations, rotating equipment), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: What is the maximum allowable working pressure for a carbon steel pump casing at 300F per API 610?\n\nRoute to ATLAS for this engineering question. State why ATLAS handles API 610 engineering queries and what context to pass. Use ATLAS, engineering, and API 610 explicitly.",
                 "criteria": {"must_include": ["ATLAS", "engineering", "API 610"]}
             },
             {
                 "name": "route_proposal_request", "difficulty": "medium",
-                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Route this request to the correct agent. DO NOT write the proposal.
-
-Agents: FORGE (code), HERALD (content), SCOUT (outreach), INTAKE (proposals/onboarding/scope extraction), ATLAS (engineering/FMEA), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)
-
-Request: "A refinery contacted us. They need FMEA documentation for 12 centrifugal pumps. Can you put together a proposal?"
-
-State: route to INTAKE to handle this proposal, explain why, and what FMEA context and pump count to pass along.""",
+                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Classify and route incoming requests. DO NOT write the proposal yourself.\n\nAgents: FORGE (code), HERALD (content), SCOUT (outreach), INTAKE (client proposals/onboarding/scope extraction), ATLAS (engineering/FMEA), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: A refinery contacted us. They need FMEA documentation for 12 centrifugal pumps. Can you put together a proposal?\n\nRoute to INTAKE to handle this proposal. State why INTAKE owns proposals and what FMEA and pump count context to pass. Use INTAKE, proposal, and FMEA explicitly.",
                 "criteria": {"must_include": ["INTAKE", "proposal", "FMEA"]}
             },
             {
                 "name": "route_ambiguous_growth", "difficulty": "hard",
-                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. This request is ambiguous — ask clarifying questions and suggest prioritization.
-
-Agents: HERALD (content), SCOUT (outreach/leads), INTAKE (proposals), ANCHOR (revenue tracking), ORACLE (market research)
-
-Request: "We need to grow faster. What should we focus on this week?"
-
-Respond with: 2-3 clarifying questions to understand the revenue gap, which agent to activate first based on highest revenue priority, and how to prioritize this week. Use words like clarify, revenue, and prioritize.""",
+                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. This request is ambiguous. Ask clarifying questions before routing.\n\nAgents: HERALD (content), SCOUT (outreach/leads), INTAKE (proposals), ANCHOR (revenue tracking), ORACLE (market research)\n\nRequest: We need to grow faster. What should we focus on this week?\n\nAsk 2-3 clarifying questions to identify the revenue gap. State which agent to activate first and how to prioritize this week. Use the words clarify, revenue, and prioritize explicitly.",
                 "criteria": {"must_include": ["clarif", "revenue", "priorit"], "must_not_include": ["I cannot help"]}
             },
             {
                 "name": "route_content_request", "difficulty": "easy",
-                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Route this request to the correct agent. DO NOT write the LinkedIn posts.
-
-Agents: FORGE (code), BUILDER (UI), HERALD (content/copy/LinkedIn posts/email), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)
-
-Request: "Write me 3 LinkedIn posts about how AI is changing mechanical engineering documentation."
-
-State: route to HERALD for this content task, explain why, and what LinkedIn and ME documentation brief to pass. Use HERALD, content, and LinkedIn explicitly.""",
+                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Classify and route incoming requests. DO NOT write the LinkedIn posts yourself.\n\nAgents: FORGE (code), BUILDER (UI), HERALD (content/copy/LinkedIn posts/email campaigns), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: Write me 3 LinkedIn posts about how AI is changing mechanical engineering documentation.\n\nRoute to HERALD for this content task. State why HERALD owns LinkedIn content, and what content brief to pass. Use HERALD, content, and LinkedIn explicitly.",
                 "criteria": {"must_include": ["HERALD", "content", "LinkedIn"]}
             },
         ],
@@ -108,14 +78,7 @@ State: route to HERALD for this content task, explain why, and what LinkedIn and
         "code_generate": [
             {
                 "name": "cf_worker_router", "difficulty": "medium",
-                "prompt": """Write a Cloudflare Worker using Hono that routes POST /api/agent/run to the correct agent handler based on task_type.
-
-Stack: Hono v4, TypeScript strict, CF Workers
-Agents: NEXUS, SCOUT, INTAKE, FORGE, ATLAS, HERALD, REEL, SENTINEL, DISPATCH, ANCHOR, ORACLE, HERMES
-Env: DB (D1Database), AGENT_PROMPTS (KVNamespace), ROUTER_URL (string)
-Task map: code_generate/code_complex→FORGE | content_write/caption_short→HERALD | intent_classify/strategic_decide→NEXUS | json_extract→INTAKE | engineering_calc/long_doc_ingest→ATLAS | qa_precheck/qa_review→SENTINEL | outreach_personalize/social_intel→SCOUT | research_summarize/genesis_score_gap→ORACLE
-
-Requirements: TypeScript interfaces, validate body (400 if missing), map task_type to agent, forward to ROUTER_URL+/agents/{agent}/run, 404 for unknown, 500 on fetch error.""",
+                "prompt": "Write a Cloudflare Worker using Hono that routes POST /api/agent/run to the correct agent handler based on task_type.\n\nStack: Hono v4, TypeScript strict, CF Workers\nAgents: NEXUS, SCOUT, INTAKE, FORGE, ATLAS, HERALD, REEL, SENTINEL, DISPATCH, ANCHOR, ORACLE, HERMES\nEnv: DB (D1Database), AGENT_PROMPTS (KVNamespace), ROUTER_URL (string)\nTask map: code_generate/code_complex->FORGE | content_write/caption_short->HERALD | intent_classify/strategic_decide->NEXUS | json_extract->INTAKE | engineering_calc/long_doc_ingest->ATLAS | qa_precheck/qa_review->SENTINEL | outreach_personalize/social_intel->SCOUT | research_summarize/genesis_score_gap->ORACLE\n\nRequirements: TypeScript interfaces, validate body (400 if missing), map task_type to agent, forward to ROUTER_URL+/agents/{agent}/run, 404 for unknown, 500 on fetch error.",
                 "criteria": {"must_include": ["Hono", "task_type", "TypeScript", "404", "400", "interface", "FORGE", "HERALD"], "must_not_include": ["TODO", "placeholder"]}
             },
             {"name": "d1_query_complex", "difficulty": "medium",
@@ -132,20 +95,7 @@ Requirements: TypeScript interfaces, validate body (400 if missing), map task_ty
              "criteria": {"must_include": ["bearer", "env", "error", "run_id", "TypeScript"]}},
             {
                 "name": "supabase_vector_search", "difficulty": "hard",
-                "prompt": """Write a Python function for semantic search over past agent task executions.
-
-Table: semantic_task_index — columns: id(uuid), d1_execution_id(text), agent(text), task_type(text), model_used(text), quality_score(real), content_snippet(text), embedding(vector(1024)), created_at(timestamptz)
-
-RPC: search_similar_tasks(query_embedding vector(1024), filter_agent text DEFAULT NULL, filter_task_type text DEFAULT NULL, min_quality real DEFAULT 0.0, result_limit int DEFAULT 10) → (d1_execution_id, agent, task_type, model_used, quality_score, content_snippet, similarity)
-
-Embed endpoint: POST http://localhost:8765/embed {"text": "..."} → {"embedding": [...]}
-
-Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, limit=5) → list[dict]:
-1. httpx call to embed endpoint
-2. supabase.rpc("search_similar_tasks", {...})
-3. return list with keys: d1_execution_id, agent, task_type, model_used, quality_score, similarity, content_snippet
-4. init supabase client from SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY env vars
-5. try/except on errors""",
+                "prompt": "Write a Python function for semantic search over past agent task executions.\n\nTable: semantic_task_index — columns: id(uuid), d1_execution_id(text), agent(text), task_type(text), model_used(text), quality_score(real), content_snippet(text), embedding(vector(1024)), created_at(timestamptz)\n\nRPC: search_similar_tasks(query_embedding vector(1024), filter_agent text DEFAULT NULL, filter_task_type text DEFAULT NULL, min_quality real DEFAULT 0.0, result_limit int DEFAULT 10) -> (d1_execution_id, agent, task_type, model_used, quality_score, content_snippet, similarity)\n\nEmbed endpoint: POST http://localhost:8765/embed {\"text\": \"...\"} -> {\"embedding\": [...]}\n\nWrite find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, limit=5) -> list[dict]: 1) httpx call to embed, 2) supabase.rpc(search_similar_tasks), 3) return list with d1_execution_id/agent/task_type/model_used/quality_score/similarity/content_snippet, 4) init supabase client from SUPABASE_URL+SUPABASE_SERVICE_ROLE_KEY env vars, 5) try/except on errors.",
                 "criteria": {"must_include": ["search_similar_tasks", "supabase", "embedding", "httpx", "SUPABASE_URL"], "must_not_include": ["TODO"]}
             },
         ],
@@ -154,7 +104,7 @@ Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, li
              "prompt": "Design a Thompson Sampling router update system: receive reward signals via CF Queue, batch per (agent, task_type, model_id) at threshold=5, update Beta params in D1, refresh agent_model_routing with empirical winner. Show TypeScript interfaces and core update logic.",
              "criteria": {"must_include": ["alpha", "beta", "Queue", "D1", "interface", "UNIQUE"], "must_not_include": ["TODO"]}},
             {"name": "multi_agent_orchestration", "difficulty": "hard",
-             "prompt": "Write TypeScript orchestration for NEXUS handling an FMEA request: classify intent → call INTAKE for scope → call ATLAS for engineering context → call FORGE for template → compile unified response. Handle failures at each step.",
+             "prompt": "Write TypeScript orchestration for NEXUS handling an FMEA request: classify intent -> call INTAKE for scope -> call ATLAS for engineering context -> call FORGE for template -> compile unified response. Handle failures at each step.",
              "criteria": {"must_include": ["INTAKE", "ATLAS", "FORGE", "error", "Promise", "async"]}},
         ],
     },
@@ -207,13 +157,13 @@ Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, li
     "SENTINEL": {
         "qa_precheck": [
             {"name": "code_bug_check", "difficulty": "easy",
-             "prompt": "Quick check: `function calculateRPN(severity: number, occurrence: number, detection: number) { return severity * occurrence * detection; }` — used in production FMEA system for API 610 compliance. Issues?",
+             "prompt": "Quick check: `function calculateRPN(severity: number, occurrence: number, detection: number) { return severity * occurrence * detection; }` used in production FMEA system for API 610 compliance. Issues?",
              "criteria": {"must_include": ["validation", "zero", "range", "check"]}},
             {"name": "content_accuracy_check", "difficulty": "easy",
              "prompt": "Safe to send to refinery engineering team? 'Our AI achieves 100% accuracy on FMEA documentation, eliminates all human error. Guaranteed compliance with API 610, ASME, and all industry standards.'",
              "criteria": {"must_include": ["misleading", "accuracy", "claim", "liability"], "must_not_include": ["looks good", "seems fine"]}},
             {"name": "sql_injection_check", "difficulty": "medium",
-             "prompt": "Security check: `const query = 'SELECT * FROM agents WHERE agent_name = ' + userInput;` — used in Cockpit API for agent lookup.",
+             "prompt": "Security check: `const query = 'SELECT * FROM agents WHERE agent_name = ' + userInput;` used in Cockpit API for agent lookup.",
              "criteria": {"must_include": ["injection", "parameterized", "unsafe", "prepared"]}},
         ],
         "qa_review": [
@@ -224,7 +174,7 @@ Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, li
              "prompt": "Review before sending to pump manufacturer: 'We use AI to automatically complete your FMEA. Our system knows exactly what failure modes to assign. AI handles everything, no engineer review needed. Delivery 2 weeks, guaranteed.' Flag issues.",
              "criteria": {"must_include": ["engineer review", "liability", "overstatement", "guarantee"], "must_not_include": ["looks good"]}},
             {"name": "code_pr_review", "difficulty": "hard",
-             "prompt": "Review before merging: `export async function routeToModel(taskType: string) { const models = await db.query('SELECT * FROM model_bandit_params'); const winner = models[0]; return callModel(winner.model_id); }` — Thompson Sampling router for production.",
+             "prompt": "Review before merging: `export async function routeToModel(taskType: string) { const models = await db.query('SELECT * FROM model_bandit_params'); const winner = models[0]; return callModel(winner.model_id); }` Thompson Sampling router for production.",
              "criteria": {"must_include": ["sampling", "alpha", "beta", "filter", "error handling"]}},
         ],
     },
@@ -232,13 +182,13 @@ Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, li
     "ATLAS": {
         "engineering_calc": [
             {"name": "npsh_calculation", "difficulty": "hard",
-             "prompt": "Calculate NPSHa: atmospheric suction (14.7 psia), liquid level 8ft above pump, friction loss 2.5ft, water at 180°F (VP=7.51 psia, density=60.6 lb/ft³). Show formula, units, compare to NPSHr=12ft.",
+             "prompt": "Calculate NPSHa: atmospheric suction (14.7 psia), liquid level 8ft above pump, friction loss 2.5ft, water at 180F (VP=7.51 psia, density=60.6 lb/ft3). Show formula, units, compare to NPSHr=12ft.",
              "criteria": {"must_include": ["NPSHa", "vapor pressure", "formula", "ft", "psia"]}},
             {"name": "api610_pressure_rating", "difficulty": "hard",
-             "prompt": "Minimum casing pressure rating per API 610 12th edition: Group II pump, suction pressure 50 psig, differential 300 psig. Calculate MAWP and hydrostatic test pressure.",
+             "prompt": "Minimum casing pressure rating per API 610 12th edition: Group II pump, suction 50 psig, differential 300 psig. Calculate MAWP and hydrostatic test pressure.",
              "criteria": {"must_include": ["MAWP", "test pressure", "API 610", "psig", "Group II"]}},
             {"name": "shaft_critical_speed", "difficulty": "hard",
-             "prompt": "First critical speed: L=30in between bearings, shaft OD=1.75in solid steel (E=30e6 psi, ρ=0.283 lb/in³), impeller weight=15 lbs at midspan. Use Rayleigh's method. Above or below 3560 RPM?",
+             "prompt": "First critical speed: L=30in between bearings, shaft OD=1.75in solid steel (E=30e6 psi, density=0.283 lb/in3), impeller weight=15 lbs at midspan. Use Rayleigh method. Above or below 3560 RPM?",
              "criteria": {"must_include": ["critical speed", "RPM", "Rayleigh", "formula", "3560"]}},
         ],
         "long_doc_ingest": [
@@ -306,7 +256,7 @@ Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, li
     "BUILDER": {
         "vision_check": [
             {"name": "ui_layout_assessment", "difficulty": "medium",
-             "prompt": "Describe a well-designed Cockpit routing intelligence dashboard: shows winning model per agent/task_type, convergence status, win rates as bars, cost per model, 'run smoke test' button. Layout, color coding, data hierarchy for a founder checking daily.",
+             "prompt": "Describe a well-designed Cockpit routing intelligence dashboard: shows winning model per agent/task_type, convergence status, win rates as bars, cost per model, run smoke test button. Layout, color coding, data hierarchy for a founder checking daily.",
              "criteria": {"must_include": ["layout", "color", "hierarchy", "win rate", "convergence"]}},
         ],
         "code_generate": [
@@ -323,11 +273,7 @@ Write find_similar_tasks(query, agent=None, task_type=None, min_quality=0.75, li
 TEST_CASES["META_COGNITION"] = {
     "qa_review": [
         {"name": "prompt_quality_analysis", "difficulty": "hard",
-         "prompt": """Analyze and rewrite this agent system prompt:
-
-CURRENT: 'You are HERALD, the content agent. Write good content for Connor's business. Make LinkedIn posts, emails, and other content. Be professional and helpful. Write about engineering and AI topics. Help Connor grow his business.'
-
-Context: HERALD serves a ME building AI tools for process industries. Quality score 0.62 over 20 tasks. Rewrite to score 0.85+.""",
+         "prompt": "Analyze and rewrite this agent system prompt:\n\nCURRENT: 'You are HERALD, the content agent. Write good content for Connor's business. Make LinkedIn posts, emails, and other content. Be professional and helpful. Write about engineering and AI topics. Help Connor grow his business.'\n\nContext: HERALD serves a ME building AI tools for process industries. Quality score 0.62 over 20 tasks. Rewrite to score 0.85+.",
          "criteria": {"must_include": ["mechanical engineer", "FMEA", "API 610", "output schema"], "must_not_include": ["be helpful", "be professional"]}},
         {"name": "routing_decision_audit", "difficulty": "hard",
          "prompt": "Audit: FORGE/code_generate routing to claude-sonnet-4-6 (win_rate=0.84, n_trials=47). New test shows moonshotai/kimi-k2.6 at 0.89 same cases, 40% lower cost. Switch? What criteria govern the decision? Risks of switching mid-sprint?",
@@ -456,7 +402,6 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
 
     with D1Client(cfg) as d1, R2Client(cfg) as r2:
         backup_d1(d1, r2, ["model_bandit_params", "agent_model_routing", "smoke_test_results"], f"pre_smoke_{run_id[:8]}")
-
         sql, params = "WHERE active=1", []
         if provider_filter:
             sql += " AND provider=?"; params.append(provider_filter)
