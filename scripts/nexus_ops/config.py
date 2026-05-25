@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,8 +27,6 @@ from dotenv import load_dotenv
 
 # ─────────────────────────────────────────────────────────────
 # PATH RESOLUTION
-# All paths resolve relative to this file, not CWD.
-# Safe to run from any directory on Windows or Linux.
 # ─────────────────────────────────────────────────────────────
 SCRIPTS_DIR  = Path(__file__).parent.parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent.resolve()
@@ -39,13 +36,8 @@ BACKUP_DIR   = SCRIPTS_DIR / "backups" / "local"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# Load .env — checks scripts/ first (where Connor saves it), then project root
-_env_candidates = [
-    SCRIPTS_DIR / ".env",    # C:\Users\conno\ll-cockpit\scripts\.env  <- primary
-    PROJECT_ROOT / ".env",   # C:\Users\conno\ll-cockpit\.env          <- fallback
-    Path(".env"),            # CWD fallback
-]
-for _env_path in _env_candidates:
+# Load .env — checks scripts/ first, then project root, then CWD
+for _env_path in [SCRIPTS_DIR / ".env", PROJECT_ROOT / ".env", Path(".env")]:
     if _env_path.exists():
         load_dotenv(_env_path, override=False)
         break
@@ -86,19 +78,17 @@ log = get_logger("nexus_ops")
 # CONFIG
 # ─────────────────────────────────────────────────────────────
 class Config:
-    """Single source of truth for env config. Raises on missing required vars."""
-
     def __init__(self) -> None:
-        self.cf_account_id   = self._req("CF_ACCOUNT_ID")
-        self.cf_api_token    = self._req("CF_API_TOKEN")
-        self.cf_d1_db_id     = self._req("CF_D1_DATABASE_ID")
-        self.cf_r2_bucket    = self._req("CF_R2_BUCKET")
-        self.supabase_url    = self._req("SUPABASE_URL")
-        self.supabase_key    = self._req("SUPABASE_SERVICE_ROLE_KEY")
-        self.anthropic_key   = self._req("ANTHROPIC_API_KEY")
-        self.vps_tunnel_url  = os.getenv("VPS_TUNNEL_URL", "")
-        self.vps_secret      = os.getenv("VPS_TUNNEL_SECRET", "")
-        self.dry_run         = os.getenv("DRY_RUN", "false").lower() == "true"
+        self.cf_account_id  = self._req("CF_ACCOUNT_ID")
+        self.cf_api_token   = self._req("CF_API_TOKEN")
+        self.cf_d1_db_id    = self._req("CF_D1_DATABASE_ID")
+        self.cf_r2_bucket   = self._req("CF_R2_BUCKET")
+        self.supabase_url   = self._req("SUPABASE_URL")
+        self.supabase_key   = self._req("SUPABASE_SERVICE_ROLE_KEY")
+        self.anthropic_key  = self._req("ANTHROPIC_API_KEY")
+        self.vps_tunnel_url = os.getenv("VPS_TUNNEL_URL", "")
+        self.vps_secret     = os.getenv("VPS_TUNNEL_SECRET", "")
+        self.dry_run        = os.getenv("DRY_RUN", "false").lower() == "true"
 
     @staticmethod
     def _req(key: str) -> str:
@@ -109,7 +99,7 @@ class Config:
 
 
 # ─────────────────────────────────────────────────────────────
-# CLOUDFLARE D1 CLIENT
+# D1 CLIENT
 # ─────────────────────────────────────────────────────────────
 class D1Client:
     BASE = "https://api.cloudflare.com/client/v4"
@@ -117,10 +107,7 @@ class D1Client:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self._client = httpx.Client(
-            headers={
-                "Authorization": f"Bearer {cfg.cf_api_token}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {cfg.cf_api_token}", "Content-Type": "application/json"},
             timeout=60.0,
         )
 
@@ -187,22 +174,22 @@ class R2Client:
     def close(self) -> None:
         pass
 
+    def __enter__(self):          # ← fix: was missing
+        return self
+
+    def __exit__(self, *_):       # ← fix: was missing
+        self.close()
+
 
 # ─────────────────────────────────────────────────────────────
 # BACKUP UTILITY
-# Always call before any destructive D1 operation.
 # ─────────────────────────────────────────────────────────────
 def backup_d1(d1: D1Client, r2: R2Client, tables: List[str], label: str = "manual") -> Path:
-    """
-    Dump specified D1 tables to timestamped JSON backup.
-    Writes to local disk AND R2. Returns local backup dir Path.
-    """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     backup_name = f"{ts}_{label}"
     local_dir = BACKUP_DIR / backup_name
     local_dir.mkdir(parents=True, exist_ok=True)
     r2_prefix = f"backups/d1/{backup_name}"
-
     manifest = {"timestamp": ts, "label": label, "tables": {}}
     total_rows = 0
 
@@ -248,7 +235,7 @@ class SupabaseClient:
         resp = self._client.post(
             f"{self.url}/rest/v1/{table}",
             json=rows,
-            headers={**self._client.headers, "Prefer": f"resolution=merge-duplicates,return=minimal"},
+            headers={**self._client.headers, "Prefer": "resolution=merge-duplicates,return=minimal"},
             params={"on_conflict": on_conflict},
         )
         resp.raise_for_status()
@@ -300,7 +287,6 @@ class AnthropicClient:
         return data["content"][0]["text"]
 
     def estimate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        # Verified rates USD per 1M tokens — May 2026
         rates = {
             "claude-haiku-4-5-20251001": (1.00, 5.00),
             "claude-sonnet-4-6":         (3.00, 15.00),
@@ -321,8 +307,7 @@ class AnthropicClient:
 
 # ─────────────────────────────────────────────────────────────
 # CF WORKERS AI EMBEDDING
-# Cost: $0.204 per M input tokens (Workers AI paid tier — NOT free)
-# Called via VPS tunnel -> /embed -> CF Workers AI
+# Cost: $0.204 per M input tokens (NOT free — Workers AI paid tier)
 # ─────────────────────────────────────────────────────────────
 def generate_embedding(text: str, cfg: Config) -> List[float]:
     if not cfg.vps_tunnel_url:
@@ -347,4 +332,4 @@ BANDIT_TABLES = [
     "cost_ledger", "artifact_registry",
 ]
 
-TS_UPDATE_THRESHOLD = 5  # Thompson Sampling: update bandit after N new rewards per (agent, task_type, model)
+TS_UPDATE_THRESHOLD = 5
