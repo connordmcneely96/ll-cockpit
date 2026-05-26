@@ -38,4 +38,5 @@ index_name = "oracle-research"
 crons = [
   "0 13 * * *",   # 7am CST — full pipeline (fetch + summarize + vectorize + digest)
   "0 * * * *",    # every hour — fetch only (keeps queue populated)
+  "*/15 * * * *", # every 15 min — agent heartbeat (reaper + drain + stall check)
 ]
