@@ -55,7 +55,10 @@ export async function cascadeGoal(
   const deptHeadDisplay = deptHead.display_name // e.g. 'SCOUT'
 
   // Step 2: emit NEXUS → dept_head bus message (goal dispatch)
-  const { conversationId } = await emitMessage(env, {
+  // NOTE: dispatch_dag intentionally OMITTED — the cascade runs the wave
+  // directly (Step 6). Including dispatch_dag would cause double-execution
+  // if this message were ever drained through processMessage.
+  const { id: dispatchMsgId, conversationId } = await emitMessage(env, {
     userId,
     conversationId: input.conversationId,
     fromAgent: 'NEXUS',
@@ -64,7 +67,7 @@ export async function cascadeGoal(
     messageType: 'request',
     subject: `GOAL: ${goal.slice(0, 120)}`,
     body: goal,
-    payloadJson: JSON.stringify({ dispatch_dag: true, department }),
+    payloadJson: JSON.stringify({ department }),
   })
 
   // Step 3: decompose the goal into subtasks (REUSED — not reimplemented)
@@ -115,7 +118,7 @@ export async function cascadeGoal(
     `reassignments=${reassignments.length}, ` +
     `cost=$${waveResult.total_cost_usd.toFixed(4)}`
 
-  await emitMessage(env, {
+  const { id: responseMsgId } = await emitMessage(env, {
     userId,
     conversationId,
     fromAgent: deptHeadDisplay,
@@ -136,6 +139,16 @@ export async function cascadeGoal(
       stopped_reason: waveResult.stopped_reason,
     }),
   })
+
+  // Step 8: backfill task_id + mark both dispatch and response messages terminal.
+  // These messages were emitted for traceability — the cascade already ran
+  // the wave directly, so they must NOT be re-processed via the drain loop.
+  const now = Math.floor(Date.now() / 1000)
+  await env.DB.prepare(
+    `UPDATE agent_messages SET task_id = ?, status = 'done', processed_at = ? WHERE id IN (?, ?)`,
+  )
+    .bind(runId, now, dispatchMsgId, responseMsgId)
+    .run()
 
   return {
     conversationId,
