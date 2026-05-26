@@ -16,7 +16,20 @@
 import type { CloudflareEnv } from '@/types'
 import { decomposeTask, persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
-import { waitUntil } from 'cloudflare:workers'
+import { getCloudflareContext } from '@opennextjs/cloudflare'
+
+function runInBackground(promise: Promise<unknown>): void {
+  try {
+    const { ctx } = getCloudflareContext()
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(promise)
+      return
+    }
+  } catch {
+    // getCloudflareContext threw (outside request/cron context) — fall through
+  }
+  promise.catch(() => {})
+}
 
 // ── AgentMessageRow ─────────────────────────────────────────────────────────
 
@@ -288,9 +301,9 @@ export async function processMessage(
         .bind(runId, messageId)
         .run()
 
-      // Hand the wave to waitUntil — caller returns immediately after persist.
+      // Hand the wave to the background — caller returns immediately after persist.
       // The threaded reply emits when the wave completes in the background.
-      waitUntil(
+      runInBackground(
         runAutoWave(env, apiKey, msg.user_id, runId, {})
           .then(async (waveResult) => {
             const summary =
