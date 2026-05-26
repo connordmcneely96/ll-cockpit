@@ -2,6 +2,10 @@
 """
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — real platform scenarios, empirical routing.
+
+Key fix: score_with_opus now retries up to 3 times with exponential backoff
+to handle Anthropic rate limits when GHA runs fire concurrently.
+Fallback scores (0.500) are flagged and excluded from bandit updates.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ from nexus_ops.config import Config, D1Client, R2Client, AnthropicClient, backup
 log = get_logger("smoke_test_runner")
 
 SCORER_MODEL = "claude-opus-4-7"
+SCORE_RETRY_ATTEMPTS = 3
+SCORE_RETRY_BASE_DELAY = 10  # seconds — doubles each retry
 
 SCORER_SYSTEM = """
 You are a strict QA evaluator for an AI agent platform serving mechanical engineering and digital services clients.
@@ -340,24 +346,35 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
 
 
 def score_with_opus(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Dict:
+    """
+    Score with Opus 4.7. Retries up to SCORE_RETRY_ATTEMPTS times with exponential
+    backoff to handle Anthropic rate limits from concurrent GHA runs.
+    Returns None on all retries failing — caller must handle None and skip bandit update.
+    """
     prompt = f"Task:\n{task_prompt[:1000]}\n\nResponse:\n{output[:4000]}\n\nCriteria:\n{json.dumps(criteria)}\n\nScore strictly. Output only JSON."
-    try:
-        claude = AnthropicClient(cfg)
-        start = time.monotonic()
-        raw = claude.complete_text(model=SCORER_MODEL, prompt=prompt, system=SCORER_SYSTEM, max_tokens=512)
-        latency = int((time.monotonic()-start)*1000)
-        claude.close()
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1].lstrip("json").strip()
-        scores = json.loads(raw)
-        scores["scoring_latency_ms"] = latency
-        return scores
-    except Exception as e:
-        log.warning(f"Opus scoring failed: {e}")
-        return {"score_accuracy": 0.5, "score_completeness": 0.5, "score_tone": 0.5,
-                "score_criteria_met": 0.5, "composite_score": 0.5,
-                "verdict": "conditional", "notes": f"Scoring error: {e}", "scoring_latency_ms": 0}
+
+    for attempt in range(SCORE_RETRY_ATTEMPTS):
+        try:
+            claude = AnthropicClient(cfg)
+            start = time.monotonic()
+            raw = claude.complete_text(model=SCORER_MODEL, prompt=prompt, system=SCORER_SYSTEM, max_tokens=512)
+            latency = int((time.monotonic()-start)*1000)
+            claude.close()
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1].lstrip("json").strip()
+            scores = json.loads(raw)
+            scores["scoring_latency_ms"] = latency
+            scores["scoring_fallback"] = False
+            return scores
+        except Exception as e:
+            delay = SCORE_RETRY_BASE_DELAY * (2 ** attempt)
+            if attempt < SCORE_RETRY_ATTEMPTS - 1:
+                log.warning(f"Opus scoring attempt {attempt+1} failed: {e} — retrying in {delay}s")
+                time.sleep(delay)
+            else:
+                log.error(f"Opus scoring failed after {SCORE_RETRY_ATTEMPTS} attempts: {e} — result will be SKIPPED from bandit")
+                return None  # Caller checks for None and skips bandit update
 
 
 def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str) -> Optional[str]:
@@ -398,7 +415,8 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
     now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
     summary = {"run_id": run_id, "started_at": datetime.now(timezone.utc).isoformat(),
                "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
-               "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run, "errors": []}
+               "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
+               "errors": [], "scoring_skipped": 0}
 
     with D1Client(cfg) as d1, R2Client(cfg) as r2:
         backup_d1(d1, r2, ["model_bandit_params", "agent_model_routing", "smoke_test_results"], f"pre_smoke_{run_id[:8]}")
@@ -428,7 +446,9 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                     for case in cases:
                         if cfg.dry_run:
                             log.info(f"    [DRY] {case['name']} — skipped"); continue
+
                         response = call_model(model_id, provider, case["prompt"], cfg)
+
                         if response["error"] or not response.get("output"):
                             err_msg = response.get("error") or "null_output"
                             log.warning(f"    x {case['name']}: {str(err_msg)[:100]}")
@@ -436,19 +456,40 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                                       "provider": provider, "case_name": case["name"], "difficulty": case.get("difficulty"),
                                       "error": err_msg, "composite_score": 0.0, "verdict": "fail",
                                       "bandit_reward": 0.0, "latency_ms": response["latency_ms"], "cost_usd": 0.0}
-                        else:
-                            scores = score_with_opus(case["prompt"], response["output"], case.get("criteria", {}), cfg)
-                            in_rate = float(model.get("cost_input_per_1m") or 0)
-                            out_rate = float(model.get("cost_output_per_1m") or 0)
-                            cost = response["cost_usd"] or ((response["input_tokens"]*in_rate + response["output_tokens"]*out_rate)/1_000_000)
-                            result = {"run_id": run_id, "agent": agent, "task_type": task_type, "model_id": model_id,
-                                      "provider": provider, "case_name": case["name"], "difficulty": case.get("difficulty"),
-                                      "output_text": response["output"], "latency_ms": response["latency_ms"],
-                                      "input_tokens": response["input_tokens"], "output_tokens": response["output_tokens"],
-                                      "cost_usd": round(cost, 8), "bandit_reward": 1.0 if scores["composite_score"] >= 0.75 else 0.0, **scores}
-                            model_scores.append(scores["composite_score"]); model_results_batch.append(result)
-                            summary["total_cost_usd"] += cost
-                            log.info(f"    + {case['name']:40} score={scores['composite_score']:.3f} [{scores['verdict']}] {response['latency_ms']}ms")
+                            all_results.append(result)
+                            # Write error result to D1
+                            result_id = str(uuid.uuid4())
+                            d1.execute("""INSERT OR IGNORE INTO smoke_test_results
+                                (id, run_id, case_id, model_id, latency_ms, cost_usd,
+                                 composite_score, opus_verdict, opus_notes, bandit_reward, bandit_seeded, tested_at)
+                              VALUES (?,?,?,?,?,?,?,?,?,?,0,?)""",
+                              [result_id, run_id, case["name"], model_id,
+                               result.get("latency_ms"), 0.0, 0.0, "fail", err_msg, 0.0, now_ts])
+                            continue
+
+                        # Score with retry — returns None if all retries fail
+                        scores = score_with_opus(case["prompt"], response["output"], case.get("criteria", {}), cfg)
+
+                        if scores is None:
+                            # Scoring failed after all retries — skip this result entirely
+                            # Do NOT write to D1 and do NOT update bandit params
+                            summary["scoring_skipped"] += 1
+                            log.warning(f"    SKIP {case['name']} — scoring failed, result excluded from bandit")
+                            continue
+
+                        in_rate = float(model.get("cost_input_per_1m") or 0)
+                        out_rate = float(model.get("cost_output_per_1m") or 0)
+                        cost = response["cost_usd"] or ((response["input_tokens"]*in_rate + response["output_tokens"]*out_rate)/1_000_000)
+                        result = {"run_id": run_id, "agent": agent, "task_type": task_type, "model_id": model_id,
+                                  "provider": provider, "case_name": case["name"], "difficulty": case.get("difficulty"),
+                                  "output_text": response["output"], "latency_ms": response["latency_ms"],
+                                  "input_tokens": response["input_tokens"], "output_tokens": response["output_tokens"],
+                                  "cost_usd": round(cost, 8),
+                                  "bandit_reward": 1.0 if scores["composite_score"] >= 0.75 else 0.0, **scores}
+                        model_scores.append(scores["composite_score"])
+                        model_results_batch.append(result)
+                        summary["total_cost_usd"] += cost
+                        log.info(f"    + {case['name']:40} score={scores['composite_score']:.3f} [{scores['verdict']}] {response['latency_ms']}ms")
 
                         all_results.append(result)
                         result_id = str(uuid.uuid4())
@@ -463,6 +504,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                            result.get("score_criteria_met"), result.get("composite_score"), result.get("verdict"),
                            result.get("notes"), result.get("bandit_reward"), now_ts])
 
+                    # Only update bandit if we have valid (non-fallback) scores
                     if model_scores and not cfg.dry_run:
                         avg_score = sum(model_scores)/len(model_scores)
                         reward = 1.0 if avg_score >= 0.75 else 0.0
@@ -497,7 +539,8 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
                        {"run_id": run_id, "filters": summary["filters"], "total_cost_usd": summary["total_cost_usd"],
-                        "routing_updates": summary["routing_updates"], "total_results": len(all_results)})
+                        "routing_updates": summary["routing_updates"], "total_results": len(all_results),
+                        "scoring_skipped": summary["scoring_skipped"]})
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/full_results.json", {"run_id": run_id, "results": all_results})
         log.info(f"\nR2 backup: smoke_tests/{date_str}/{run_id}/")
 
@@ -515,6 +558,7 @@ if __name__ == "__main__":
     result = run_smoke_tests(provider_filter=args.provider, agent_filter=args.agent, task_type_filter=args.task_type)
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
     print(f"  Results: {result['total_results']}  Cost: ${result['total_cost_usd']:.4f}  DryRun: {result['dry_run']}")
+    print(f"  Scoring skipped (rate limit): {result['scoring_skipped']}")
     if result["routing_updates"]:
         print(f"\n  ROUTING TABLE UPDATES ({len(result['routing_updates'])}):")
         for u in result["routing_updates"]:
