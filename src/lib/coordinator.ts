@@ -16,8 +16,9 @@
 import type { CloudflareEnv } from '@/types'
 import { decomposeTask, persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
+import { waitUntil } from 'cloudflare:workers'
 
-// ── AgentMessageRow ─────────────────────────────────────────────────────────
+// ── AgentMessageRow ───────────────────────────────────────────────
 
 export interface AgentMessageRow {
   id: string
@@ -45,7 +46,7 @@ export interface AgentMessageRow {
   ttl_seconds: number | null
 }
 
-// ── emitMessage ──────────────────────────────────────────────────────────────
+// ── emitMessage ───────────────────────────────────────────────────
 
 export interface EmitMessageInput {
   userId: string
@@ -105,7 +106,7 @@ export async function emitMessage(
   return { id, conversationId }
 }
 
-// ── getMessage / listMessages ────────────────────────────────────────────────
+// ── getMessage / listMessages ───────────────────────────────────────
 
 export async function getMessage(
   env: CloudflareEnv,
@@ -151,7 +152,7 @@ export async function listMessages(
   return result.results ?? []
 }
 
-// ── routeMessage ─────────────────────────────────────────────────────────────
+// ── routeMessage ───────────────────────────────────────────────
 //
 // v1 capability gate checks:
 //   ENFORCED: to_agent must exist in agent_registry AND active = 1.
@@ -232,7 +233,7 @@ export async function routeMessage(
   return { routed: true, status: 'delivered' }
 }
 
-// ── processMessage ───────────────────────────────────────────────────────────
+// ── processMessage ─────────────────────────────────────────────
 //
 // v1 handler dispatch rule (documented):
 //   DAG handler: message_type = 'request' AND (payload_json contains
@@ -266,11 +267,9 @@ export async function processMessage(
     const isDagDispatch = shouldDispatchToDAG(msg)
 
     if (isDagDispatch) {
-      // Bus → DAG → Bus round-trip
-      // 1. Decompose the task
+      // Bus → DAG → Bus round-trip (async: wave runs in background via waitUntil)
       const decomposed = await decomposeTask(env, apiKey, msg.user_id, msg.body)
 
-      // 2. Persist the decomposition (creates orchestrator run + subtasks)
       const { runId } = await persistDecomposition(env.DB, {
         userId: msg.user_id,
         originalTask: msg.body,
@@ -283,46 +282,56 @@ export async function processMessage(
       })
       dagRunId = runId
 
-      // 3. Execute the wave — the DAG muscle does the real work
-      const waveResult = await runAutoWave(env, apiKey, msg.user_id, runId, {})
-
-      // 4. Update this message's task_id to the run so it's traceable
       await env.DB.prepare(
         `UPDATE agent_messages SET task_id = ? WHERE id = ?`,
       )
         .bind(runId, messageId)
         .run()
 
-      // 5. Emit a response message threaded back to the sender
-      const summary =
-        `DAG run ${runId}: executed=${waveResult.executed}, failed=${waveResult.failed}, ` +
-        `cost=$${waveResult.total_cost_usd.toFixed(4)}, stopped=${waveResult.stopped_reason}`
+      // Hand the wave to waitUntil — caller returns immediately after persist.
+      // The threaded reply emits when the wave completes in the background.
+      waitUntil(
+        runAutoWave(env, apiKey, msg.user_id, runId, {})
+          .then(async (waveResult) => {
+            const summary =
+              `DAG run ${runId}: executed=${waveResult.executed}, failed=${waveResult.failed}, ` +
+              `cost=$${waveResult.total_cost_usd.toFixed(4)}, stopped=${waveResult.stopped_reason}`
 
-      await emitMessage(env, {
-        userId: msg.user_id,
-        conversationId: msg.conversation_id,
-        fromAgent: msg.to_agent,
-        toAgent: msg.from_agent,
-        viaAgent: msg.via_agent,
-        parentMessageId: msg.id,
-        taskId: runId,
-        messageType: 'response',
-        priority: msg.priority,
-        subject: msg.subject ? `RE: ${msg.subject}` : undefined,
-        body: summary,
-        payloadJson: JSON.stringify({
-          run_id: runId,
-          executed: waveResult.executed,
-          failed: waveResult.failed,
-          skipped: waveResult.skipped,
-          total_cost_usd: waveResult.total_cost_usd,
-          total_tokens: waveResult.total_tokens,
-          waves: waveResult.waves,
-          stopped_reason: waveResult.stopped_reason,
-          finalized: waveResult.finalized ?? false,
-          preview_url: waveResult.preview_url ?? null,
-        }),
-      })
+            await emitMessage(env, {
+              userId: msg.user_id,
+              conversationId: msg.conversation_id,
+              fromAgent: msg.to_agent,
+              toAgent: msg.from_agent,
+              viaAgent: msg.via_agent,
+              parentMessageId: msg.id,
+              taskId: runId,
+              messageType: 'response',
+              priority: msg.priority,
+              subject: msg.subject ? `RE: ${msg.subject}` : undefined,
+              body: summary,
+              payloadJson: JSON.stringify({
+                run_id: runId,
+                executed: waveResult.executed,
+                failed: waveResult.failed,
+                skipped: waveResult.skipped,
+                total_cost_usd: waveResult.total_cost_usd,
+                total_tokens: waveResult.total_tokens,
+                waves: waveResult.waves,
+                stopped_reason: waveResult.stopped_reason,
+                finalized: waveResult.finalized ?? false,
+                preview_url: waveResult.preview_url ?? null,
+              }),
+            })
+          })
+          .catch(async (err) => {
+            const errorLog = err instanceof Error ? err.message : String(err)
+            await env.DB.prepare(
+              `UPDATE agent_messages SET error_log = ? WHERE id = ?`,
+            )
+              .bind(`wave background error: ${errorLog}`, messageId)
+              .run()
+          }),
+      )
     }
     // Direct handler (v1 fallback): message is acknowledged by marking done.
     // No additional ack message emitted to avoid inflating queue size on
@@ -358,4 +367,54 @@ function shouldDispatchToDAG(msg: AgentMessageRow): boolean {
     }
   }
   return false
+}
+
+// ── reapStuckMessages ────────────────────────────────────────────
+
+export async function reapStuckMessages(
+  env: CloudflareEnv,
+  opts: { olderThanSeconds?: number } = {},
+): Promise<{ requeued: number; failed: number }> {
+  const threshold = opts.olderThanSeconds ?? 300
+  const now = Math.floor(Date.now() / 1000)
+  const cutoff = now - threshold
+
+  const stuck = await env.DB.prepare(
+    `SELECT id, retry_count, error_log FROM agent_messages
+     WHERE status IN ('routing','processing')
+       AND COALESCE(routed_at, created_at) < ?
+     ORDER BY created_at ASC
+     LIMIT 100`,
+  )
+    .bind(cutoff)
+    .all<{ id: string; retry_count: number; error_log: string | null }>()
+
+  let requeued = 0
+  let failed = 0
+
+  for (const row of stuck.results ?? []) {
+    if (row.retry_count < 3) {
+      const note = `reaper: requeued at ${now} (attempt ${row.retry_count + 1})`
+      const log = row.error_log ? `${row.error_log}\n${note}` : note
+      await env.DB.prepare(
+        `UPDATE agent_messages
+         SET status = 'queued', retry_count = retry_count + 1, error_log = ?
+         WHERE id = ?`,
+      )
+        .bind(log, row.id)
+        .run()
+      requeued++
+    } else {
+      await env.DB.prepare(
+        `UPDATE agent_messages
+         SET status = 'failed', error_log = 'reaper: exceeded max retries'
+         WHERE id = ?`,
+      )
+        .bind(row.id)
+        .run()
+      failed++
+    }
+  }
+
+  return { requeued, failed }
 }
