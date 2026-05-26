@@ -1,12 +1,14 @@
 import type { CloudflareEnv } from '@/types'
 import { reapStuckMessages, routeMessage, processMessage, listMessages, emitMessage } from '@/lib/coordinator'
 import { getDueAgents, markAgentRun } from '@/lib/agent-schedules'
+import { checkBudget } from '@/lib/agent-budgets'
 
 const DRAIN_BATCH = 10
 const DRAIN_MAX_ITERATIONS = 15
 
 interface HeartbeatSummary {
   agentsRun: string[]
+  skipped: string[]
   reaped: { requeued: number; failed: number }
   drained: number
   stalls: number
@@ -20,13 +22,39 @@ export async function runHeartbeats(env: CloudflareEnv): Promise<HeartbeatSummar
 
   const dueAgents = await getDueAgents(env, now)
   const agentsRun: string[] = []
+  const skipped: string[] = []
   let totalDrained = 0
   let totalStalls = 0
 
   for (const schedule of dueAgents) {
     const agentName = schedule.agent_name
 
-    // TODO(145B): if agent over budget, skip + log. For now, proceed.
+    const budget = await checkBudget(env, agentName, now)
+    if (budget.enforced && budget.overLimit && budget.hardStop) {
+      await emitMessage(env, {
+        userId: 'system',
+        fromAgent: agentName.toUpperCase(),
+        toAgent: 'NEXUS',
+        messageType: 'event',
+        subject: `BUDGET: ${agentName.toUpperCase()} over daily limit, heartbeat skipped`,
+        body: `Agent ${agentName.toUpperCase()} spent $${budget.spent.toFixed(4)} of $${budget.limit_usd.toFixed(2)} limit (${budget.pct.toFixed(0)}%). Heartbeat work skipped.`,
+      })
+      // Advance the schedule so it doesn't re-fire every tick (prevents tight-loop alerting)
+      await markAgentRun(env, agentName, now)
+      skipped.push(agentName)
+      continue
+    }
+
+    if (budget.enforced && budget.overThreshold) {
+      await emitMessage(env, {
+        userId: 'system',
+        fromAgent: agentName.toUpperCase(),
+        toAgent: 'NEXUS',
+        messageType: 'event',
+        subject: `BUDGET ALERT: ${agentName.toUpperCase()} at ${budget.pct.toFixed(0)}% of daily limit`,
+        body: `Agent ${agentName.toUpperCase()} spent $${budget.spent.toFixed(4)} of $${budget.limit_usd.toFixed(2)} limit. Proceeding but nearing cap.`,
+      })
+    }
 
     const drained = await drainAgentMessages(env, apiKey, agentName)
     totalDrained += drained
@@ -38,7 +66,7 @@ export async function runHeartbeats(env: CloudflareEnv): Promise<HeartbeatSummar
     agentsRun.push(agentName)
   }
 
-  return { agentsRun, reaped, drained: totalDrained, stalls: totalStalls }
+  return { agentsRun, skipped, reaped, drained: totalDrained, stalls: totalStalls }
 }
 
 async function drainAgentMessages(
