@@ -19,6 +19,7 @@ import {
   resolveAssignee,
   validateAssignment,
 } from '@/lib/agent-org'
+import { checkBudget } from '@/lib/agent-budgets'
 
 export type { OrgDepartment }
 
@@ -38,6 +39,8 @@ export interface CascadeGoalResult {
     original: string
     reassignedTo: string
   }>
+  refused: boolean
+  reason?: string
 }
 
 export async function cascadeGoal(
@@ -46,6 +49,7 @@ export async function cascadeGoal(
   input: CascadeGoalInput,
 ): Promise<CascadeGoalResult> {
   const { userId, goal, department } = input
+  const now = Math.floor(Date.now() / 1000)
 
   // Step 1: find the dept_head — needed for both the bus message and fallback reassignment
   const deptHead = await getDepartmentHead(env, department)
@@ -107,6 +111,45 @@ export async function cascadeGoal(
     modelId: decomposed.modelId,
   })
 
+  // Step 5b: budget gate — check dept head's budget before dispatching the wave.
+  // v1 simplification: the dept head is the accountable node; per-subtask-agent
+  // checking is a later refinement.
+  const deptHeadBudget = await checkBudget(env, deptHead.name, now)
+  if (deptHeadBudget.enforced && deptHeadBudget.overLimit && deptHeadBudget.hardStop) {
+    await env.DB.prepare(
+      `UPDATE orchestrator_runs SET status = 'cancelled' WHERE id = ?`,
+    )
+      .bind(runId)
+      .run()
+
+    const { id: refuseMsgId } = await emitMessage(env, {
+      userId,
+      conversationId,
+      fromAgent: deptHeadDisplay,
+      toAgent: 'NEXUS',
+      viaAgent: 'NEXUS',
+      messageType: 'error',
+      subject: `BUDGET: cascade refused, ${department} over limit`,
+      body: `${deptHeadDisplay} spent $${deptHeadBudget.spent.toFixed(4)} of $${deptHeadBudget.limit_usd.toFixed(2)} limit (${deptHeadBudget.pct.toFixed(0)}%). Cascade run ${runId} cancelled.`,
+    })
+
+    const now2 = Math.floor(Date.now() / 1000)
+    await env.DB.prepare(
+      `UPDATE agent_messages SET task_id = ?, status = 'done', processed_at = ? WHERE id IN (?, ?)`,
+    )
+      .bind(runId, now2, dispatchMsgId, refuseMsgId)
+      .run()
+
+    return {
+      conversationId,
+      runId,
+      subtaskCount: decomposed.decomposition.subtasks.length,
+      reassignments,
+      refused: true,
+      reason: 'budget_exceeded',
+    }
+  }
+
   // Step 6: execute via the existing wave runner
   const waveResult = await runAutoWave(env, apiKey, userId, runId, {})
 
@@ -143,11 +186,11 @@ export async function cascadeGoal(
   // Step 8: backfill task_id + mark both dispatch and response messages terminal.
   // These messages were emitted for traceability — the cascade already ran
   // the wave directly, so they must NOT be re-processed via the drain loop.
-  const now = Math.floor(Date.now() / 1000)
+  const now3 = Math.floor(Date.now() / 1000)
   await env.DB.prepare(
     `UPDATE agent_messages SET task_id = ?, status = 'done', processed_at = ? WHERE id IN (?, ?)`,
   )
-    .bind(runId, now, dispatchMsgId, responseMsgId)
+    .bind(runId, now3, dispatchMsgId, responseMsgId)
     .run()
 
   return {
@@ -155,5 +198,6 @@ export async function cascadeGoal(
     runId,
     subtaskCount: decomposed.decomposition.subtasks.length,
     reassignments,
+    refused: false,
   }
 }
