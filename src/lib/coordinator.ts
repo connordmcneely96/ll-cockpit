@@ -30,7 +30,6 @@ function runInBackground(promise: Promise<unknown>): void {
   }
   promise.catch(() => {})
 }
-import { waitUntil } from 'cloudflare:workers'
 
 // ── AgentMessageRow ───────────────────────────────────────────────
 
