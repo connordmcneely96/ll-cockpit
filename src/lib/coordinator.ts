@@ -30,8 +30,9 @@ function runInBackground(promise: Promise<unknown>): void {
   }
   promise.catch(() => {})
 }
+import { waitUntil } from 'cloudflare:workers'
 
-// ── AgentMessageRow ─────────────────────────────────────────────────────────
+// ── AgentMessageRow ───────────────────────────────────────────────
 
 export interface AgentMessageRow {
   id: string
@@ -59,7 +60,7 @@ export interface AgentMessageRow {
   ttl_seconds: number | null
 }
 
-// ── emitMessage ──────────────────────────────────────────────────────────────
+// ── emitMessage ───────────────────────────────────────────────────
 
 export interface EmitMessageInput {
   userId: string
@@ -119,7 +120,7 @@ export async function emitMessage(
   return { id, conversationId }
 }
 
-// ── getMessage / listMessages ────────────────────────────────────────────────
+// ── getMessage / listMessages ───────────────────────────────────────
 
 export async function getMessage(
   env: CloudflareEnv,
@@ -165,7 +166,7 @@ export async function listMessages(
   return result.results ?? []
 }
 
-// ── routeMessage ─────────────────────────────────────────────────────────────
+// ── routeMessage ───────────────────────────────────────────────
 //
 // v1 capability gate checks:
 //   ENFORCED: to_agent must exist in agent_registry AND active = 1.
@@ -246,7 +247,7 @@ export async function routeMessage(
   return { routed: true, status: 'delivered' }
 }
 
-// ── processMessage ───────────────────────────────────────────────────────────
+// ── processMessage ─────────────────────────────────────────────
 //
 // v1 handler dispatch rule (documented):
 //   DAG handler: message_type = 'request' AND (payload_json contains

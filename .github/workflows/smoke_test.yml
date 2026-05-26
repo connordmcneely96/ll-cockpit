@@ -11,7 +11,6 @@ on:
           - anthropic
           - openrouter
           - openai
-          - all
         default: openrouter
       agent:
         description: 'Agent to test (leave blank for all)'
@@ -35,6 +34,13 @@ on:
         description: 'Task type to test (leave blank for all)'
         required: false
         default: ''
+
+# CRITICAL: Only one smoke test run at a time globally.
+# Concurrent runs hammer Opus scoring → rate limits → 0.500 fallback contamination.
+# cancel-in-progress: false means new runs QUEUE rather than cancel existing ones.
+concurrency:
+  group: nexus-smoke-test
+  cancel-in-progress: false
 
 jobs:
   smoke-test:
@@ -60,7 +66,7 @@ jobs:
 
       - name: Write .env file from secrets
         run: |
-          cat > scripts/.env << EOF
+          cat > scripts/.env << 'ENVEOF'
           CF_ACCOUNT_ID=${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN=${{ secrets.CF_API_TOKEN }}
           CF_D1_DATABASE_ID=${{ secrets.CF_D1_DATABASE_ID }}
@@ -75,7 +81,25 @@ jobs:
           VPS_TUNNEL_URL=
           VPS_TUNNEL_SECRET=
           DRY_RUN=false
-          EOF
+          ENVEOF
+
+      - name: Verify secrets loaded
+        working-directory: scripts
+        env:
+          PYTHONPATH: ${{ github.workspace }}/scripts
+        run: |
+          python3 -c "
+          from dotenv import load_dotenv
+          from pathlib import Path
+          import os
+          load_dotenv(Path('.env'), override=True)
+          required = ['CF_ACCOUNT_ID','CF_API_TOKEN','CF_D1_DATABASE_ID','ANTHROPIC_API_KEY','OPENROUTER_API_KEY']
+          missing = [k for k in required if not os.getenv(k)]
+          if missing:
+              print('MISSING SECRETS:', missing)
+              exit(1)
+          print('All required secrets loaded OK')
+          "
 
       - name: Run smoke tests
         working-directory: scripts
