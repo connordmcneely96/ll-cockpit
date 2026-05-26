@@ -1,4 +1,5 @@
 import type { CloudflareEnv } from '@/types'
+import { runHeartbeats } from '@/lib/agent-heartbeat'
 
 // ── ORACLE Cron Handler ──
 // Runs on Cloudflare Cron Triggers (see wrangler.toml [triggers])
@@ -162,12 +163,19 @@ async function generateDigest(env: CloudflareEnv, apiKey: string) {
 // ── Scheduled handler — called by Cloudflare Cron Trigger ──
 export async function scheduled(event: ScheduledEvent, env: CloudflareEnv, ctx: ExecutionContext) {
   const cron = event.cron
-  const isFullRun = cron === '0 13 * * *'  // 7am CST
-  const isHourly  = cron === '0 * * * *'   // every hour
+  const isFullRun   = cron === '0 13 * * *'   // 7am CST
+  const isHourly    = cron === '0 * * * *'     // every hour
+  const isHeartbeat = cron === '*/15 * * * *'  // every 15 minutes
 
-  console.log(`[ORACLE cron] Triggered: ${cron} (${isFullRun ? 'full pipeline' : 'fetch only'})`)
+  console.log(`[ORACLE cron] Triggered: ${cron} (${isFullRun ? 'full pipeline' : isHeartbeat ? 'heartbeat' : 'fetch only'})`)
 
   const apiKey = (env as any).ANTHROPIC_API_KEY
+
+  if (isHeartbeat) {
+    const summary = await runHeartbeats(env)
+    console.log(`[heartbeat] agents=${summary.agentsRun.join(',')}, reaped=${summary.reaped.requeued}+${summary.reaped.failed}, drained=${summary.drained}, stalls=${summary.stalls}`)
+    return
+  }
 
   if (isHourly || isFullRun) {
     // Always fetch new items
