@@ -359,3 +359,53 @@ function shouldDispatchToDAG(msg: AgentMessageRow): boolean {
   }
   return false
 }
+
+// ── reapStuckMessages ─────────────────────────────────────────────────────────
+
+export async function reapStuckMessages(
+  env: CloudflareEnv,
+  opts: { olderThanSeconds?: number } = {},
+): Promise<{ requeued: number; failed: number }> {
+  const threshold = opts.olderThanSeconds ?? 300
+  const now = Math.floor(Date.now() / 1000)
+  const cutoff = now - threshold
+
+  const stuck = await env.DB.prepare(
+    `SELECT id, retry_count, error_log FROM agent_messages
+     WHERE status IN ('routing','processing')
+       AND COALESCE(routed_at, created_at) < ?
+     ORDER BY created_at ASC
+     LIMIT 100`,
+  )
+    .bind(cutoff)
+    .all<{ id: string; retry_count: number; error_log: string | null }>()
+
+  let requeued = 0
+  let failed = 0
+
+  for (const row of stuck.results ?? []) {
+    if (row.retry_count < 3) {
+      const note = `reaper: requeued at ${now} (attempt ${row.retry_count + 1})`
+      const log = row.error_log ? `${row.error_log}\n${note}` : note
+      await env.DB.prepare(
+        `UPDATE agent_messages
+         SET status = 'queued', retry_count = retry_count + 1, error_log = ?
+         WHERE id = ?`,
+      )
+        .bind(log, row.id)
+        .run()
+      requeued++
+    } else {
+      await env.DB.prepare(
+        `UPDATE agent_messages
+         SET status = 'failed', error_log = 'reaper: exceeded max retries'
+         WHERE id = ?`,
+      )
+        .bind(row.id)
+        .run()
+      failed++
+    }
+  }
+
+  return { requeued, failed }
+}
