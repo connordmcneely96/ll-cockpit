@@ -3,9 +3,12 @@
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — real platform scenarios, empirical routing.
 
-Key fix: score_with_opus now retries up to 3 times with exponential backoff
-to handle Anthropic rate limits when GHA runs fire concurrently.
-Fallback scores (0.500) are flagged and excluded from bandit updates.
+Fixes applied:
+- score_with_opus retries 3x with exponential backoff (prevents 0.500 fallback contamination)
+- Null/empty model output handled before scoring (prevents TypeError crash)
+- agent + task_type columns written to smoke_test_results (enables direct bandit rebuild without mapping)
+- Scoring failures return None — result excluded from D1 and bandit entirely
+- refresh_routing_table uses avg_quality as tiebreaker on alpha ties
 """
 
 from __future__ import annotations
@@ -299,7 +302,6 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             usage = data.get("usage", {})
             in_tok, out_tok = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
             cost = claude.estimate_cost(model_id, in_tok, out_tok)
-
         elif provider in ("openrouter", "openai"):
             base = "https://openrouter.ai/api/v1" if provider == "openrouter" else "https://api.openai.com/v1"
             api_key = os.getenv("OPENROUTER_API_KEY") if provider == "openrouter" else os.getenv("OPENAI_API_KEY", "")
@@ -313,12 +315,13 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             output = data["choices"][0]["message"]["content"]
             usage = data.get("usage", {})
             in_tok, out_tok, cost = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), 0.0
-
         elif provider == "cloudflare_workers_ai":
-            cf_model_map = {"cf-kimi-k2.6": "@cf/moonshotai/kimi-k2.6", "cf-gemma-4-26b": "@cf/google/gemma-4-26b-a4b-it",
-                            "cf-gpt-oss-120b": "@cf/openai/gpt-oss-120b", "cf-gpt-oss-20b": "@cf/openai/gpt-oss-20b",
-                            "cf-glm-4-7-flash": "@cf/zai-org/glm-4.7-flash", "cf-llama-4-scout": "@cf/meta/llama-4-scout-17b-16e-instruct",
-                            "cf-llama-3-3-70b": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"}
+            cf_model_map = {
+                "cf-kimi-k2.6": "@cf/moonshotai/kimi-k2.6", "cf-gemma-4-26b": "@cf/google/gemma-4-26b-a4b-it",
+                "cf-gpt-oss-120b": "@cf/openai/gpt-oss-120b", "cf-gpt-oss-20b": "@cf/openai/gpt-oss-20b",
+                "cf-glm-4-7-flash": "@cf/zai-org/glm-4.7-flash", "cf-llama-4-scout": "@cf/meta/llama-4-scout-17b-16e-instruct",
+                "cf-llama-3-3-70b": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+            }
             cf_model = cf_model_map.get(model_id, model_id)
             resp = httpx.post(f"https://api.cloudflare.com/client/v4/accounts/{cfg.cf_account_id}/ai/run/{cf_model}",
                 headers={"Authorization": f"Bearer {cfg.cf_api_token}"},
@@ -327,7 +330,6 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             result = resp.json().get("result", {})
             output = result.get("response", "") or result.get("answer", "")
             in_tok, out_tok, cost = 0, 0, 0.0
-
         elif provider == "ollama":
             ollama_model = model_id.replace("ollama/", "")
             base_url = f"{cfg.vps_tunnel_url}/ollama" if cfg.vps_tunnel_url else "http://localhost:11434"
@@ -339,20 +341,14 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             output, in_tok, out_tok, cost = data.get("response", ""), data.get("prompt_eval_count", 0), data.get("eval_count", 0), 0.0
         else:
             return {"output": None, "error": f"Unknown provider: {provider}", "latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-
         return {"output": output, "error": None, "latency_ms": int((time.monotonic()-start)*1000), "input_tokens": in_tok, "output_tokens": out_tok, "cost_usd": cost}
     except Exception as e:
         return {"output": None, "error": str(e), "latency_ms": int((time.monotonic()-start)*1000), "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
 
 
-def score_with_opus(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Dict:
-    """
-    Score with Opus 4.7. Retries up to SCORE_RETRY_ATTEMPTS times with exponential
-    backoff to handle Anthropic rate limits from concurrent GHA runs.
-    Returns None on all retries failing — caller must handle None and skip bandit update.
-    """
+def score_with_opus(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Optional[Dict]:
+    """Score with Opus. Retries 3x with backoff. Returns None if all retries fail — caller skips result."""
     prompt = f"Task:\n{task_prompt[:1000]}\n\nResponse:\n{output[:4000]}\n\nCriteria:\n{json.dumps(criteria)}\n\nScore strictly. Output only JSON."
-
     for attempt in range(SCORE_RETRY_ATTEMPTS):
         try:
             claude = AnthropicClient(cfg)
@@ -373,13 +369,13 @@ def score_with_opus(task_prompt: str, output: str, criteria: Dict, cfg: Config) 
                 log.warning(f"Opus scoring attempt {attempt+1} failed: {e} — retrying in {delay}s")
                 time.sleep(delay)
             else:
-                log.error(f"Opus scoring failed after {SCORE_RETRY_ATTEMPTS} attempts: {e} — result will be SKIPPED from bandit")
-                return None  # Caller checks for None and skips bandit update
+                log.error(f"Opus scoring failed after {SCORE_RETRY_ATTEMPTS} attempts: {e} — result SKIPPED")
+                return None
 
 
 def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str) -> Optional[str]:
     rows = d1.query_rows("""SELECT model_id, alpha, beta, n_trials, n_successes,
-             CAST(n_successes AS REAL) / NULLIF(n_trials, 0) as win_rate
+             CAST(n_successes AS REAL) / NULLIF(n_trials, 0) as win_rate, avg_quality
       FROM model_bandit_params WHERE agent=? AND task_type=? AND n_trials > 0
       ORDER BY alpha DESC, avg_quality DESC""", [agent, task_type])
     if not rows:
@@ -452,29 +448,22 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         if response["error"] or not response.get("output"):
                             err_msg = response.get("error") or "null_output"
                             log.warning(f"    x {case['name']}: {str(err_msg)[:100]}")
-                            result = {"run_id": run_id, "agent": agent, "task_type": task_type, "model_id": model_id,
-                                      "provider": provider, "case_name": case["name"], "difficulty": case.get("difficulty"),
-                                      "error": err_msg, "composite_score": 0.0, "verdict": "fail",
-                                      "bandit_reward": 0.0, "latency_ms": response["latency_ms"], "cost_usd": 0.0}
-                            all_results.append(result)
-                            # Write error result to D1
+                            all_results.append({"run_id": run_id, "agent": agent, "task_type": task_type,
+                                                "model_id": model_id, "case_name": case["name"],
+                                                "error": err_msg, "composite_score": 0.0, "bandit_reward": 0.0})
                             result_id = str(uuid.uuid4())
                             d1.execute("""INSERT OR IGNORE INTO smoke_test_results
-                                (id, run_id, case_id, model_id, latency_ms, cost_usd,
+                                (id, run_id, case_id, model_id, agent, task_type, latency_ms, cost_usd,
                                  composite_score, opus_verdict, opus_notes, bandit_reward, bandit_seeded, tested_at)
-                              VALUES (?,?,?,?,?,?,?,?,?,?,0,?)""",
-                              [result_id, run_id, case["name"], model_id,
-                               result.get("latency_ms"), 0.0, 0.0, "fail", err_msg, 0.0, now_ts])
+                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
+                              [result_id, run_id, case["name"], model_id, agent, task_type,
+                               response.get("latency_ms"), 0.0, 0.0, "fail", err_msg, 0.0, now_ts])
                             continue
 
-                        # Score with retry — returns None if all retries fail
                         scores = score_with_opus(case["prompt"], response["output"], case.get("criteria", {}), cfg)
-
                         if scores is None:
-                            # Scoring failed after all retries — skip this result entirely
-                            # Do NOT write to D1 and do NOT update bandit params
                             summary["scoring_skipped"] += 1
-                            log.warning(f"    SKIP {case['name']} — scoring failed, result excluded from bandit")
+                            log.warning(f"    SKIP {case['name']} — scoring failed, excluded from bandit")
                             continue
 
                         in_rate = float(model.get("cost_input_per_1m") or 0)
@@ -493,18 +482,20 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
 
                         all_results.append(result)
                         result_id = str(uuid.uuid4())
+                        # KEY FIX: agent and task_type now written to every result row
                         d1.execute("""INSERT OR IGNORE INTO smoke_test_results
-                            (id, run_id, case_id, model_id, output_text, latency_ms, input_tokens, output_tokens,
-                             cost_usd, score_accuracy, score_completeness, score_tone, score_criteria_met,
-                             composite_score, opus_verdict, opus_notes, bandit_reward, bandit_seeded, tested_at)
-                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
-                          [result_id, run_id, case["name"], model_id, result.get("output_text", "")[:8000],
-                           result.get("latency_ms"), result.get("input_tokens"), result.get("output_tokens"), result.get("cost_usd"),
+                            (id, run_id, case_id, model_id, agent, task_type, output_text, latency_ms,
+                             input_tokens, output_tokens, cost_usd, score_accuracy, score_completeness,
+                             score_tone, score_criteria_met, composite_score, opus_verdict, opus_notes,
+                             bandit_reward, bandit_seeded, tested_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
+                          [result_id, run_id, case["name"], model_id, agent, task_type,
+                           result.get("output_text", "")[:8000], result.get("latency_ms"),
+                           result.get("input_tokens"), result.get("output_tokens"), result.get("cost_usd"),
                            result.get("score_accuracy"), result.get("score_completeness"), result.get("score_tone"),
                            result.get("score_criteria_met"), result.get("composite_score"), result.get("verdict"),
                            result.get("notes"), result.get("bandit_reward"), now_ts])
 
-                    # Only update bandit if we have valid (non-fallback) scores
                     if model_scores and not cfg.dry_run:
                         avg_score = sum(model_scores)/len(model_scores)
                         reward = 1.0 if avg_score >= 0.75 else 0.0
