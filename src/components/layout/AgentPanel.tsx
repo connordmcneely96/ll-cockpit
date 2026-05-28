@@ -167,7 +167,6 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
           <span className="font-mono text-xs font-semibold" style={{ color: 'var(--t-tx1)' }}>{agent.displayName}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button className="font-mono text-[10px] transition-colors" style={{ color: 'var(--t-tx3)' }}>CHATS</button>
           <button className="font-mono text-[10px] transition-colors" style={{ color: 'var(--t-p)' }}>NEW</button>
           <button onClick={() => setSelectedAgent(null)} className="font-mono text-sm leading-none" style={{ color: 'var(--t-tx3)' }}>×</button>
         </div>
