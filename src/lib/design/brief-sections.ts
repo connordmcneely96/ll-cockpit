@@ -50,7 +50,8 @@ export async function insertBriefSection(
       args.briefId,
       args.subtaskShortId,
       args.sectionSlug,
-      args.sectionTypeSlug,
+      // section_type_slug is the hyphenated form of section_slug (matches design_section_types.slug)
+      args.sectionSlug.replace(/_/g, '-'),
       args.sortOrder,
       args.settingsJson ?? null,
       now,
