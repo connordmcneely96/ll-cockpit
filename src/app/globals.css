@@ -21,7 +21,7 @@
   --t-gold:         #f59e0b;
   --t-tx1:          #e0f2ee;
   --t-tx2:          #7ab5a8;
-  --t-tx3:          #3d6b62;
+  --t-tx3:          #5a9e91;
   --t-bdr:          rgba(0,201,167,0.12);
   --t-bdr-s:        rgba(0,201,167,0.22);
   --t-sb-bg:        #041008;
@@ -229,3 +229,25 @@ body.ia-resizing {
 .agent-prose h1,.agent-prose h2,.agent-prose h3 { color: var(--t-tx1); font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
 .agent-prose strong { color: var(--t-gold); }
 .agent-prose blockquote { border-left: 3px solid var(--t-p); padding-left: 1rem; color: var(--t-tx2); margin: 0.75rem 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Disable keyframe animations */
+  .border-pulse-active { animation: none !important; }
+  .shimmer             { animation: none !important; }
+  .animate-dot-bounce  { animation: none !important; }
+
+  /* Disable Tailwind animate-pulse (used in skeleton loaders) */
+  .animate-pulse { animation: none !important; }
+
+  /* Disable transitions on glass surfaces */
+  .glass,
+  .glass-hover,
+  .glass-card,
+  .glass-panel,
+  .glass-float {
+    transition: none !important;
+  }
+
+  /* Disable body color transition */
+  body { transition: none !important; }
+}
