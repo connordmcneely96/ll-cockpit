@@ -39,7 +39,13 @@ export function TopBar() {
       <div className="flex items-center gap-2 shrink-0">
         <CostMeter />
         <div className="w-px h-4" style={{ background:'var(--t-bdr)' }} />
-        <button onClick={() => router.push('/settings')} className="font-mono text-xs" style={{ color:'var(--t-tx3)' }}>⚙</button>
+        <button
+          onClick={() => router.push('/settings')}
+          className="font-mono text-xs"
+          style={{ color:'var(--t-tx3)' }}
+          aria-label="Settings"
+          title="Settings"
+        >⚙</button>
       </div>
     </header>
   )
