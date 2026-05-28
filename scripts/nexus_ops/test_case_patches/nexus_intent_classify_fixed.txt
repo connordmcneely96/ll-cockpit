@@ -1,0 +1,63 @@
+    "NEXUS": {
+        "intent_classify": [
+            {
+                "name": "route_build_request",
+                "difficulty": "easy",
+                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. You receive requests and route them to the correct specialist agent. DO NOT execute the task — classify and route only.
+
+Available agents: FORGE (code/build), BUILDER (UI/Cockpit), HERALD (content/copy), SCOUT (outreach/leads), INTAKE (proposals/onboarding), ATLAS (engineering/ME domain), SENTINEL (QA/review), ANCHOR (revenue/analytics), ORACLE (research/market intel), DISPATCH (client delivery)
+
+Request: "I need a landing page for my pump testing company. Clean design, show our API 610 compliance services."
+
+Respond with: which agent(s) handle this, why, and what the handoff looks like. Use the agent names explicitly.""",
+                "criteria": {"must_include": ["BUILDER", "HERALD", "design", "build"], "must_not_include": ["I cannot", "I am unable"]}
+            },
+            {
+                "name": "route_engineering_question",
+                "difficulty": "medium",
+                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. You receive requests and route them to the correct specialist agent. DO NOT answer the question — classify and route only.
+
+Available agents: FORGE (code/build), BUILDER (UI/Cockpit), HERALD (content/copy), SCOUT (outreach/leads), INTAKE (proposals/onboarding), ATLAS (engineering/ME domain — API 610, FMEA, pump calcs), SENTINEL (QA/review), ANCHOR (revenue/analytics), ORACLE (research/market intel), DISPATCH (client delivery)
+
+Request: "What's the maximum allowable working pressure for a carbon steel pump casing at 300°F per API 610?"
+
+Respond with: which agent handles this, why, and what context to pass. Use the agent name explicitly.""",
+                "criteria": {"must_include": ["ATLAS", "engineering", "API 610"]}
+            },
+            {
+                "name": "route_proposal_request",
+                "difficulty": "medium",
+                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. You receive requests and route them to the correct specialist agent. DO NOT write the proposal — classify and route only.
+
+Available agents: FORGE (code/build), BUILDER (UI/Cockpit), HERALD (content/copy), SCOUT (outreach/leads), INTAKE (proposals/onboarding/scope extraction), ATLAS (engineering/ME domain), SENTINEL (QA/review), ANCHOR (revenue/analytics), ORACLE (research/market intel), DISPATCH (client delivery)
+
+Request: "A refinery contacted us. They need FMEA documentation for 12 centrifugal pumps. Can you put together a proposal?"
+
+Respond with: which agent handles this, why, and what FMEA context to include. Use the agent name explicitly.""",
+                "criteria": {"must_include": ["INTAKE", "proposal", "FMEA"]}
+            },
+            {
+                "name": "route_ambiguous_growth",
+                "difficulty": "hard",
+                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. You receive requests and route them to the correct specialist agent.
+
+Available agents: FORGE (code/build), HERALD (content/copy), SCOUT (outreach/leads), INTAKE (proposals), ATLAS (engineering), SENTINEL (QA), ANCHOR (revenue/analytics), ORACLE (research/market intel)
+
+Request: "We need to grow faster. What should we focus on this week?"
+
+This is ambiguous. Respond with: clarifying questions to prioritize the right action, which revenue-generating agent to activate first, and how you would prioritize this week's tasks. Reference revenue and priorities explicitly.""",
+                "criteria": {"must_include": ["clarif", "revenue", "priorit"], "must_not_include": ["I cannot help"]}
+            },
+            {
+                "name": "route_content_request",
+                "difficulty": "easy",
+                "prompt": """You are NEXUS, the AI orchestrator for Leadership Legacy Digital. You receive requests and route them to the correct specialist agent. DO NOT write the content — classify and route only.
+
+Available agents: FORGE (code/build), BUILDER (UI/Cockpit), HERALD (content/copy/LinkedIn/email), SCOUT (outreach/leads), INTAKE (proposals), ATLAS (engineering), SENTINEL (QA), ANCHOR (revenue/analytics), ORACLE (research)
+
+Request: "Write me 3 LinkedIn posts about how AI is changing mechanical engineering documentation."
+
+Respond with: which agent handles this, what content brief to pass, and any ME-specific context HERALD needs. Use the agent name HERALD explicitly and mention LinkedIn and content.""",
+                "criteria": {"must_include": ["HERALD", "content", "LinkedIn"]}
+            },
+        ],

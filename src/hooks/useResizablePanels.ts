@@ -22,6 +22,18 @@ function readStorage(key: string, fallback: number): number {
 export function useResizablePanels() {
   const [explorerWidth, setExplorerWidth] = useState(EXPLORER_DEFAULT)
   const [agentWidth, setAgentWidth] = useState(AGENT_DEFAULT)
+  const [agentCollapsed, setAgentCollapsed] = useState(false)
+
+  const toggleAgentCollapse = useCallback(() => {
+    setAgentCollapsed(prev => {
+      const next = !prev
+      if (!next) {
+        // restoring — ensure agentWidth is valid
+        setAgentWidth(w => w < AGENT_MIN ? AGENT_DEFAULT : w)
+      }
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     setExplorerWidth(clamp(readStorage('ll-explorer-width', EXPLORER_DEFAULT), EXPLORER_MIN, EXPLORER_MAX))
@@ -76,5 +88,5 @@ export function useResizablePanels() {
     window.addEventListener('mouseup', onMouseUp)
   }, [agentWidth])
 
-  return { explorerWidth, agentWidth, beginDragExplorer, beginDragAgent }
+  return { explorerWidth, agentWidth, beginDragExplorer, beginDragAgent, agentCollapsed, toggleAgentCollapse }
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { Fragment } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -43,35 +44,39 @@ export function ActivityRail() {
         <span className="font-mono font-bold text-[10px]" style={{ color: 'var(--t-p)' }}>LL</span>
       </div>
 
-      {NAV_ITEMS.map(({ icon: Icon, label, href }) => {
+      {NAV_ITEMS.map(({ icon: Icon, label, href }, index) => {
         const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
         return (
-          <Link
-            key={href}
-            href={href}
-            title={label}
-            className="relative group w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-150"
-            style={{
-              background: isActive ? 'var(--t-p-glass)' : 'transparent',
-              color: isActive ? 'var(--t-p)' : 'var(--t-tx3)',
-              boxShadow: isActive ? '0 0 10px var(--t-p-glow)' : 'none',
-              border: isActive ? '1px solid var(--t-glass-bdr)' : '1px solid transparent',
-            }}
-          >
-            <Icon size={15} strokeWidth={isActive ? 2 : 1.5} />
-            <span
-              className="absolute left-10 z-50 px-2 py-1 rounded-lg text-[10px] font-mono whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ background: 'var(--d-elevated)', backdropFilter: 'blur(20px)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx1)' }}
-            >
-              {label}
-            </span>
-            {isActive && (
-              <span
-                className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r"
-                style={{ width: 2, height: 16, background: 'var(--t-p)', boxShadow: '0 0 6px var(--t-p-glow)' }}
-              />
+          <Fragment key={href}>
+            {(index === 1 || index === 6) && (
+              <div style={{ width: 20, height: 1, background: 'var(--t-glass-bdr)', margin: '4px auto' }} />
             )}
-          </Link>
+            <Link
+              href={href}
+              title={label}
+              className="relative group w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-150"
+              style={{
+                background: isActive ? 'var(--t-p-glass)' : 'transparent',
+                color: isActive ? 'var(--t-p)' : 'var(--t-tx3)',
+                boxShadow: isActive ? '0 0 10px var(--t-p-glow)' : 'none',
+                border: isActive ? '1px solid var(--t-glass-bdr)' : '1px solid transparent',
+              }}
+            >
+              <Icon size={15} strokeWidth={isActive ? 2 : 1.5} />
+              <span
+                className="absolute left-10 z-50 px-2 py-1 rounded-lg text-[10px] font-mono whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ background: 'var(--d-elevated)', backdropFilter: 'blur(20px)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx1)' }}
+              >
+                {label}
+              </span>
+              {isActive && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r"
+                  style={{ width: 2, height: 16, background: 'var(--t-p)', boxShadow: '0 0 6px var(--t-p-glow)' }}
+                />
+              )}
+            </Link>
+          </Fragment>
         )
       })}
 
