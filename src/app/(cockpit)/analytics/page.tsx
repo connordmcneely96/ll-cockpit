@@ -85,11 +85,16 @@ export default function AnalyticsPage() {
     setLoading(true)
     setError(null)
     try {
-      // Parallel fetch both tables
-      const [eventsRes, completionsRes, agentTasksRes] = await Promise.all([
-        fetch('/api/analytics/events'),
-        fetch('/api/analytics/completions'),
-        fetch('/api/analytics/agent-tasks'),
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Analytics timed out after 5s')), 5000)
+      )
+      const [eventsRes, completionsRes, agentTasksRes] = await Promise.race([
+        Promise.all([
+          fetch('/api/analytics/events'),
+          fetch('/api/analytics/completions'),
+          fetch('/api/analytics/agent-tasks'),
+        ]),
+        timeout,
       ])
 
       const [eventsData, completionsData, agentTasksData] = await Promise.all([
