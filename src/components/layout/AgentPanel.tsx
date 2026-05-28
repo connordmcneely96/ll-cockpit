@@ -135,6 +135,8 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
 // ── AgentChatInner ──
 function AgentChatInner({ agentName }: { agentName: AgentName }) {
   const setSelectedAgent = useUiStore(s => s.setSelectedAgent)
+  const clearSession = useAgentStore(s => s.clearSession)
+  const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat')
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const agent = getAgent(agentName)!
@@ -168,7 +170,12 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
         </div>
         <div className="flex items-center gap-2">
           <button className="font-mono text-[10px] transition-colors" style={{ color: 'var(--t-tx3)' }}>CHATS</button>
-          <button className="font-mono text-[10px] transition-colors" style={{ color: 'var(--t-p)' }}>NEW</button>
+          <button
+            className="font-mono text-[10px] transition-colors"
+            style={{ color: 'var(--t-p)' }}
+            onClick={() => { clearSession(agentName); setActiveTab('chat') }}
+            title="Start a new session"
+          >NEW</button>
           <button onClick={() => setSelectedAgent(null)} className="font-mono text-sm leading-none" style={{ color: 'var(--t-tx3)' }}>×</button>
         </div>
       </div>
@@ -176,12 +183,20 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
       {/* Tabs */}
       <div className="h-8 shrink-0 flex items-end px-3 gap-4"
         style={{ borderBottom: '1px solid var(--t-glass-bdr)', background: 'var(--t-panel)' }}>
-        <button className="font-mono text-[10px] pb-1.5 border-b-2" style={{ color: 'var(--t-p)', borderColor: 'var(--t-p)' }}>Chat</button>
-        <button className="font-mono text-[10px] pb-1.5" style={{ color: 'var(--t-tx3)' }}>History</button>
+        <button
+          className="font-mono text-[10px] pb-1.5 border-b-2"
+          style={{ color: activeTab === 'chat' ? 'var(--t-p)' : 'var(--t-tx3)', borderColor: activeTab === 'chat' ? 'var(--t-p)' : 'transparent' }}
+          onClick={() => setActiveTab('chat')}
+        >Chat</button>
+        <button
+          className="font-mono text-[10px] pb-1.5 border-b-2"
+          style={{ color: activeTab === 'history' ? 'var(--t-p)' : 'var(--t-tx3)', borderColor: activeTab === 'history' ? 'var(--t-p)' : 'transparent' }}
+          onClick={() => setActiveTab('history')}
+        >History</button>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      {/* Messages — only shown on Chat tab */}
+      {activeTab === 'chat' && <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-bold font-mono glass-card"
@@ -205,9 +220,10 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
         )}
 
         <div ref={messagesEndRef} />
-      </div>
+      </div>}
 
-      {/* Compose */}
+      {/* Compose — only shown on Chat tab */}
+      {activeTab === 'chat' &&
       <div className="shrink-0 p-3" style={{ borderTop: '1px solid var(--t-glass-bdr)', background: 'var(--t-panel)' }}>
         {/* Locked indicator when pending approval */}
         {pendingToolCall && !isStreaming && (
@@ -243,7 +259,7 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
             {isStreaming ? '…' : '↑'}
           </button>
         </div>
-      </div>
+      </div>}
     </>
   )
 }
