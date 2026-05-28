@@ -71,11 +71,11 @@ export default function DashboardPage() {
       {/* Stat cards */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-px bg-white/[0.04] border-b border-white/[0.06] shrink-0">
         {[
-          { label: 'SESSIONS TODAY', value: '0', sub: 'no activity', color: 'text-text1' },
+          { label: 'SESSIONS TODAY', value: '0', sub: 'start an agent session', color: 'text-text1' },
           { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright' },
           { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green' },
           { label: 'ACTIVE AGENTS', value: String(AGENT_LIST.length), sub: 'configured', color: 'text-cyan' },
-          { label: 'PIPELINE TASKS', value: '4', sub: 'in progress', color: 'text-gold' },
+          { label: 'PIPELINE TASKS', value: '0', sub: 'no tasks yet', color: 'text-gold' },
           { label: 'HOURS TODAY', value: '0.0h', sub: 'Today: 0.0h', color: 'text-text2' },
         ].map(({ label, value, sub, color }) => (
           <div key={label} className="bg-base-2 p-4 flex flex-col gap-1">
@@ -130,7 +130,10 @@ export default function DashboardPage() {
           <div className="h-px bg-white/[0.04]" />
           <div>
             <p className="text-text3 font-mono text-[10px] uppercase tracking-widest mb-2">Recent Activity</p>
-            <p className="text-text3/50 font-mono text-[10px]">No recent activity</p>
+            <div className="rounded-lg border border-dashed border-white/[0.08] px-3 py-4 flex flex-col items-center gap-1.5 text-center">
+              <p className="font-mono text-[10px] text-text3">No activity yet</p>
+              <p className="font-mono text-[9px] text-text3/50">Agent sessions will appear here</p>
+            </div>
           </div>
         </div>
       </div>
