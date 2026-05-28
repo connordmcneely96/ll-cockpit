@@ -229,8 +229,33 @@ export default function AnalyticsPage() {
         )}
 
         {loading && !stats ? (
-          <div className="flex justify-center py-20">
-            <RefreshCcw size={20} className="animate-spin" style={{ color: 'var(--t-p)' }} />
+          <div className="space-y-6 animate-pulse">
+            {/* Skeleton stat cards — mirrors 6-card grid */}
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="rounded-2xl p-4 h-24" style={{
+                  background: 'var(--d-card)',
+                  border: '1px solid var(--t-glass-bdr)',
+                }}>
+                  <div className="h-2 w-16 rounded-full mb-3" style={{ background: 'var(--t-bdr-s)' }} />
+                  <div className="h-6 w-20 rounded-full mb-2" style={{ background: 'var(--t-bdr-s)' }} />
+                  <div className="h-2 w-12 rounded-full" style={{ background: 'var(--t-bdr-s)' }} />
+                </div>
+              ))}
+            </div>
+            {/* Skeleton chart block */}
+            <div className="rounded-2xl p-5 h-40" style={{
+              background: 'var(--d-card)',
+              border: '1px solid var(--t-glass-bdr)',
+            }}>
+              <div className="h-2 w-32 rounded-full mb-4" style={{ background: 'var(--t-bdr-s)' }} />
+              <div className="flex items-end gap-0.5 h-20">
+                {Array.from({ length: 24 }).map((_, i) => (
+                  <div key={i} className="flex-1 rounded-sm"
+                    style={{ height: `${20 + Math.sin(i * 0.8) * 15 + 15}%`, background: 'var(--t-bdr-s)' }} />
+                ))}
+              </div>
+            </div>
           </div>
         ) : (
           <>
