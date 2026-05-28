@@ -547,10 +547,30 @@ function buildNavHeader(clientName: string, navLinks: string): string {
   </header>`
 }
 
-function buildSectionMarkup(sections: DesignSection[]): string {
+// Sprint 119F-4 — per-section color scheme palette type.
+export interface SectionColorScheme {
+  bg: string
+  text: string
+  accent: string
+  border: string
+}
+
+function buildSectionMarkup(
+  sections: DesignSection[],
+  // Sprint 119F-4 — optional schemes map: slug → palette | null.
+  // INVARIANT: when schemes is undefined or empty, output is byte-for-byte
+  // identical to the pre-119F-4 behavior. No wrapping div is ever emitted
+  // for sections whose slug is absent from the map or whose palette is null.
+  schemes?: Map<string, SectionColorScheme | null>,
+): string {
   // Sprint 18K (A2) — inject data-nexus-id on the opening <section> tag.
   return sections
-    .map((s) => s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`))
+    .map((s) => {
+      const html = s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`)
+      const scheme = schemes?.get(s.slug) ?? null
+      if (!scheme) return html
+      return `<div data-scheme="${s.slug}" style="--scheme-bg:${scheme.bg};--scheme-text:${scheme.text};--scheme-accent:${scheme.accent};--scheme-border:${scheme.border};">\n${html}\n</div>`
+    })
     .join('\n\n  ')
 }
 
@@ -587,12 +607,16 @@ export function renderFullHtml({
   sections,
   skills = [],
   feedbackContext,
+  schemes,
 }: {
   brief: { client_name: string; business_description: string }
   tokens: DesignTokens
   sections: DesignSection[]
   skills?: string[]
   feedbackContext?: FeedbackContext
+  // Sprint 119F-4 — optional per-section color scheme map.
+  // INVARIANT: when omitted or empty, output is byte-for-byte identical to pre-119F-4.
+  schemes?: Map<string, SectionColorScheme | null>
 }): string {
   const p = tokens.palette
   const t = tokens.typography
@@ -647,7 +671,7 @@ ${buildBaseStyles(sansFont)}
   <a href="#main" class="skip-link sr-only">Skip to main content</a>
 ${buildNavHeader(brief.client_name, navLinks)}
   <main id="main" role="main">
-  ${buildSectionMarkup(sections)}
+  ${buildSectionMarkup(sections, schemes)}
   </main>
 ${buildFooter(brief.client_name)}
 ${buildScripts(tweaksPanelHtml)}
@@ -743,7 +767,32 @@ export async function executeAssembler(
     iterationNumber: brief.current_iteration ?? null,
   }
 
-  const html = renderFullHtml({ brief, tokens: designTokens, sections, skills, feedbackContext })
+  // Sprint 119F-4 — build schemes map from design_brief_sections JOIN design_color_schemes.
+  // On any failure or empty result, pass an empty Map so behavior is identical to pre-119F-4.
+  const schemes = new Map<string, SectionColorScheme | null>()
+  try {
+    const schemeRows = await env.DB
+      .prepare(
+        `SELECT dbs.slug, dcs.palette_json
+         FROM design_brief_sections dbs
+         JOIN design_color_schemes dcs ON dcs.id = dbs.scheme_id
+         WHERE dbs.brief_id = ? AND dbs.scheme_id IS NOT NULL`,
+      )
+      .bind(brief.id)
+      .all<{ slug: string; palette_json: string }>()
+    for (const row of schemeRows.results ?? []) {
+      try {
+        const p = JSON.parse(row.palette_json) as { bg: string; text: string; accent: string; border: string }
+        schemes.set(row.slug, { bg: p.bg, text: p.text, accent: p.accent, border: p.border })
+      } catch {
+        // malformed palette_json — skip this section's scheme
+      }
+    }
+  } catch {
+    // query failed — proceed with empty schemes map (no-op)
+  }
+
+  const html = renderFullHtml({ brief, tokens: designTokens, sections, skills, feedbackContext, schemes })
   return { output: html, cost_usd: 0, tokens: 0 }
 }
 
