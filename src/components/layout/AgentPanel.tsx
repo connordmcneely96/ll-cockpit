@@ -242,7 +242,6 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
           <span className="font-mono text-xs font-semibold" style={{ color: 'var(--t-tx1)' }}>{agent.displayName}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button className="font-mono text-[10px] transition-colors" style={{ color: 'var(--t-tx3)' }}>CHATS</button>
           <button
             className="font-mono text-[10px] transition-colors"
             style={{ color: 'var(--t-p)' }}
@@ -323,9 +322,12 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
           }}
         />
         <div className="flex items-center justify-between mt-1.5">
-          <button className="text-[10px] font-mono px-2 py-0.5 rounded-lg transition-all"
-            style={{ background: 'var(--t-panel)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx3)', boxShadow: 'var(--t-shadow)' }}>
-            AUTO ▼</button>
+          <button
+            className="text-[10px] font-mono px-2 py-0.5 rounded-lg transition-all"
+            style={{ background: 'var(--t-panel)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx3)', boxShadow: 'var(--t-shadow)' }}
+            title="Model routing: AUTO selects the best model for the task"
+            aria-label="Model routing mode: AUTO"
+          >AUTO ▼</button>
           <button onClick={handleSubmit} disabled={!input.trim() || isStreaming || !!pendingToolCall}
             className="font-mono text-xs px-3 py-1 rounded-lg transition-all disabled:opacity-40"
             style={{ background: 'var(--t-p)', color: '#fff', boxShadow: '0 2px 8px var(--t-p-glow)' }}>
