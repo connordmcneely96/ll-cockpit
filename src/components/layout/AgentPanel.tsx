@@ -132,6 +132,79 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
   )
 }
 
+interface ChatRecord {
+  id: string
+  title: string | null
+  agent: string | null
+  created_at: number
+  last_active: number | null
+}
+
+function HistoryView({ agentName, onLoad }: { agentName: AgentName; onLoad: () => void }) {
+  const loadChat = useAgentStore(s => s.loadChat)
+  const [chats, setChats] = useState<ChatRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch(`/api/chats?agent=${agentName}&limit=20`, { signal: controller.signal })
+      .then(r => r.json() as Promise<{ chats?: ChatRecord[] }>)
+      .then(data => setChats(data.chats ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+    return () => controller.abort()
+  }, [agentName])
+
+  const handleLoad = async (chatId: string) => {
+    setLoadingId(chatId)
+    try {
+      const res = await fetch(`/api/chats/${chatId}`)
+      const data = await res.json() as { chat?: ChatRecord; messages?: any[] }
+      if (data.messages) {
+        loadChat(agentName, chatId, data.messages)
+        onLoad()
+      }
+    } finally {
+      setLoadingId(null)
+    }
+  }
+
+  if (loading) return (
+    <div className="flex-1 flex items-center justify-center">
+      <span className="font-mono text-[10px] animate-pulse" style={{ color: 'var(--t-tx3)' }}>Loading…</span>
+    </div>
+  )
+
+  if (chats.length === 0) return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center">
+      <p className="font-mono text-xs font-semibold" style={{ color: 'var(--t-tx2)' }}>No past sessions</p>
+      <p className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>Start a conversation to create a session history.</p>
+    </div>
+  )
+
+  return (
+    <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+      {chats.map(chat => (
+        <button
+          key={chat.id}
+          onClick={() => handleLoad(chat.id)}
+          disabled={loadingId === chat.id}
+          className="w-full text-left px-3 py-2.5 rounded-xl transition-all disabled:opacity-50"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--t-glass-bdr)' }}
+        >
+          <p className="font-mono text-[11px] font-semibold truncate" style={{ color: 'var(--t-tx1)' }}>
+            {loadingId === chat.id ? 'Loading…' : (chat.title ?? 'Untitled session')}
+          </p>
+          <p className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--t-tx3)' }}>
+            {new Date(chat.last_active ?? chat.created_at).toLocaleString()}
+          </p>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── AgentChatInner ──
 function AgentChatInner({ agentName }: { agentName: AgentName }) {
   const setSelectedAgent = useUiStore(s => s.setSelectedAgent)
@@ -260,6 +333,11 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
           </button>
         </div>
       </div>}
+
+      {/* History tab content */}
+      {activeTab === 'history' && (
+        <HistoryView agentName={agentName} onLoad={() => setActiveTab('chat')} />
+      )}
     </>
   )
 }
