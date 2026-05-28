@@ -68,6 +68,29 @@ export default function DashboardPage() {
   return (
     <div className="h-full flex flex-col overflow-auto">
 
+      {/* Top bar: MTD spend + quick links */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] shrink-0 gap-4 flex-wrap">
+        <div className="flex items-baseline gap-2">
+          <span className="text-text3 font-mono text-[10px] uppercase tracking-wider">MTD Spend</span>
+          <span className="font-mono text-lg font-bold text-text1">$0.00</span>
+          <span className="text-text3 font-mono text-[10px]">no spend yet</span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {[
+            { label: 'Agents', href: '#agent-roster' },
+            { label: 'Pipeline', href: '/pipeline' },
+            { label: 'Storage', href: '/storage' },
+            { label: 'Analytics', href: '/analytics' },
+            { label: 'IDE', href: '/ide' },
+          ].map(({ label, href }) => (
+            <a key={label} href={href}
+              className="px-3 py-1 rounded-full bg-base-3 border border-white/[0.06] text-text2 font-mono text-[10px] hover:border-blue/30 hover:text-blue hover:bg-blue/5 transition-colors">
+              {label}
+            </a>
+          ))}
+        </div>
+      </div>
+
       {/* Stat cards */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-px bg-white/[0.04] border-b border-white/[0.06] shrink-0">
         {[
