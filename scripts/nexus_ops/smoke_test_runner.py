@@ -3,13 +3,14 @@
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — optimized for bandit convergence speed.
 
-v2 Optimizations:
-1. SCORER: Sonnet 4.6 instead of Opus 4.7 — 3x faster, 5x cheaper, consistent rankings
-2. CORE CASES: 25 cases across 19 slots (was 53) — 1-2 per slot, highest discrimination
-3. PARALLEL SAFE: Sonnet rate limits allow simultaneous provider runs via GHA matrix
-
-Full sweep runtime: ~45 min (was 4-6 hours)
-Cycles to full convergence: ~18 (was ~450 for slowest slot)
+v3 Changes:
+- COST-WEIGHTED REWARD: reward = 0.70*quality + 0.30*cost_efficiency
+  Quality floor: 0.75 (non-negotiable). Above floor, cheaper models get higher reward.
+  This means Opus ($11.67/MTok) needs significantly better quality to beat
+  DeepSeek V4 Pro ($0.55/MTok) in the routing table.
+- SCORER: Sonnet 4.6 (3x faster, 5x cheaper than Opus, consistent rankings)
+- CORE CASES: 25 cases across 19 agent/task slots
+- PARALLEL SAFE: runs anthropic + openrouter + openai simultaneously via GHA matrix
 """
 
 from __future__ import annotations
@@ -31,6 +32,12 @@ log = get_logger("smoke_test_runner")
 SCORER_MODEL = "claude-sonnet-4-6"
 SCORE_RETRY_ATTEMPTS = 3
 SCORE_RETRY_BASE_DELAY = 5
+
+# Cost-efficiency reward weights
+QUALITY_WEIGHT = 0.70   # 70% quality
+COST_WEIGHT = 0.30      # 30% cost efficiency
+QUALITY_FLOOR = 0.75    # minimum quality — below this = reward 0.0 regardless of cost
+MAX_COST_CEILING = 12.0 # normalizer — Opus ~$11.67/MTok avg
 
 SCORER_SYSTEM = """You are a strict QA evaluator for an AI agent platform serving mechanical engineering and digital services clients.
 Output ONLY valid JSON — no preamble, no markdown:
@@ -295,9 +302,26 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
                 "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
 
 
+def compute_bandit_reward(composite_score: float, cost_input: float, cost_output: float) -> float:
+    """
+    Cost-weighted reward function.
+    Quality floor: 0.75 — below this, reward=0.0 regardless of cost.
+    Above floor: reward = 0.70*quality + 0.30*cost_efficiency
+    This ensures cheap models with good quality beat expensive models with marginally better quality.
+
+    Example: DeepSeek V4 Pro (0.879 quality, $0.55/MTok) -> reward 0.902
+             Opus 4.7 (0.919 quality, $11.67/MTok)       -> reward 0.652
+    """
+    if composite_score < QUALITY_FLOOR:
+        return 0.0
+    cost_avg = (cost_input + cost_output * 2) / 3.0
+    cost_norm = min(cost_avg / MAX_COST_CEILING, 1.0)
+    cost_efficiency = 1.0 - cost_norm
+    return round(QUALITY_WEIGHT * composite_score + COST_WEIGHT * cost_efficiency, 4)
+
+
 def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Optional[Dict]:
-    """Score with Sonnet 4.6. 3x faster than Opus, sufficient ranking accuracy for bandit.
-    Retries 3x with backoff. Returns None on all failures — caller skips result entirely."""
+    """Score with Sonnet 4.6. 3x faster than Opus, consistent rankings for bandit."""
     prompt = f"Task:\n{task_prompt[:1000]}\n\nResponse:\n{output[:4000]}\n\nCriteria:\n{json.dumps(criteria)}\n\nScore strictly. Output only JSON."
     for attempt in range(SCORE_RETRY_ATTEMPTS):
         try:
@@ -311,7 +335,6 @@ def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config
                 raw = raw.split("```")[1].lstrip("json").strip()
             scores = json.loads(raw)
             scores["scoring_latency_ms"] = latency
-            scores["scoring_fallback"] = False
             return scores
         except Exception as e:
             delay = SCORE_RETRY_BASE_DELAY * (2 ** attempt)
@@ -360,7 +383,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
     run_id = str(uuid.uuid4())
     now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
     summary = {"run_id": run_id, "started_at": datetime.now(timezone.utc).isoformat(),
-               "scorer": SCORER_MODEL,
+               "scorer": SCORER_MODEL, "reward_fn": f"{QUALITY_WEIGHT}*quality+{COST_WEIGHT}*cost_efficiency",
                "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
                "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
                "errors": [], "scoring_skipped": 0}
@@ -374,7 +397,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         models = d1.query_rows(
             f"SELECT model_id, provider, display_name, cost_input_per_1m, cost_output_per_1m FROM model_registry {sql}",
             params)
-        log.info(f"Loaded {len(models)} models (provider: {provider_filter or 'all'}) | Scorer: {SCORER_MODEL}")
+        log.info(f"Loaded {len(models)} models | Scorer: {SCORER_MODEL} | Reward: {QUALITY_WEIGHT}*Q + {COST_WEIGHT}*CostEff")
 
         total_cases = sum(
             len(cases) for ag, tasks in TEST_CASES.items() if (not agent_filter or ag == agent_filter)
@@ -394,8 +417,10 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
 
                 for model in models:
                     model_id, provider = model["model_id"], model["provider"]
-                    log.info(f"\n  [{provider}] {model_id}")
-                    model_scores, model_results_batch = [], []
+                    cost_in = float(model.get("cost_input_per_1m") or 0)
+                    cost_out = float(model.get("cost_output_per_1m") or 0)
+                    log.info(f"\n  [{provider}] {model_id} (${cost_in:.2f}/${cost_out:.2f} per MTok)")
+                    model_rewards, model_results_batch = [], []
 
                     for case in cases:
                         if cfg.dry_run:
@@ -424,21 +449,23 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                             log.warning(f"    SKIP {case['name']} — scoring failed, excluded from bandit")
                             continue
 
-                        in_rate = float(model.get("cost_input_per_1m") or 0)
-                        out_rate = float(model.get("cost_output_per_1m") or 0)
-                        cost = response["cost_usd"] or (
-                            (response["input_tokens"]*in_rate + response["output_tokens"]*out_rate)/1_000_000)
+                        actual_cost = response["cost_usd"] or (
+                            (response["input_tokens"]*cost_in + response["output_tokens"]*cost_out)/1_000_000)
+
+                        # Cost-weighted bandit reward
+                        bandit_reward = compute_bandit_reward(scores["composite_score"], cost_in, cost_out)
+
                         result = {"run_id": run_id, "agent": agent, "task_type": task_type,
                                   "model_id": model_id, "provider": provider,
                                   "case_name": case["name"], "difficulty": case.get("difficulty"),
                                   "output_text": response["output"], "latency_ms": response["latency_ms"],
                                   "input_tokens": response["input_tokens"], "output_tokens": response["output_tokens"],
-                                  "cost_usd": round(cost, 8),
-                                  "bandit_reward": 1.0 if scores["composite_score"] >= 0.75 else 0.0, **scores}
-                        model_scores.append(scores["composite_score"])
+                                  "cost_usd": round(actual_cost, 8),
+                                  "bandit_reward": bandit_reward, **scores}
+                        model_rewards.append(bandit_reward)
                         model_results_batch.append(result)
-                        summary["total_cost_usd"] += cost
-                        log.info(f"    + {case['name']:40} score={scores['composite_score']:.3f} [{scores['verdict']}] {response['latency_ms']}ms")
+                        summary["total_cost_usd"] += actual_cost
+                        log.info(f"    + {case['name']:38} q={scores['composite_score']:.3f} r={bandit_reward:.3f} [{scores['verdict']}] {response['latency_ms']}ms")
 
                         all_results.append(result)
                         result_id = str(uuid.uuid4())
@@ -453,30 +480,38 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                            result.get("input_tokens"), result.get("output_tokens"), result.get("cost_usd"),
                            result.get("score_accuracy"), result.get("score_completeness"), result.get("score_tone"),
                            result.get("score_criteria_met"), result.get("composite_score"), result.get("verdict"),
-                           result.get("notes"), result.get("bandit_reward"), now_ts])
+                           result.get("notes"), bandit_reward, now_ts])
 
-                    if model_scores and not cfg.dry_run:
-                        avg_score = sum(model_scores)/len(model_scores)
-                        reward = 1.0 if avg_score >= 0.75 else 0.0
+                    if model_rewards and not cfg.dry_run:
+                        avg_reward = sum(model_rewards)/len(model_rewards)
                         valid_lat = [r.get("latency_ms",0) for r in model_results_batch if r.get("latency_ms")]
                         valid_cost = [r.get("cost_usd",0) for r in model_results_batch if r.get("cost_usd")]
+                        avg_quality = sum(r.get("composite_score",0) for r in model_results_batch)/len(model_results_batch)
+                        n_wins = sum(1 for r in model_results_batch if r.get("bandit_reward",0) > 0)
+                        n_losses = len(model_rewards) - n_wins
                         d1.execute("""INSERT INTO model_bandit_params
                             (id, agent, task_type, model_id, alpha, beta, n_trials, n_successes, n_failures,
                              avg_latency_ms, avg_cost_usd, avg_quality, last_reward, last_updated)
                           VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?)
                           ON CONFLICT(agent, task_type, model_id) DO UPDATE SET
-                            alpha=alpha+(excluded.alpha-1), beta=beta+(excluded.beta-1),
-                            n_trials=n_trials+1, n_successes=n_successes+excluded.n_successes,
-                            n_failures=n_failures+excluded.n_failures,
+                            alpha=alpha+?,
+                            beta=beta+?,
+                            n_trials=n_trials+1,
+                            n_successes=n_successes+?,
+                            n_failures=n_failures+?,
                             avg_latency_ms=(avg_latency_ms*n_trials+excluded.avg_latency_ms)/(n_trials+1),
                             avg_cost_usd=(avg_cost_usd*n_trials+excluded.avg_cost_usd)/(n_trials+1),
                             avg_quality=(avg_quality*n_trials+excluded.avg_quality)/(n_trials+1),
                             last_reward=excluded.last_reward, last_updated=excluded.last_updated""",
-                          [str(uuid.uuid4()), agent, task_type, model_id, 1.0+reward, 1.0+(1.0-reward),
-                           int(reward), 1-int(reward),
+                          [str(uuid.uuid4()), agent, task_type, model_id,
+                           1.0 + avg_reward, 1.0 + (1.0 - avg_reward),
+                           n_wins, n_losses,
                            round(sum(valid_lat)/len(valid_lat) if valid_lat else 0, 1),
                            round(sum(valid_cost)/len(valid_cost) if valid_cost else 0, 8),
-                           round(avg_score, 4), reward, int(datetime.now(timezone.utc).timestamp()*1000)])
+                           round(avg_quality, 4), avg_reward,
+                           int(datetime.now(timezone.utc).timestamp()*1000),
+                           # ON CONFLICT update params
+                           avg_reward, (1.0 - avg_reward), n_wins, n_losses])
 
                 if not cfg.dry_run:
                     winner = refresh_routing_table(d1, agent, task_type, run_id)
@@ -484,18 +519,19 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         summary["routing_updates"].append({"agent": agent, "task_type": task_type, "winner": winner})
 
         d1.execute("UPDATE smoke_test_runs SET status='completed', n_cases_complete=?, n_cases_passed=?, total_cost_usd=?, completed_at=? WHERE id=?",
-                   [len(all_results), sum(1 for r in all_results if r.get("bandit_reward",0)>=1.0),
+                   [len(all_results), sum(1 for r in all_results if r.get("bandit_reward",0) > 0),
                     round(summary["total_cost_usd"],6), int(datetime.now(timezone.utc).timestamp()*1000), run_id])
 
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
-                       {"run_id": run_id, "scorer": SCORER_MODEL, "filters": summary["filters"],
-                        "total_cost_usd": summary["total_cost_usd"],
+                       {"run_id": run_id, "scorer": SCORER_MODEL,
+                        "reward_fn": f"{QUALITY_WEIGHT}*quality+{COST_WEIGHT}*cost_efficiency",
+                        "filters": summary["filters"], "total_cost_usd": summary["total_cost_usd"],
                         "routing_updates": summary["routing_updates"],
                         "total_results": len(all_results),
                         "scoring_skipped": summary["scoring_skipped"]})
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/full_results.json",
-                       {"run_id": run_id, "scorer": SCORER_MODEL, "results": all_results})
+                       {"run_id": run_id, "results": all_results})
         log.info(f"\nR2 backup: smoke_tests/{date_str}/{run_id}/")
 
     summary["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -512,11 +548,12 @@ if __name__ == "__main__":
     result = run_smoke_tests(provider_filter=args.provider, agent_filter=args.agent,
                              task_type_filter=args.task_type)
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
-    print(f"  Scorer:          {SCORER_MODEL}")
-    print(f"  Results:         {result['total_results']}")
-    print(f"  Cost:            ${result['total_cost_usd']:.4f}")
-    print(f"  DryRun:          {result['dry_run']}")
-    print(f"  Scoring skipped: {result['scoring_skipped']}")
+    print(f"  Scorer:      {SCORER_MODEL}")
+    print(f"  Reward fn:   {QUALITY_WEIGHT}*quality + {COST_WEIGHT}*cost_efficiency (floor: {QUALITY_FLOOR})")
+    print(f"  Results:     {result['total_results']}")
+    print(f"  Cost:        ${result['total_cost_usd']:.4f}")
+    print(f"  DryRun:      {result['dry_run']}")
+    print(f"  Skipped:     {result['scoring_skipped']}")
     if result["routing_updates"]:
         print(f"\n  ROUTING TABLE UPDATES ({len(result['routing_updates'])}):")
         for u in result["routing_updates"]:
