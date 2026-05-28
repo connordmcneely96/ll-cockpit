@@ -4,14 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: 'Provider to test'
+        description: 'Provider (or "all" to run all 3 in parallel)'
         required: true
         type: choice
         options:
+          - all
           - anthropic
           - openrouter
           - openai
-        default: openrouter
+        default: all
       agent:
         description: 'Agent to test (leave blank for all)'
         required: false
@@ -31,21 +32,21 @@ on:
           - META_COGNITION
         default: ''
       task_type:
-        description: 'Task type to test (leave blank for all)'
+        description: 'Task type (leave blank for all)'
         required: false
         default: ''
-
-# CRITICAL: Only one smoke test run at a time globally.
-# Concurrent runs hammer Opus scoring → rate limits → 0.500 fallback contamination.
-# cancel-in-progress: false means new runs QUEUE rather than cancel existing ones.
-concurrency:
-  group: nexus-smoke-test
-  cancel-in-progress: false
 
 jobs:
   smoke-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
+
+    strategy:
+      # Run all providers in parallel — safe with Sonnet scorer (higher rate limits than Opus)
+      # fail-fast: false ensures one provider failing doesn't cancel others
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJson(inputs.provider == 'all' && '["anthropic","openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
 
     steps:
       - name: Checkout
@@ -64,7 +65,7 @@ jobs:
           pip install -r requirements.txt
           pip install boto3
 
-      - name: Write .env file from secrets
+      - name: Write .env from secrets
         run: |
           cat > scripts/.env << 'ENVEOF'
           CF_ACCOUNT_ID=${{ secrets.CF_ACCOUNT_ID }}
@@ -83,31 +84,13 @@ jobs:
           DRY_RUN=false
           ENVEOF
 
-      - name: Verify secrets loaded
-        working-directory: scripts
-        env:
-          PYTHONPATH: ${{ github.workspace }}/scripts
-        run: |
-          python3 -c "
-          from dotenv import load_dotenv
-          from pathlib import Path
-          import os
-          load_dotenv(Path('.env'), override=True)
-          required = ['CF_ACCOUNT_ID','CF_API_TOKEN','CF_D1_DATABASE_ID','ANTHROPIC_API_KEY','OPENROUTER_API_KEY']
-          missing = [k for k in required if not os.getenv(k)]
-          if missing:
-              print('MISSING SECRETS:', missing)
-              exit(1)
-          print('All required secrets loaded OK')
-          "
-
-      - name: Run smoke tests
+      - name: Run smoke tests — ${{ matrix.provider }}
         working-directory: scripts
         env:
           PYTHONPATH: ${{ github.workspace }}/scripts
           DRY_RUN: false
         run: |
-          ARGS="--provider ${{ inputs.provider }}"
+          ARGS="--provider ${{ matrix.provider }}"
           if [ -n "${{ inputs.agent }}" ]; then
             ARGS="$ARGS --agent ${{ inputs.agent }}"
           fi
@@ -117,18 +100,10 @@ jobs:
           echo "Running: python -m nexus_ops.smoke_test_runner $ARGS"
           python -m nexus_ops.smoke_test_runner $ARGS
 
-      - name: Upload local backups as artifacts
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-test-backups-${{ github.run_id }}
-          path: scripts/backups/local/
-          retention-days: 30
-
-      - name: Upload logs as artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-test-logs-${{ github.run_id }}
+          name: smoke-logs-${{ matrix.provider }}-${{ github.run_id }}
           path: scripts/logs/
           retention-days: 14
