@@ -6,6 +6,24 @@ import { useAgentStore } from '@/stores/agentStore'
 import type { AgentConfig } from '@/types'
 import { CronHeatmap } from '@/components/dashboard/CronHeatmap'
 
+function Sparkline({ data, color = 'currentColor' }: { data: number[]; color?: string }) {
+  if (!data.length) return null
+  const max = Math.max(...data, 1)
+  const min = Math.min(...data, 0)
+  const range = max - min || 1
+  const w = 60, h = 16
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1 || 1)) * w
+    const y = h - ((v - min) / range) * h
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible" style={{ color }}>
+      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+    </svg>
+  )
+}
+
 function AgentCard({ agent }: { agent: AgentConfig }) {
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent)
   const hasMessages = useAgentStore((s) => !!(s.sessions[agent.name]?.length))
@@ -95,16 +113,19 @@ export default function DashboardPage() {
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-px bg-white/[0.04] border-b border-white/[0.06] shrink-0">
         {[
           { label: 'SESSIONS TODAY', value: '0', sub: 'start an agent session', color: 'text-text1' },
-          { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright' },
-          { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green' },
+          { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright', spark: [0,0,0,0,0,0,0] },
+          { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green', spark: [0,0,0,0,0,0,0] },
           { label: 'ACTIVE AGENTS', value: String(AGENT_LIST.length), sub: 'configured', color: 'text-cyan' },
           { label: 'PIPELINE TASKS', value: '0', sub: 'no tasks yet', color: 'text-gold' },
           { label: 'HOURS TODAY', value: '0.0h', sub: 'Today: 0.0h', color: 'text-text2' },
-        ].map(({ label, value, sub, color }) => (
+        ].map(({ label, value, sub, color, spark }: { label: string; value: string; sub: string; color: string; spark?: number[] }) => (
           <div key={label} className="bg-base-2 p-4 flex flex-col gap-1">
             <p className="text-text3 font-mono text-[10px] uppercase tracking-wider">{label}</p>
             <p className={`font-mono text-2xl font-bold ${color}`}>{value}</p>
-            <p className="text-text3 font-mono text-[10px]">{sub}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-text3 font-mono text-[10px]">{sub}</p>
+              {spark && <span className={color}><Sparkline data={spark} /></span>}
+            </div>
           </div>
         ))}
       </div>
