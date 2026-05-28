@@ -11,7 +11,7 @@ import { useResizablePanels } from '@/hooks/useResizablePanels'
 import type { ReactNode } from 'react'
 
 export default function CockpitLayout({ children }: { children: ReactNode }) {
-  const { explorerWidth, agentWidth, beginDragExplorer, beginDragAgent } = useResizablePanels()
+  const { explorerWidth, agentWidth, beginDragExplorer, beginDragAgent, agentCollapsed, toggleAgentCollapse } = useResizablePanels()
 
   return (
     <div
@@ -74,12 +74,29 @@ export default function CockpitLayout({ children }: { children: ReactNode }) {
               background: 'linear-gradient(to bottom, transparent, rgba(59,130,246,0.8), transparent)',
             }}
           />
+          <button
+            onClick={toggleAgentCollapse}
+            className="absolute z-20 flex items-center justify-center rounded-full transition-all opacity-0 group-hover:opacity-100"
+            style={{
+              width: 16, height: 16,
+              background: 'var(--t-p-glass)',
+              border: '1px solid var(--t-glass-bdr)',
+              color: 'var(--t-p)',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              fontSize: 9,
+            }}
+            title={agentCollapsed ? 'Expand agent panel' : 'Collapse agent panel'}
+            aria-label={agentCollapsed ? 'Expand agent panel' : 'Collapse agent panel'}
+          >
+            {agentCollapsed ? '›' : '‹'}
+          </button>
         </div>
 
         {/* Agent Panel — resizable */}
         <div
-          style={{ width: agentWidth, minWidth: agentWidth }}
-          className="shrink-0 h-full overflow-hidden"
+          style={{ width: agentCollapsed ? 0 : agentWidth, minWidth: agentCollapsed ? 0 : agentWidth }}
+          className="shrink-0 h-full overflow-hidden transition-all duration-200"
         >
           <AgentPanel />
         </div>
