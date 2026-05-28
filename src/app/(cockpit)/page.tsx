@@ -4,6 +4,7 @@ import { AGENT_LIST } from '@/lib/agents'
 import { useUiStore } from '@/stores/uiStore'
 import { useAgentStore } from '@/stores/agentStore'
 import type { AgentConfig } from '@/types'
+import { CronHeatmap } from '@/components/dashboard/CronHeatmap'
 
 function AgentCard({ agent }: { agent: AgentConfig }) {
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent)
@@ -83,6 +84,11 @@ export default function DashboardPage() {
             <p className="text-text3 font-mono text-[10px]">{sub}</p>
           </div>
         ))}
+      </div>
+
+      {/* System Health */}
+      <div className="px-4 pt-4">
+        <CronHeatmap />
       </div>
 
       {/* Body: agent grid + right column */}
