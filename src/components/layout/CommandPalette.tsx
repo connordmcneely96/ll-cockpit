@@ -81,7 +81,12 @@ export function CommandPalette() {
   if (!commandPaletteOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-24 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command palette"
+    >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeCommandPalette} />
       <div className="relative z-10 w-full max-w-lg bg-navy-3 border border-gold/20 rounded-xl shadow-2xl overflow-hidden">
         {/* Search input */}
@@ -94,6 +99,9 @@ export function CommandPalette() {
             onKeyDown={handleKey}
             placeholder="Search commands, agents, pages…"
             className="flex-1 bg-transparent text-text1 font-mono text-sm outline-none placeholder:text-text3"
+            aria-autocomplete="list"
+            aria-controls="command-palette-list"
+            aria-activedescendant={filtered[selectedIdx] ? `cmd-${filtered[selectedIdx].id}` : undefined}
           />
           <kbd className="text-text3 text-xs font-mono bg-navy-4 px-1.5 py-0.5 rounded border border-white/10">
             ESC
@@ -101,13 +109,21 @@ export function CommandPalette() {
         </div>
 
         {/* Results */}
-        <ul className="max-h-80 overflow-y-auto py-1">
+        <ul
+          id="command-palette-list"
+          role="listbox"
+          aria-label="Commands"
+          className="max-h-80 overflow-y-auto py-1"
+        >
           {filtered.length === 0 ? (
             <li className="px-4 py-3 text-text3 text-sm font-mono">No results</li>
           ) : (
             filtered.map((item, idx) => (
               <li
                 key={item.id}
+                id={`cmd-${item.id}`}
+                role="option"
+                aria-selected={idx === selectedIdx}
                 className={[
                   'flex items-center gap-3 px-4 py-2 cursor-pointer font-mono text-sm transition-colors',
                   idx === selectedIdx ? 'bg-gold/10 text-gold' : 'text-text2 hover:bg-white/5',
