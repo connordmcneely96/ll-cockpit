@@ -270,13 +270,29 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
       {/* Messages — only shown on Chat tab */}
       {activeTab === 'chat' && <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8">
+          <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8 px-3">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-bold font-mono glass-card"
               style={{ color: agent.color, boxShadow: `0 0 20px ${agent.color}30` }}>
               {agent.displayName.slice(0, 2)}
             </div>
             <p className="font-mono text-xs font-semibold" style={{ color: 'var(--t-tx1)' }}>What should we work on?</p>
-            <p className="font-mono text-[10px]" style={{ color: 'var(--t-tx3)' }}>{agent.role}</p>
+            <p className="font-mono text-[10px] mb-1" style={{ color: 'var(--t-tx3)' }}>{agent.role}</p>
+            <div className="flex flex-col gap-1.5 w-full max-w-[220px]">
+              {[
+                'Summarize your current capabilities',
+                'What can you help me build?',
+                'Show me an example task',
+              ].map((prompt) => (
+                <button
+                  key={prompt}
+                  onClick={() => setInput(prompt)}
+                  className="text-left px-2.5 py-1.5 rounded-lg font-mono text-[10px] transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx2)' }}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           messages.map((msg, idx) => (

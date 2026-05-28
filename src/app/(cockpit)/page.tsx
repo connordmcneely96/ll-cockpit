@@ -6,6 +6,24 @@ import { useAgentStore } from '@/stores/agentStore'
 import type { AgentConfig } from '@/types'
 import { CronHeatmap } from '@/components/dashboard/CronHeatmap'
 
+function Sparkline({ data, color = 'currentColor' }: { data: number[]; color?: string }) {
+  if (!data.length) return null
+  const max = Math.max(...data, 1)
+  const min = Math.min(...data, 0)
+  const range = max - min || 1
+  const w = 60, h = 16
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1 || 1)) * w
+    const y = h - ((v - min) / range) * h
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible" style={{ color }}>
+      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+    </svg>
+  )
+}
+
 function AgentCard({ agent }: { agent: AgentConfig }) {
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent)
   const hasMessages = useAgentStore((s) => !!(s.sessions[agent.name]?.length))
@@ -68,20 +86,49 @@ export default function DashboardPage() {
   return (
     <div className="h-full flex flex-col overflow-auto">
 
+      {/* Top bar: MTD spend + quick links */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] shrink-0 gap-4 flex-wrap">
+        <div className="flex items-baseline gap-2">
+          <span className="text-text3 font-mono text-[10px] uppercase tracking-wider">MTD Spend</span>
+          <span className="font-mono text-lg font-bold text-text1">$0.00</span>
+          <span className="text-text3 font-mono text-[10px]">no spend yet</span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {[
+            { label: 'Agents', href: '#agent-roster' },
+            { label: 'Pipeline', href: '/pipeline' },
+            { label: 'Storage', href: '/storage' },
+            { label: 'Analytics', href: '/analytics' },
+            { label: 'IDE', href: '/ide' },
+          ].map(({ label, href }) => (
+            <a key={label} href={href}
+              className="px-3 py-1 rounded-full bg-base-3 border border-white/[0.06] text-text2 font-mono text-[10px] hover:border-blue/30 hover:text-blue hover:bg-blue/5 transition-colors">
+              {label}
+            </a>
+          ))}
+        </div>
+      </div>
+
       {/* Stat cards */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-px bg-white/[0.04] border-b border-white/[0.06] shrink-0">
         {[
-          { label: 'SESSIONS TODAY', value: '0', sub: 'start an agent session', color: 'text-text1' },
-          { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright' },
-          { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green' },
-          { label: 'ACTIVE AGENTS', value: String(AGENT_LIST.length), sub: 'configured', color: 'text-cyan' },
-          { label: 'PIPELINE TASKS', value: '0', sub: 'no tasks yet', color: 'text-gold' },
-          { label: 'HOURS TODAY', value: '0.0h', sub: 'Today: 0.0h', color: 'text-text2' },
-        ].map(({ label, value, sub, color }) => (
-          <div key={label} className="bg-base-2 p-4 flex flex-col gap-1">
+          { label: 'SESSIONS TODAY', value: '0', sub: 'start an agent session', color: 'text-text1', href: undefined },
+          { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright', spark: [0,0,0,0,0,0,0], href: '/analytics' },
+          { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green', spark: [0,0,0,0,0,0,0], href: '/analytics' },
+          { label: 'ACTIVE AGENTS', value: String(AGENT_LIST.length), sub: 'configured', color: 'text-cyan', href: '#agent-roster' },
+          { label: 'PIPELINE TASKS', value: '0', sub: 'no tasks yet', color: 'text-gold', href: '/pipeline' },
+          { label: 'HOURS TODAY', value: '0.0h', sub: 'Today: 0.0h', color: 'text-text2', href: undefined },
+        ].map(({ label, value, sub, color, spark, href }: { label: string; value: string; sub: string; color: string; spark?: number[]; href?: string }) => (
+          <div key={label}
+            className={`bg-base-2 p-4 flex flex-col gap-1 transition-all ${href ? 'cursor-pointer hover:bg-base-3' : ''}`}
+            onClick={href ? () => { if (href.startsWith('#')) { document.querySelector(href)?.scrollIntoView({ behavior: 'smooth' }) } else { window.location.href = href } } : undefined}
+            title={href ? 'View details' : undefined}>
             <p className="text-text3 font-mono text-[10px] uppercase tracking-wider">{label}</p>
             <p className={`font-mono text-2xl font-bold ${color}`}>{value}</p>
-            <p className="text-text3 font-mono text-[10px]">{sub}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-text3 font-mono text-[10px]">{sub}</p>
+              {spark && <span className={color}><Sparkline data={spark} /></span>}
+            </div>
           </div>
         ))}
       </div>
@@ -95,7 +142,7 @@ export default function DashboardPage() {
       <div className="flex flex-1 min-h-0">
 
         {/* Agent roster grid */}
-        <div className="flex-1 p-4 overflow-auto">
+        <div id="agent-roster" className="flex-1 p-4 overflow-auto">
           <div className="flex items-center justify-between mb-3">
             <p className="text-text3 font-mono text-[10px] uppercase tracking-widest">Agent Roster</p>
             <p className="text-text3 font-mono text-[10px]">{AGENT_LIST.length} configured</p>
