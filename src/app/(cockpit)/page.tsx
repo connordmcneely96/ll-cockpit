@@ -112,14 +112,17 @@ export default function DashboardPage() {
       {/* Stat cards */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-px bg-white/[0.04] border-b border-white/[0.06] shrink-0">
         {[
-          { label: 'SESSIONS TODAY', value: '0', sub: 'start an agent session', color: 'text-text1' },
-          { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright', spark: [0,0,0,0,0,0,0] },
-          { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green', spark: [0,0,0,0,0,0,0] },
-          { label: 'ACTIVE AGENTS', value: String(AGENT_LIST.length), sub: 'configured', color: 'text-cyan' },
-          { label: 'PIPELINE TASKS', value: '0', sub: 'no tasks yet', color: 'text-gold' },
-          { label: 'HOURS TODAY', value: '0.0h', sub: 'Today: 0.0h', color: 'text-text2' },
-        ].map(({ label, value, sub, color, spark }: { label: string; value: string; sub: string; color: string; spark?: number[] }) => (
-          <div key={label} className="bg-base-2 p-4 flex flex-col gap-1">
+          { label: 'SESSIONS TODAY', value: '0', sub: 'start an agent session', color: 'text-text1', href: undefined },
+          { label: 'TOKENS USED', value: '0', sub: '/ 100k limit', color: 'text-blue-bright', spark: [0,0,0,0,0,0,0], href: '/analytics' },
+          { label: 'COST TODAY', value: '$0.000', sub: 'USD', color: 'text-green', spark: [0,0,0,0,0,0,0], href: '/analytics' },
+          { label: 'ACTIVE AGENTS', value: String(AGENT_LIST.length), sub: 'configured', color: 'text-cyan', href: '#agent-roster' },
+          { label: 'PIPELINE TASKS', value: '0', sub: 'no tasks yet', color: 'text-gold', href: '/pipeline' },
+          { label: 'HOURS TODAY', value: '0.0h', sub: 'Today: 0.0h', color: 'text-text2', href: undefined },
+        ].map(({ label, value, sub, color, spark, href }: { label: string; value: string; sub: string; color: string; spark?: number[]; href?: string }) => (
+          <div key={label}
+            className={`bg-base-2 p-4 flex flex-col gap-1 transition-all ${href ? 'cursor-pointer hover:bg-base-3' : ''}`}
+            onClick={href ? () => { if (href.startsWith('#')) { document.querySelector(href)?.scrollIntoView({ behavior: 'smooth' }) } else { window.location.href = href } } : undefined}
+            title={href ? 'View details' : undefined}>
             <p className="text-text3 font-mono text-[10px] uppercase tracking-wider">{label}</p>
             <p className={`font-mono text-2xl font-bold ${color}`}>{value}</p>
             <div className="flex items-center justify-between gap-2">
@@ -139,7 +142,7 @@ export default function DashboardPage() {
       <div className="flex flex-1 min-h-0">
 
         {/* Agent roster grid */}
-        <div className="flex-1 p-4 overflow-auto">
+        <div id="agent-roster" className="flex-1 p-4 overflow-auto">
           <div className="flex items-center justify-between mb-3">
             <p className="text-text3 font-mono text-[10px] uppercase tracking-widest">Agent Roster</p>
             <p className="text-text3 font-mono text-[10px]">{AGENT_LIST.length} configured</p>
