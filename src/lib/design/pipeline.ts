@@ -236,7 +236,7 @@ export function buildDesignBuildDAG(
       id,
       agent: 'COMPOSER',
       title: `Compose ${sec.name} section`,
-      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the design tokens passed in upstream context (primary, accent, surface, text-primary, text-secondary, border, font-display, font-sans, font-serif, font-mono — last two only when the DESIGNER tokens specify font_serif/font_mono).\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. White text on light backgrounds is forbidden. Use bg-primary text-white OR bg-white text-primary border-2 border-primary.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\n${scrollAnimationsBlock}\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
+      task: `SECTION-ONLY MODE. Compose ONLY the <section id="${sec.slug}"> markup for the "${sec.name}" section of ${brief.client_name}'s website. No <!DOCTYPE>, <html>, <head>, <body>, <link>, or <script> tags.${guidanceBlock}\n\nUse Tailwind classes referencing the shadcn design tokens (font-display, font-sans, font-serif, font-mono — last two only when the DESIGNER tokens specify font_serif/font_mono).\n\nCOLOR & TOKEN RULES (Sprint 119F-5 — MANDATORY):\n1. Use ONLY shadcn semantic color classes: bg-background, text-foreground, bg-card, text-card-foreground, bg-primary, text-primary-foreground, bg-secondary, text-secondary-foreground, bg-muted, text-muted-foreground, bg-accent, text-accent-foreground, border-border, border-input, ring-ring.\n2. NEVER hardcode hex colors — no bg-[#hex], text-[#hex], from-[#hex], to-[#hex], via-[#hex], no inline style color values. Use semantic token classes only.\n3. For gradients use token utilities: from-primary to-primary via-accent etc., never arbitrary hex values.\n4. Cards/panels: bg-card text-card-foreground border-border. Muted text: text-muted-foreground. Primary CTAs: bg-primary text-primary-foreground. Accent highlights: bg-accent text-accent-foreground or text-accent.\n5. This ensures color schemes and dark mode work automatically. Hardcoded colors break both.\n\nBRIEF CONTEXT:\n${briefSummary}\n\nALL SECTIONS IN ORDER: ${sections.map((s) => s.name).join(', ')}\n\nTHIS SECTION: ${sec.name}\n\nHEADING HIERARCHY: Use <h2> for your section's main headline. If you have card grids or sub-items inside, use <h3> for them. The page's single <h1> lives in the hero section; do NOT add another <h1>.\n\nACCESSIBILITY REQUIREMENTS:\n- All CTA buttons MUST meet WCAG AA contrast 4.5:1. Use bg-primary text-primary-foreground for filled buttons.\n- Form inputs: use aria-required="true" for required fields (not visual asterisks alone).\n- Icon-only indicators must include sr-only text or visible label adjacent.\n- SVG illustrations inside articles: wrap in <figure> with <figcaption> for screen readers; mark purely decorative SVGs aria-hidden="true".\n- Focus styles: rely on the global focus-visible outline rule; do NOT add custom focus:ring on inputs (causes double-ring).\n\n${scrollAnimationsBlock}\n\nProduce production-quality, responsive, accessible markup with REAL copy (not placeholders). Use semantic HTML (h2 for section headline, articles for grouped items, dl/dt/dd for spec definition lists). First character of your response must be <, last must be >.`,
       task_type: taskType,
       depends_on: ['st_1'],
       estimated_cost_usd: estCost,
@@ -466,14 +466,22 @@ function buildTailwindConfigScript(
       theme: {
         extend: {
           colors: {
-            primary:          'var(--primary)',
-            'primary-dark':   'var(--primary-dark)',
-            'primary-light':  'var(--primary-light)',
-            accent:           'var(--accent)',
-            surface:          'var(--surface)',
-            'text-primary':   'var(--text-primary)',
-            'text-secondary': 'var(--text-secondary)',
-            border:           'var(--border)',
+            background:  'var(--background)',
+            foreground:  'var(--foreground)',
+            card:        { DEFAULT: 'var(--card)', foreground: 'var(--card-foreground)' },
+            popover:     { DEFAULT: 'var(--popover)', foreground: 'var(--popover-foreground)' },
+            primary:     { DEFAULT: 'var(--primary)', foreground: 'var(--primary-foreground)' },
+            secondary:   { DEFAULT: 'var(--secondary)', foreground: 'var(--secondary-foreground)' },
+            muted:       { DEFAULT: 'var(--muted)', foreground: 'var(--muted-foreground)' },
+            accent:      { DEFAULT: 'var(--accent)', foreground: 'var(--accent-foreground)' },
+            border:      'var(--border)',
+            input:       'var(--input)',
+            ring:        'var(--ring)',
+          },
+          borderRadius: {
+            lg: 'var(--radius)',
+            md: 'calc(var(--radius) - 2px)',
+            sm: 'calc(var(--radius) - 4px)',
           },
           fontFamily: {
             ${tailwindFontFamily},
@@ -488,30 +496,47 @@ function buildRootCssVars(
   palette: DesignTokens['palette'],
   dark: NonNullable<DesignTokens['palette_dark']>,
 ): string {
-  return `    /* Sprint 18Y — design token CSS custom properties (light mode defaults) */
+  return `    /* Sprint 119F-5 — unified shadcn token set (light mode) */
     :root {
-      --primary:        ${palette.primary};
-      --primary-dark:   ${palette.primary_dark ?? palette.primary};
-      --primary-light:  ${palette.primary_light ?? palette.primary};
-      --accent:         ${palette.accent};
-      --accent-color:   ${palette.accent};
-      --background:     ${palette.background};
-      --surface:        ${palette.surface ?? '#ffffff'};
-      --text-primary:   ${palette.text_primary};
-      --text-secondary: ${palette.text_secondary ?? '#475569'};
-      --border:         ${palette.border ?? '#e2e8f0'};
+      --background:          ${palette.background ?? '#ffffff'};
+      --foreground:          ${palette.text_primary ?? '#1a202c'};
+      --card:                ${palette.surface ?? '#ffffff'};
+      --card-foreground:     ${palette.text_primary ?? '#1a202c'};
+      --popover:             ${palette.surface ?? '#ffffff'};
+      --popover-foreground:  ${palette.text_primary ?? '#1a202c'};
+      --primary:             ${palette.primary ?? '#1a365d'};
+      --primary-foreground:  #ffffff;
+      --secondary:           #f7fafc;
+      --secondary-foreground: ${palette.text_primary ?? '#1a202c'};
+      --muted:               #f1f5f9;
+      --muted-foreground:    ${palette.text_secondary ?? '#64748b'};
+      --accent:              ${palette.accent ?? '#e85d04'};
+      --accent-foreground:   #ffffff;
+      --border:              ${palette.border ?? '#e2e8f0'};
+      --input:               ${palette.border ?? '#e2e8f0'};
+      --ring:                ${palette.primary ?? '#1a365d'};
+      --radius:              0.5rem;
     }
-    /* Sprint 18Y — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
+    /* Sprint 119F-5 — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
     :root.dark {
       color-scheme: dark;
-      --primary:        ${dark.primary};
-      --accent:         ${dark.accent};
-      --accent-color:   ${dark.accent};
-      --background:     ${dark.background};
-      --surface:        ${dark.surface ?? '#1e293b'};
-      --text-primary:   ${dark.text_primary};
-      --text-secondary: ${dark.text_secondary ?? '#94a3b8'};
-      --border:         ${dark.border ?? '#334155'};
+      --background:          ${dark.background ?? '#0f172a'};
+      --foreground:          ${dark.text_primary ?? '#f1f5f9'};
+      --card:                ${dark.surface ?? '#1e293b'};
+      --card-foreground:     ${dark.text_primary ?? '#f1f5f9'};
+      --popover:             ${dark.surface ?? '#1e293b'};
+      --popover-foreground:  ${dark.text_primary ?? '#f1f5f9'};
+      --primary:             ${dark.primary ?? '#6895d4'};
+      --primary-foreground:  #0f172a;
+      --secondary:           ${dark.surface ?? '#1e293b'};
+      --secondary-foreground: ${dark.text_primary ?? '#f1f5f9'};
+      --muted:               ${dark.surface ?? '#1e293b'};
+      --muted-foreground:    ${dark.text_secondary ?? '#94a3b8'};
+      --accent:              ${dark.accent ?? '#fc7c2c'};
+      --accent-foreground:   #0f172a;
+      --border:              ${dark.border ?? '#334155'};
+      --input:               ${dark.border ?? '#334155'};
+      --ring:                ${dark.primary ?? '#6895d4'};
     }`
 }
 
