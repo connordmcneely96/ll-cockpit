@@ -448,6 +448,7 @@ export interface CloudflareEnv {
   KNOWLEDGE_QUEUE: Queue
   AI: Ai
   KNOWLEDGE_VECTORIZE: VectorizeIndex
+  ATLAS_RAG: VectorizeIndex
   ANTHROPIC_API_KEY: string
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
