@@ -2,11 +2,12 @@
 
 import { useUiStore } from '@/stores/uiStore'
 import { formatCost } from '@/lib/cost'
-import { GitBranch } from 'lucide-react'
+import { GitBranch, Cloud } from 'lucide-react'
 
 export function StatusBar() {
   const totalSessionTokens = useUiStore((s) => s.totalSessionTokens)
   const totalSessionCost = useUiStore((s) => s.totalSessionCost)
+  const currentWorkspace = useUiStore((s) => s.currentWorkspace)
 
   return (
     <div
@@ -20,12 +21,16 @@ export function StatusBar() {
       }}
     >
       <div className="flex items-center gap-3" style={{ fontSize: 11, color: 'var(--t-sb-tx)' }}>
+        <div className="flex items-center gap-1.5 px-1.5 rounded" style={{ background:'rgba(16,185,129,0.15)', color:'#10b981' }}>
+          <Cloud size={10} strokeWidth={1.5} />
+          <span style={{ fontWeight: 600 }}>production</span>
+        </div>
         <div className="flex items-center gap-1.5">
           <GitBranch size={11} strokeWidth={1.5} />
           <span>main</span>
         </div>
         <span style={{ opacity: 0.4 }}>|</span>
-        <span>NEXUS PRIME</span>
+        <span>{currentWorkspace}</span>
         <span style={{ opacity: 0.4 }}>|</span>
         <span>claude-sonnet-4-5</span>
       </div>
