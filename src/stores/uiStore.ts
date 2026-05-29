@@ -8,6 +8,9 @@ interface UiState {
   totalSessionTokens: number
   totalSessionCost: number
   selectedAgent: string | null
+  currentWorkspace: string
+  workspaces: string[]
+  setWorkspace: (ws: string) => void
 
   openCommandPalette: () => void
   closeCommandPalette: () => void
@@ -22,6 +25,8 @@ export const useUiStore = create<UiState>((set) => ({
   totalSessionTokens: 0,
   totalSessionCost: 0,
   selectedAgent: null,
+  currentWorkspace: 'NEXUS PRIME',
+  workspaces: ['NEXUS PRIME'],
 
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
@@ -33,4 +38,5 @@ export const useUiStore = create<UiState>((set) => ({
       totalSessionCost: state.totalSessionCost + cost,
     })),
   setSelectedAgent: (name) => set({ selectedAgent: name }),
+  setWorkspace: (ws) => set({ currentWorkspace: ws }),
 }))
