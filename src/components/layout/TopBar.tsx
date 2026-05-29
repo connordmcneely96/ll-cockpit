@@ -3,11 +3,16 @@
 import { useRouter } from 'next/navigation'
 import { useUiStore } from '@/stores/uiStore'
 import { CostMeter } from '@/components/ui/CostMeter'
-import { Search } from 'lucide-react'
+import { Search, ChevronDown, Check } from 'lucide-react'
+import { useState } from 'react'
 
 export function TopBar() {
   const router = useRouter()
   const { openCommandPalette } = useUiStore()
+  const currentWorkspace = useUiStore(s => s.currentWorkspace)
+  const workspaces = useUiStore(s => s.workspaces)
+  const setWorkspace = useUiStore(s => s.setWorkspace)
+  const [wsOpen, setWsOpen] = useState(false)
   return (
     <header className="flex items-center px-3 gap-3 shrink-0" style={{
       height: 38,
@@ -25,9 +30,40 @@ export function TopBar() {
         <span className="font-mono font-bold text-[11px] tracking-widest" style={{ color:'var(--t-gold)' }}>LL COCKPIT</span>
       </div>
       <div className="w-px h-4" style={{ background:'var(--t-bdr)' }} />
-      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg" style={{ background:'var(--d-card)', border:'1px solid var(--t-glass-bdr)', backdropFilter:'blur(12px)' }}>
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background:'#10b981', boxShadow:'0 0 4px #10b981' }} />
-        <span className="font-mono text-[10px]" style={{ color:'var(--t-tx2)' }}>NEXUS PRIME</span>
+      <div className="relative">
+        <button
+          onClick={() => setWsOpen(o => !o)}
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg transition-all"
+          style={{ background:'var(--d-card)', border:'1px solid var(--t-glass-bdr)', backdropFilter:'blur(12px)' }}
+          aria-label="Switch workspace"
+          title="Switch workspace"
+        >
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background:'#10b981', boxShadow:'0 0 4px #10b981' }} />
+          <span className="font-mono text-[10px]" style={{ color:'var(--t-tx2)' }}>{currentWorkspace}</span>
+          <ChevronDown size={10} strokeWidth={1.5} style={{ color:'var(--t-tx3)' }} />
+        </button>
+        {wsOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setWsOpen(false)} />
+            <div className="absolute top-full left-0 mt-1 z-40 rounded-lg overflow-hidden min-w-[160px]"
+              style={{ background:'var(--d-elevated)', border:'1px solid var(--t-glass-bdr)', boxShadow:'var(--t-shadow)' }}>
+              {workspaces.map(ws => (
+                <button
+                  key={ws}
+                  onClick={() => { setWorkspace(ws); setWsOpen(false) }}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-1.5 transition-colors hover:bg-white/[0.04]"
+                  style={{ color:'var(--t-tx2)' }}
+                >
+                  <span className="font-mono text-[10px]">{ws}</span>
+                  {ws === currentWorkspace && <Check size={10} strokeWidth={2} style={{ color:'var(--t-p)' }} />}
+                </button>
+              ))}
+              <div className="px-3 py-1.5 border-t" style={{ borderColor:'var(--t-glass-bdr)' }}>
+                <span className="font-mono text-[9px]" style={{ color:'var(--t-tx3)' }}>+ More coming soon</span>
+              </div>
+            </div>
+          </>
+        )}
       </div>
       <div className="flex-1 flex items-center justify-center">
         <button onClick={openCommandPalette} className="flex items-center gap-2 px-3 py-1 rounded-xl transition-all" style={{ background:'var(--d-card)', border:'1px solid var(--t-glass-bdr)', backdropFilter:'blur(12px)', color:'var(--t-tx3)', minWidth:220, maxWidth:400, width:'100%' }}>
