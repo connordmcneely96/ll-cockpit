@@ -541,7 +541,7 @@ function buildRootCssVars(
 }
 
 function buildBaseStyles(sansFont: string): string {
-  return `    body { font-family: '${sansFont}', system-ui, sans-serif; background: var(--background); color: var(--text-primary); }
+  return `    body { font-family: '${sansFont}', system-ui, sans-serif; background: var(--background); color: var(--foreground); }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
     .skip-link:focus { position: fixed; top: 1rem; left: 1rem; background: var(--primary); color: white; padding: 0.75rem 1rem; z-index: 100; clip: auto; width: auto; height: auto; border-radius: 4px; }
     a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
@@ -552,19 +552,19 @@ function buildBaseStyles(sansFont: string): string {
 }
 
 function buildNavHeader(clientName: string, navLinks: string): string {
-  return `  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-border" role="banner">
+  return `  <header class="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border" role="banner">
     <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between" aria-label="Main navigation">
       <a href="#" class="font-display font-bold text-xl text-primary">${escapeHtml(clientName)}</a>
       <div class="hidden md:flex items-center gap-8">
         ${navLinks}
       </div>
-      <button class="md:hidden p-2 text-text-primary" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu" onclick="const m=document.getElementById('mobile-menu');m.classList.toggle('open');this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true');">
+      <button class="md:hidden p-2 text-foreground" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu" onclick="const m=document.getElementById('mobile-menu');m.classList.toggle('open');this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true');">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
       </button>
     </nav>
-    <div id="mobile-menu" class="mobile-menu md:hidden border-t border-border bg-white">
+    <div id="mobile-menu" class="mobile-menu md:hidden border-t border-border bg-background">
       <div class="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-3">
         ${navLinks}
       </div>
@@ -600,9 +600,9 @@ function buildSectionMarkup(
 }
 
 function buildFooter(clientName: string): string {
-  return `  <footer class="bg-primary text-white py-12 mt-16" role="contentinfo">
+  return `  <footer class="bg-primary text-primary-foreground py-12 mt-16" role="contentinfo">
     <div class="max-w-7xl mx-auto px-6">
-      <div class="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+      <div class="border-t border-primary-foreground/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
         <p class="text-sm opacity-80">© ${new Date().getFullYear()} ${escapeHtml(clientName)}. All rights reserved.</p>
         <p class="text-xs opacity-60 font-mono">Built with Leadership Legacy Digital</p>
       </div>
