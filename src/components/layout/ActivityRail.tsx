@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Code2, Globe, TerminalSquare,
-  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History,
+  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History, Wallet,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { icon: TerminalSquare,  label: 'Terminal',      href: '/terminal' },
   { icon: HardDrive,       label: 'Storage',       href: '/storage' },
   { icon: BarChart2,       label: 'Analytics',     href: '/analytics' },
+  { icon: Wallet,          label: 'Finance',       href: '/finance' },
   { icon: Brain,           label: 'ORACLE',        href: '/oracle' },
   { icon: Bot,             label: 'AI Providers',  href: '/ai-providers' },
   { icon: Cpu,             label: 'Orchestrator',  href: '/orchestrator' },
@@ -48,7 +49,7 @@ export function ActivityRail() {
         const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
         return (
           <Fragment key={href}>
-            {(index === 1 || index === 6) && (
+            {(index === 1 || index === 7) && (
               <div style={{ width: 20, height: 1, background: 'var(--t-glass-bdr)', margin: '4px auto' }} />
             )}
             <Link
