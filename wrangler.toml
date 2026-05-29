@@ -32,6 +32,10 @@ index_name = "nexus-knowledge"
 binding = "ORACLE_VECTORIZE"
 index_name = "oracle-research"
 
+[[vectorize]]
+binding = "ATLAS_RAG"
+index_name = "atlas-engineering"
+
 # ORACLE runs at 7am CST (1pm UTC) every day
 # Also runs hourly fetch-only to keep queue fresh
 [triggers]
