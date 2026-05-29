@@ -594,7 +594,7 @@ function buildSectionMarkup(
       const html = s.html.replace(/^(<section\b)/i, `$1 data-nexus-id="${s.slug}"`)
       const scheme = schemes?.get(s.slug) ?? null
       if (!scheme) return html
-      return `<div data-scheme="${s.slug}" style="--scheme-bg:${scheme.bg};--scheme-text:${scheme.text};--scheme-accent:${scheme.accent};--scheme-border:${scheme.border};">\n${html}\n</div>`
+      return `<div data-scheme="${s.slug}" style="--background:${scheme.bg};--card:${scheme.bg};--popover:${scheme.bg};--secondary:${scheme.bg};--muted:${scheme.bg};--foreground:${scheme.text};--card-foreground:${scheme.text};--popover-foreground:${scheme.text};--secondary-foreground:${scheme.text};--muted-foreground:${scheme.text};--accent:${scheme.accent};--primary:${scheme.accent};--ring:${scheme.accent};--accent-foreground:#ffffff;--primary-foreground:#ffffff;--border:${scheme.border};--input:${scheme.border};">\n${html}\n</div>`
     })
     .join('\n\n  ')
 }
