@@ -7,15 +7,11 @@ v4 Changes:
 - THREE-DIMENSIONAL REWARD: quality + cost efficiency + latency efficiency
 - TASK-TIER AWARENESS: routing tasks penalize latency; reasoning tasks ignore it
 - HARD LATENCY CAPS: Tier 1 (routing) = 15s max; Tier 2 (standard) = 60s max; Tier 3 (deep) = none
-- UPDATED MODEL POOL: +Llama 4 Maverick, +Qwen3 235B, +Qwen3 30B, +Gemini Flash Lite, +Phi-4
-  Removed: Gemini 2.5 Flash, GPT-4o, Hermes 3 405B, Qwen 2.5 72B, Llama 3.3 70B
 - SCORER: Sonnet 4.6 (3x faster, 5x cheaper than Opus)
 - 25 core cases across 19 agent/task slots
 
-Reward formula by tier:
-  Tier 1 (routing/QA-precheck): 0.55*quality + 0.25*cost + 0.20*latency
-  Tier 2 (standard tasks):      0.65*quality + 0.25*cost + 0.10*latency
-  Tier 3 (deep reasoning/code): 0.75*quality + 0.25*cost + 0.00*latency
+fix: handle response-body errors from OpenRouter/OpenAI (HTTP 200 with {"error":{...}} body)
+     and missing "choices" key — prevents silent garbage scores entering the bandit
 """
 
 from __future__ import annotations
@@ -38,9 +34,9 @@ SCORER_MODEL = "claude-sonnet-4-6"
 SCORE_RETRY_ATTEMPTS = 3
 SCORE_RETRY_BASE_DELAY = 5
 
-QUALITY_FLOOR = 0.75     # minimum quality — below this = reward 0.0 regardless of cost/latency
-MAX_COST_CEILING = 12.0  # normalizer — Opus ~$11.67/MTok avg
-MAX_LAT_CEILING = 300.0  # normalizer — DeepSeek R1 ~307s max observed
+QUALITY_FLOOR = 0.75
+MAX_COST_CEILING = 12.0
+MAX_LAT_CEILING = 300.0
 
 TASK_TIERS = {
     "intent_classify":      1,
@@ -285,21 +281,52 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             usage = data.get("usage", {})
             in_tok, out_tok = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
             cost = claude.estimate_cost(model_id, in_tok, out_tok)
+
         elif provider in ("openrouter", "openai"):
             base = "https://openrouter.ai/api/v1" if provider == "openrouter" else "https://api.openai.com/v1"
             api_key = os.getenv("OPENROUTER_API_KEY") if provider == "openrouter" else os.getenv("OPENAI_API_KEY", "")
-            if not api_key:
-                return {"output": None, "error": f"Missing API key for {provider}", "latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-            resp = httpx.post(f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
+            if not api_key or not api_key.strip():
+                return {"output": None, "error": f"Missing API key for {provider}",
+                        "latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
+            resp = httpx.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key.strip()}",
+                         "Content-Type": "application/json",
                          "HTTP-Referer": "https://ll-cockpit.connorpattern.workers.dev"},
-                json={"model": model_id, "messages": [{"role": "user", "content": prompt}], "max_tokens": 2048},
-                timeout=timeout)
+                json={"model": model_id,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "max_tokens": 2048},
+                timeout=timeout,
+            )
             resp.raise_for_status()
             data = resp.json()
-            output = data["choices"][0]["message"]["content"]
+
+            # OpenRouter and OpenAI sometimes return HTTP 200 with an error body
+            # (auth failures, model access denied, rate limits on specific models)
+            if "error" in data:
+                err_msg = data["error"].get("message", str(data["error"]))
+                return {"output": None,
+                        "error": f"api_error: {err_msg[:150]}",
+                        "latency_ms": int((time.monotonic() - start) * 1000),
+                        "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
+
+            if not data.get("choices"):
+                return {"output": None,
+                        "error": "no_choices_in_response",
+                        "latency_ms": int((time.monotonic() - start) * 1000),
+                        "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
+
+            choice = data["choices"][0]
+            output = (choice.get("message") or {}).get("content") or ""
+            if not output:
+                return {"output": None,
+                        "error": "empty_content_in_choice",
+                        "latency_ms": int((time.monotonic() - start) * 1000),
+                        "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
+
             usage = data.get("usage", {})
             in_tok, out_tok, cost = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), 0.0
+
         elif provider == "cloudflare_workers_ai":
             cf_model_map = {
                 "cf-llama-3-3-70b": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
@@ -309,30 +336,39 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             resp = httpx.post(
                 f"https://api.cloudflare.com/client/v4/accounts/{cfg.cf_account_id}/ai/run/{cf_model}",
                 headers={"Authorization": f"Bearer {cfg.cf_api_token}"},
-                json={"messages": [{"role": "user", "content": prompt}], "max_tokens": 2048}, timeout=timeout)
+                json={"messages": [{"role": "user", "content": prompt}], "max_tokens": 2048},
+                timeout=timeout,
+            )
             resp.raise_for_status()
             result = resp.json().get("result", {})
             output = result.get("response", "") or result.get("answer", "")
             in_tok, out_tok, cost = 0, 0, 0.0
+
         elif provider == "ollama":
             ollama_model = model_id.replace("ollama/", "")
             base_url = f"{cfg.vps_tunnel_url}/ollama" if cfg.vps_tunnel_url else "http://localhost:11434"
-            resp = httpx.post(f"{base_url}/api/generate",
+            resp = httpx.post(
+                f"{base_url}/api/generate",
                 headers={"x-secret": cfg.vps_secret} if cfg.vps_tunnel_url else {},
-                json={"model": ollama_model, "prompt": prompt, "stream": False}, timeout=180)
+                json={"model": ollama_model, "prompt": prompt, "stream": False},
+                timeout=180,
+            )
             resp.raise_for_status()
             data = resp.json()
-            output, in_tok, out_tok, cost = (data.get("response", ""), data.get("prompt_eval_count", 0),
-                                             data.get("eval_count", 0), 0.0)
+            output = data.get("response", "")
+            in_tok, out_tok, cost = data.get("prompt_eval_count", 0), data.get("eval_count", 0), 0.0
+
         else:
             return {"output": None, "error": f"Unknown provider: {provider}",
                     "latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
+
         return {"output": output, "error": None,
-                "latency_ms": int((time.monotonic()-start)*1000),
+                "latency_ms": int((time.monotonic() - start) * 1000),
                 "input_tokens": in_tok, "output_tokens": out_tok, "cost_usd": cost}
+
     except Exception as e:
         return {"output": None, "error": str(e),
-                "latency_ms": int((time.monotonic()-start)*1000),
+                "latency_ms": int((time.monotonic() - start) * 1000),
                 "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
 
 
@@ -345,23 +381,10 @@ def compute_bandit_reward(
 ) -> float:
     """
     v4 Three-dimensional reward: quality + cost efficiency + latency efficiency.
-
-    Tier 1 (routing/classification): quality 55%, cost 25%, latency 20% | hard cap 15s
-    Tier 2 (standard agent tasks):   quality 65%, cost 25%, latency 10% | hard cap 60s
-    Tier 3 (deep reasoning/code):    quality 75%, cost 25%, latency 0%  | no cap
-
-    Quality floor 0.75 is always enforced.
-
-    Examples (Tier 1):
-      Gemini Flash Lite  quality=0.780 lat=5s   cost=$0.22/MTok  -> reward=0.871
-      GPT-4.1 Nano       quality=0.758 lat=4.4s cost=$0.30/MTok  -> reward=0.858
-      DeepSeek V4 Pro    quality=0.879 lat=242s cost=$0.82/MTok  -> reward=0.000 (DISQUALIFIED)
-      Opus 4.7           quality=0.890 lat=17.4s cost=$18.33/MTok -> reward=0.000 (DISQUALIFIED)
-
-    Examples (Tier 3 — code/engineering):
-      DeepSeek V4 Pro    quality=0.879 lat=242s cost=$0.82/MTok  -> reward=0.892 (lat ignored)
-      DeepSeek R1        quality=0.866 lat=307s cost=$1.64/MTok  -> reward=0.865
-      Opus 4.7           quality=0.890 lat=17.4s cost=$18.33/MTok -> reward=0.668
+    Tier 1: 55% quality, 25% cost, 20% latency | hard cap 15s
+    Tier 2: 65% quality, 25% cost, 10% latency | hard cap 60s
+    Tier 3: 75% quality, 25% cost, 0% latency  | no cap
+    Quality floor: 0.75 — below this reward is always 0.0
     """
     tier = TASK_TIERS.get(task_type, 2)
     lat_s = latency_ms / 1000.0
@@ -380,14 +403,14 @@ def compute_bandit_reward(
 
 
 def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Optional[Dict]:
-    """Score with Sonnet 4.6. 3x faster than Opus, sufficient ranking accuracy for bandit."""
+    """Score with Sonnet 4.6. Retries 3x. Returns None on all failures — caller skips result."""
     prompt = f"Task:\n{task_prompt[:1000]}\n\nResponse:\n{output[:4000]}\n\nCriteria:\n{json.dumps(criteria)}\n\nScore strictly. Output only JSON."
     for attempt in range(SCORE_RETRY_ATTEMPTS):
         try:
             claude = AnthropicClient(cfg)
             start = time.monotonic()
             raw = claude.complete_text(model=SCORER_MODEL, prompt=prompt, system=SCORER_SYSTEM, max_tokens=512)
-            latency = int((time.monotonic()-start)*1000)
+            latency = int((time.monotonic() - start) * 1000)
             claude.close()
             raw = raw.strip()
             if raw.startswith("```"):
@@ -406,33 +429,40 @@ def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config
 
 
 def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str) -> Optional[str]:
-    rows = d1.query_rows("""SELECT model_id, alpha, beta, n_trials, n_successes,
-             CAST(n_successes AS REAL) / NULLIF(n_trials, 0) as win_rate, avg_quality
-      FROM model_bandit_params WHERE agent=? AND task_type=? AND n_trials > 0
-      ORDER BY alpha DESC, avg_quality DESC""", [agent, task_type])
+    rows = d1.query_rows(
+        """SELECT model_id, alpha, beta, n_trials, n_successes,
+                 CAST(n_successes AS REAL) / NULLIF(n_trials, 0) as win_rate, avg_quality
+           FROM model_bandit_params
+           WHERE agent=? AND task_type=? AND n_trials > 0
+           ORDER BY alpha DESC, avg_quality DESC""",
+        [agent, task_type],
+    )
     if not rows:
         return None
     winner = rows[0]
     runner_up = rows[1] if len(rows) > 1 else None
     total_alpha = sum(float(r["alpha"]) for r in rows)
-    conv_pct = round((float(winner["alpha"])/total_alpha)*100, 1) if total_alpha > 0 else 0.0
+    conv_pct = round((float(winner["alpha"]) / total_alpha) * 100, 1) if total_alpha > 0 else 0.0
     status = "converged" if conv_pct >= 60 and winner["n_trials"] >= 5 else "provisional"
-    now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
-    d1.execute("""INSERT INTO agent_model_routing
-        (id, agent, task_type, winning_model, win_rate, n_trials, convergence_pct,
-         runner_up_model, runner_up_rate, derived_from_run_id, last_test_date, status, promoted_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(agent, task_type) DO UPDATE SET
-        winning_model=excluded.winning_model, win_rate=excluded.win_rate,
-        n_trials=excluded.n_trials, convergence_pct=excluded.convergence_pct,
-        runner_up_model=excluded.runner_up_model, runner_up_rate=excluded.runner_up_rate,
-        derived_from_run_id=excluded.derived_from_run_id, last_test_date=excluded.last_test_date,
-        status=excluded.status, promoted_at=excluded.promoted_at""",
-      [str(uuid.uuid4()), agent, task_type,
-       winner["model_id"], round(float(winner.get("win_rate") or 0), 3), winner["n_trials"], conv_pct,
-       runner_up["model_id"] if runner_up else None,
-       round(float(runner_up.get("win_rate") or 0), 3) if runner_up else None,
-       run_id, datetime.now(timezone.utc).date().isoformat(), status, now_ts])
+    now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+    d1.execute(
+        """INSERT INTO agent_model_routing
+            (id, agent, task_type, winning_model, win_rate, n_trials, convergence_pct,
+             runner_up_model, runner_up_rate, derived_from_run_id, last_test_date, status, promoted_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(agent, task_type) DO UPDATE SET
+             winning_model=excluded.winning_model, win_rate=excluded.win_rate,
+             n_trials=excluded.n_trials, convergence_pct=excluded.convergence_pct,
+             runner_up_model=excluded.runner_up_model, runner_up_rate=excluded.runner_up_rate,
+             derived_from_run_id=excluded.derived_from_run_id, last_test_date=excluded.last_test_date,
+             status=excluded.status, promoted_at=excluded.promoted_at""",
+        [str(uuid.uuid4()), agent, task_type,
+         winner["model_id"], round(float(winner.get("win_rate") or 0), 3),
+         winner["n_trials"], conv_pct,
+         runner_up["model_id"] if runner_up else None,
+         round(float(runner_up.get("win_rate") or 0), 3) if runner_up else None,
+         run_id, datetime.now(timezone.utc).date().isoformat(), status, now_ts],
+    )
     log.info(f"  routing [{agent}/{task_type}] -> {winner['model_id']} ({status}, conv={conv_pct:.0f}%)")
     return winner["model_id"]
 
@@ -440,39 +470,50 @@ def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str)
 def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=None) -> Dict:
     cfg = Config()
     run_id = str(uuid.uuid4())
-    now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
-    summary = {"run_id": run_id, "started_at": datetime.now(timezone.utc).isoformat(),
-               "scorer": SCORER_MODEL,
-               "reward_fn": "v4: quality+cost+latency, task-tier aware",
-               "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
-               "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
-               "errors": [], "scoring_skipped": 0}
+    now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+    summary = {
+        "run_id": run_id,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "scorer": SCORER_MODEL,
+        "reward_fn": "v4: quality+cost+latency, task-tier aware",
+        "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
+        "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
+        "errors": [], "scoring_skipped": 0,
+    }
 
     with D1Client(cfg) as d1, R2Client(cfg) as r2:
         backup_d1(d1, r2, ["model_bandit_params", "agent_model_routing", "smoke_test_results"],
                   f"pre_smoke_{run_id[:8]}")
+
         sql, params = "WHERE active=1", []
         if provider_filter:
-            sql += " AND provider=?"; params.append(provider_filter)
+            sql += " AND provider=?"
+            params.append(provider_filter)
         models = d1.query_rows(
             f"SELECT model_id, provider, display_name, cost_input_per_1m, cost_output_per_1m FROM model_registry {sql}",
-            params)
+            params,
+        )
         log.info(f"Loaded {len(models)} models | Scorer: {SCORER_MODEL} | Reward: v4 (quality+cost+latency, tier-aware)")
 
         total_cases = sum(
-            len(cases) for ag, tasks in TEST_CASES.items() if (not agent_filter or ag == agent_filter)
+            len(cases)
+            for ag, tasks in TEST_CASES.items() if (not agent_filter or ag == agent_filter)
             for tt, cases in tasks.items() if (not task_type_filter or tt == task_type_filter)
         ) * len(models)
 
-        d1.execute("INSERT OR IGNORE INTO smoke_test_runs (id, suite_id, trigger, triggered_by, status, models_under_test, n_cases_planned, started_at) VALUES (?,?,?,?,?,?,?,?)",
-                   [run_id, "universal", "manual", "connor", "running",
-                    ",".join(m["model_id"] for m in models), total_cases, now_ts])
+        d1.execute(
+            "INSERT OR IGNORE INTO smoke_test_runs (id, suite_id, trigger, triggered_by, status, models_under_test, n_cases_planned, started_at) VALUES (?,?,?,?,?,?,?,?)",
+            [run_id, "universal", "manual", "connor", "running",
+             ",".join(m["model_id"] for m in models), total_cases, now_ts],
+        )
 
         all_results = []
         for agent, task_map in TEST_CASES.items():
-            if agent_filter and agent != agent_filter: continue
+            if agent_filter and agent != agent_filter:
+                continue
             for task_type, cases in task_map.items():
-                if task_type_filter and task_type != task_type_filter: continue
+                if task_type_filter and task_type != task_type_filter:
+                    continue
                 tier = TASK_TIERS.get(task_type, 2)
                 log.info(f"\n{'='*60}\nAGENT: {agent} | TASK: {task_type} (Tier {tier}) | {len(cases)} cases x {len(models)} models\n{'='*60}")
 
@@ -485,23 +526,28 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
 
                     for case in cases:
                         if cfg.dry_run:
-                            log.info(f"    [DRY] {case['name']} — skipped"); continue
+                            log.info(f"    [DRY] {case['name']} — skipped")
+                            continue
 
                         response = call_model(model_id, provider, case["prompt"], cfg)
 
                         if response["error"] or not response.get("output"):
                             err_msg = response.get("error") or "null_output"
                             log.warning(f"    x {case['name']}: {str(err_msg)[:100]}")
-                            all_results.append({"run_id": run_id, "agent": agent, "task_type": task_type,
-                                                "model_id": model_id, "case_name": case["name"],
-                                                "error": err_msg, "composite_score": 0.0, "bandit_reward": 0.0})
+                            all_results.append({
+                                "run_id": run_id, "agent": agent, "task_type": task_type,
+                                "model_id": model_id, "case_name": case["name"],
+                                "error": err_msg, "composite_score": 0.0, "bandit_reward": 0.0,
+                            })
                             result_id = str(uuid.uuid4())
-                            d1.execute("""INSERT OR IGNORE INTO smoke_test_results
-                                (id, run_id, case_id, model_id, agent, task_type, latency_ms, cost_usd,
-                                 composite_score, opus_verdict, opus_notes, bandit_reward, bandit_seeded, tested_at)
-                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
-                              [result_id, run_id, case["name"], model_id, agent, task_type,
-                               response.get("latency_ms"), 0.0, 0.0, "fail", err_msg, 0.0, now_ts])
+                            d1.execute(
+                                """INSERT OR IGNORE INTO smoke_test_results
+                                   (id, run_id, case_id, model_id, agent, task_type, latency_ms, cost_usd,
+                                    composite_score, opus_verdict, opus_notes, bandit_reward, bandit_seeded, tested_at)
+                                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
+                                [result_id, run_id, case["name"], model_id, agent, task_type,
+                                 response.get("latency_ms"), 0.0, 0.0, "fail", err_msg, 0.0, now_ts],
+                            )
                             continue
 
                         scores = score_with_sonnet(case["prompt"], response["output"], case.get("criteria", {}), cfg)
@@ -511,80 +557,90 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                             continue
 
                         actual_cost = response["cost_usd"] or (
-                            (response["input_tokens"]*cost_in + response["output_tokens"]*cost_out)/1_000_000)
-
+                            (response["input_tokens"] * cost_in + response["output_tokens"] * cost_out) / 1_000_000
+                        )
                         bandit_reward = compute_bandit_reward(
                             scores["composite_score"], cost_in, cost_out,
-                            response["latency_ms"], task_type
+                            response["latency_ms"], task_type,
                         )
 
-                        result = {"run_id": run_id, "agent": agent, "task_type": task_type,
-                                  "model_id": model_id, "provider": provider,
-                                  "case_name": case["name"], "difficulty": case.get("difficulty"),
-                                  "output_text": response["output"], "latency_ms": response["latency_ms"],
-                                  "input_tokens": response["input_tokens"], "output_tokens": response["output_tokens"],
-                                  "cost_usd": round(actual_cost, 8),
-                                  "bandit_reward": bandit_reward, **scores}
+                        result = {
+                            "run_id": run_id, "agent": agent, "task_type": task_type,
+                            "model_id": model_id, "provider": provider,
+                            "case_name": case["name"], "difficulty": case.get("difficulty"),
+                            "output_text": response["output"], "latency_ms": response["latency_ms"],
+                            "input_tokens": response["input_tokens"], "output_tokens": response["output_tokens"],
+                            "cost_usd": round(actual_cost, 8),
+                            "bandit_reward": bandit_reward, **scores,
+                        }
                         model_rewards.append(bandit_reward)
                         model_results_batch.append(result)
                         summary["total_cost_usd"] += actual_cost
 
-                        lat_flag = " ⚠LAT" if response["latency_ms"] > TIER_LAT_HARD_CAP[tier]*1000 else ""
+                        lat_flag = " ⚠LAT" if response["latency_ms"] > TIER_LAT_HARD_CAP[tier] * 1000 else ""
                         log.info(f"    + {case['name']:36} q={scores['composite_score']:.3f} r={bandit_reward:.3f} {response['latency_ms']}ms{lat_flag}")
 
                         all_results.append(result)
                         result_id = str(uuid.uuid4())
-                        d1.execute("""INSERT OR IGNORE INTO smoke_test_results
-                            (id, run_id, case_id, model_id, agent, task_type, output_text, latency_ms,
-                             input_tokens, output_tokens, cost_usd, score_accuracy, score_completeness,
-                             score_tone, score_criteria_met, composite_score, opus_verdict, opus_notes,
-                             bandit_reward, bandit_seeded, tested_at)
-                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
-                          [result_id, run_id, case["name"], model_id, agent, task_type,
-                           result.get("output_text", "")[:8000], result.get("latency_ms"),
-                           result.get("input_tokens"), result.get("output_tokens"), result.get("cost_usd"),
-                           result.get("score_accuracy"), result.get("score_completeness"), result.get("score_tone"),
-                           result.get("score_criteria_met"), result.get("composite_score"), result.get("verdict"),
-                           result.get("notes"), bandit_reward, now_ts])
+                        d1.execute(
+                            """INSERT OR IGNORE INTO smoke_test_results
+                               (id, run_id, case_id, model_id, agent, task_type, output_text, latency_ms,
+                                input_tokens, output_tokens, cost_usd, score_accuracy, score_completeness,
+                                score_tone, score_criteria_met, composite_score, opus_verdict, opus_notes,
+                                bandit_reward, bandit_seeded, tested_at)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
+                            [result_id, run_id, case["name"], model_id, agent, task_type,
+                             result.get("output_text", "")[:8000], result.get("latency_ms"),
+                             result.get("input_tokens"), result.get("output_tokens"), result.get("cost_usd"),
+                             result.get("score_accuracy"), result.get("score_completeness"),
+                             result.get("score_tone"), result.get("score_criteria_met"),
+                             result.get("composite_score"), result.get("verdict"),
+                             result.get("notes"), bandit_reward, now_ts],
+                        )
 
                     if model_rewards and not cfg.dry_run:
-                        avg_reward = sum(model_rewards)/len(model_rewards)
-                        valid_lat = [r.get("latency_ms",0) for r in model_results_batch if r.get("latency_ms")]
-                        valid_cost = [r.get("cost_usd",0) for r in model_results_batch if r.get("cost_usd")]
-                        avg_quality = sum(r.get("composite_score",0) for r in model_results_batch)/len(model_results_batch)
-                        n_wins = sum(1 for r in model_results_batch if r.get("bandit_reward",0) > 0)
+                        avg_reward = sum(model_rewards) / len(model_rewards)
+                        valid_lat = [r.get("latency_ms", 0) for r in model_results_batch if r.get("latency_ms")]
+                        valid_cost = [r.get("cost_usd", 0) for r in model_results_batch if r.get("cost_usd")]
+                        avg_quality = sum(r.get("composite_score", 0) for r in model_results_batch) / len(model_results_batch)
+                        n_wins = sum(1 for r in model_results_batch if r.get("bandit_reward", 0) > 0)
                         n_losses = len(model_rewards) - n_wins
-                        d1.execute("""INSERT INTO model_bandit_params
-                            (id, agent, task_type, model_id, alpha, beta, n_trials, n_successes, n_failures,
-                             avg_latency_ms, avg_cost_usd, avg_quality, last_reward, last_updated)
-                          VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?)
-                          ON CONFLICT(agent, task_type, model_id) DO UPDATE SET
-                            alpha=alpha+?,
-                            beta=beta+?,
-                            n_trials=n_trials+1,
-                            n_successes=n_successes+?,
-                            n_failures=n_failures+?,
-                            avg_latency_ms=(avg_latency_ms*n_trials+excluded.avg_latency_ms)/(n_trials+1),
-                            avg_cost_usd=(avg_cost_usd*n_trials+excluded.avg_cost_usd)/(n_trials+1),
-                            avg_quality=(avg_quality*n_trials+excluded.avg_quality)/(n_trials+1),
-                            last_reward=excluded.last_reward, last_updated=excluded.last_updated""",
-                          [str(uuid.uuid4()), agent, task_type, model_id,
-                           1.0+avg_reward, 1.0+(1.0-avg_reward),
-                           n_wins, n_losses,
-                           round(sum(valid_lat)/len(valid_lat) if valid_lat else 0, 1),
-                           round(sum(valid_cost)/len(valid_cost) if valid_cost else 0, 8),
-                           round(avg_quality, 4), avg_reward,
-                           int(datetime.now(timezone.utc).timestamp()*1000),
-                           avg_reward, (1.0-avg_reward), n_wins, n_losses])
+                        d1.execute(
+                            """INSERT INTO model_bandit_params
+                               (id, agent, task_type, model_id, alpha, beta, n_trials, n_successes, n_failures,
+                                avg_latency_ms, avg_cost_usd, avg_quality, last_reward, last_updated)
+                               VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?)
+                               ON CONFLICT(agent, task_type, model_id) DO UPDATE SET
+                                 alpha=alpha+?,
+                                 beta=beta+?,
+                                 n_trials=n_trials+1,
+                                 n_successes=n_successes+?,
+                                 n_failures=n_failures+?,
+                                 avg_latency_ms=(avg_latency_ms*n_trials+excluded.avg_latency_ms)/(n_trials+1),
+                                 avg_cost_usd=(avg_cost_usd*n_trials+excluded.avg_cost_usd)/(n_trials+1),
+                                 avg_quality=(avg_quality*n_trials+excluded.avg_quality)/(n_trials+1),
+                                 last_reward=excluded.last_reward, last_updated=excluded.last_updated""",
+                            [str(uuid.uuid4()), agent, task_type, model_id,
+                             1.0 + avg_reward, 1.0 + (1.0 - avg_reward),
+                             n_wins, n_losses,
+                             round(sum(valid_lat) / len(valid_lat) if valid_lat else 0, 1),
+                             round(sum(valid_cost) / len(valid_cost) if valid_cost else 0, 8),
+                             round(avg_quality, 4), avg_reward,
+                             int(datetime.now(timezone.utc).timestamp() * 1000),
+                             avg_reward, (1.0 - avg_reward), n_wins, n_losses],
+                        )
 
                 if not cfg.dry_run:
                     winner = refresh_routing_table(d1, agent, task_type, run_id)
                     if winner:
                         summary["routing_updates"].append({"agent": agent, "task_type": task_type, "winner": winner})
 
-        d1.execute("UPDATE smoke_test_runs SET status='completed', n_cases_complete=?, n_cases_passed=?, total_cost_usd=?, completed_at=? WHERE id=?",
-                   [len(all_results), sum(1 for r in all_results if r.get("bandit_reward",0) > 0),
-                    round(summary["total_cost_usd"],6), int(datetime.now(timezone.utc).timestamp()*1000), run_id])
+        d1.execute(
+            "UPDATE smoke_test_runs SET status='completed', n_cases_complete=?, n_cases_passed=?, total_cost_usd=?, completed_at=? WHERE id=?",
+            [len(all_results), sum(1 for r in all_results if r.get("bandit_reward", 0) > 0),
+             round(summary["total_cost_usd"], 6),
+             int(datetime.now(timezone.utc).timestamp() * 1000), run_id],
+        )
 
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
@@ -607,8 +663,11 @@ if __name__ == "__main__":
     parser.add_argument("--agent",     help="agent name or blank for all")
     parser.add_argument("--task-type", help="task type or blank for all")
     args = parser.parse_args()
-    result = run_smoke_tests(provider_filter=args.provider, agent_filter=args.agent,
-                             task_type_filter=args.task_type)
+    result = run_smoke_tests(
+        provider_filter=args.provider,
+        agent_filter=args.agent,
+        task_type_filter=args.task_type,
+    )
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
     print(f"  Scorer:      {SCORER_MODEL}")
     print(f"  Reward fn:   v4 (quality+cost+latency, task-tier aware)")
