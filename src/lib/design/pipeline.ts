@@ -466,14 +466,22 @@ function buildTailwindConfigScript(
       theme: {
         extend: {
           colors: {
-            primary:          'var(--primary)',
-            'primary-dark':   'var(--primary-dark)',
-            'primary-light':  'var(--primary-light)',
-            accent:           'var(--accent)',
-            surface:          'var(--surface)',
-            'text-primary':   'var(--text-primary)',
-            'text-secondary': 'var(--text-secondary)',
-            border:           'var(--border)',
+            background:  'var(--background)',
+            foreground:  'var(--foreground)',
+            card:        { DEFAULT: 'var(--card)', foreground: 'var(--card-foreground)' },
+            popover:     { DEFAULT: 'var(--popover)', foreground: 'var(--popover-foreground)' },
+            primary:     { DEFAULT: 'var(--primary)', foreground: 'var(--primary-foreground)' },
+            secondary:   { DEFAULT: 'var(--secondary)', foreground: 'var(--secondary-foreground)' },
+            muted:       { DEFAULT: 'var(--muted)', foreground: 'var(--muted-foreground)' },
+            accent:      { DEFAULT: 'var(--accent)', foreground: 'var(--accent-foreground)' },
+            border:      'var(--border)',
+            input:       'var(--input)',
+            ring:        'var(--ring)',
+          },
+          borderRadius: {
+            lg: 'var(--radius)',
+            md: 'calc(var(--radius) - 2px)',
+            sm: 'calc(var(--radius) - 4px)',
           },
           fontFamily: {
             ${tailwindFontFamily},
@@ -488,30 +496,47 @@ function buildRootCssVars(
   palette: DesignTokens['palette'],
   dark: NonNullable<DesignTokens['palette_dark']>,
 ): string {
-  return `    /* Sprint 18Y — design token CSS custom properties (light mode defaults) */
+  return `    /* Sprint 119F-5 — unified shadcn token set (light mode) */
     :root {
-      --primary:        ${palette.primary};
-      --primary-dark:   ${palette.primary_dark ?? palette.primary};
-      --primary-light:  ${palette.primary_light ?? palette.primary};
-      --accent:         ${palette.accent};
-      --accent-color:   ${palette.accent};
-      --background:     ${palette.background};
-      --surface:        ${palette.surface ?? '#ffffff'};
-      --text-primary:   ${palette.text_primary};
-      --text-secondary: ${palette.text_secondary ?? '#475569'};
-      --border:         ${palette.border ?? '#e2e8f0'};
+      --background:          ${palette.background ?? '#ffffff'};
+      --foreground:          ${palette.text_primary ?? '#1a202c'};
+      --card:                ${palette.surface ?? '#ffffff'};
+      --card-foreground:     ${palette.text_primary ?? '#1a202c'};
+      --popover:             ${palette.surface ?? '#ffffff'};
+      --popover-foreground:  ${palette.text_primary ?? '#1a202c'};
+      --primary:             ${palette.primary ?? '#1a365d'};
+      --primary-foreground:  #ffffff;
+      --secondary:           #f7fafc;
+      --secondary-foreground: ${palette.text_primary ?? '#1a202c'};
+      --muted:               #f1f5f9;
+      --muted-foreground:    ${palette.text_secondary ?? '#64748b'};
+      --accent:              ${palette.accent ?? '#e85d04'};
+      --accent-foreground:   #ffffff;
+      --border:              ${palette.border ?? '#e2e8f0'};
+      --input:               ${palette.border ?? '#e2e8f0'};
+      --ring:                ${palette.primary ?? '#1a365d'};
+      --radius:              0.5rem;
     }
-    /* Sprint 18Y — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
+    /* Sprint 119F-5 — dark mode overrides (.dark class on <html>, toggled by TweaksPanel) */
     :root.dark {
       color-scheme: dark;
-      --primary:        ${dark.primary};
-      --accent:         ${dark.accent};
-      --accent-color:   ${dark.accent};
-      --background:     ${dark.background};
-      --surface:        ${dark.surface ?? '#1e293b'};
-      --text-primary:   ${dark.text_primary};
-      --text-secondary: ${dark.text_secondary ?? '#94a3b8'};
-      --border:         ${dark.border ?? '#334155'};
+      --background:          ${dark.background ?? '#0f172a'};
+      --foreground:          ${dark.text_primary ?? '#f1f5f9'};
+      --card:                ${dark.surface ?? '#1e293b'};
+      --card-foreground:     ${dark.text_primary ?? '#f1f5f9'};
+      --popover:             ${dark.surface ?? '#1e293b'};
+      --popover-foreground:  ${dark.text_primary ?? '#f1f5f9'};
+      --primary:             ${dark.primary ?? '#6895d4'};
+      --primary-foreground:  #0f172a;
+      --secondary:           ${dark.surface ?? '#1e293b'};
+      --secondary-foreground: ${dark.text_primary ?? '#f1f5f9'};
+      --muted:               ${dark.surface ?? '#1e293b'};
+      --muted-foreground:    ${dark.text_secondary ?? '#94a3b8'};
+      --accent:              ${dark.accent ?? '#fc7c2c'};
+      --accent-foreground:   #0f172a;
+      --border:              ${dark.border ?? '#334155'};
+      --input:               ${dark.border ?? '#334155'};
+      --ring:                ${dark.primary ?? '#6895d4'};
     }`
 }
 
