@@ -72,6 +72,7 @@ import { calculateCost } from '@/lib/cost'
 import {
   executeAssembler,
   extractSectionHtml,
+  loadSchemesMap,
   renderFullHtml,
   savePreviewToR2,
   classifySection,
@@ -257,7 +258,9 @@ async function rerenderAndPersist(deps: ToolDeps, iter: DesignIterationRow, toke
     briefId: deps.briefId,
     iterationNumber: iter.iteration_number ?? null,
   }
-  const newHtml = renderFullHtml({ brief, tokens, sections, skills, feedbackContext })
+  // Sprint 119F-7 — load scheme assignments so rerender preserves section color wrappers.
+  const schemes = await loadSchemesMap(deps.env, deps.briefId)
+  const newHtml = renderFullHtml({ brief, tokens, sections, skills, feedbackContext, schemes })
   await deps.env.DB.prepare(`UPDATE design_iterations SET page_html = ? WHERE id = ?`).bind(newHtml, iter.id).run()
   const { r2Key } = await savePreviewToR2(deps.env, deps.briefId, iter.iteration_number, newHtml)
   if (!iter.preview_r2_key) await deps.env.DB.prepare(`UPDATE design_iterations SET preview_r2_key = ? WHERE id = ?`).bind(r2Key, iter.id).run()
