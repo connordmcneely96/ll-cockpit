@@ -705,7 +705,40 @@ ${buildScripts(tweaksPanelHtml)}
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// DETERMINISTIC ASSEMBLER
+// SCHEME LOADER — shared by executeAssembler and rerenderAndPersist
+// ──────────────────────────────────────────────────────────────────────
+
+export async function loadSchemesMap(
+  env: CloudflareEnv,
+  briefId: string,
+): Promise<Map<string, SectionColorScheme | null>> {
+  const map = new Map<string, SectionColorScheme | null>()
+  try {
+    const rows = await env.DB
+      .prepare(
+        `SELECT s.section_slug AS slug, c.palette_json AS palette
+         FROM design_brief_sections s
+         LEFT JOIN design_color_schemes c ON c.id = s.scheme_id
+         WHERE s.brief_id = ? AND s.status = 'active'`,
+      )
+      .bind(briefId)
+      .all<{ slug: string; palette: string | null }>()
+    for (const row of rows.results ?? []) {
+      if (!row.palette) continue
+      try {
+        const p = JSON.parse(row.palette) as { bg: string; text: string; accent: string; border: string }
+        map.set(row.slug, { bg: p.bg, text: p.text, accent: p.accent, border: p.border })
+      } catch {
+        // malformed palette_json — skip
+      }
+    }
+  } catch {
+    // query failed — return empty map (byte-identical to pre-119F-6 output)
+  }
+  return map
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────
 
 export async function executeAssembler(
@@ -792,30 +825,9 @@ export async function executeAssembler(
     iterationNumber: brief.current_iteration ?? null,
   }
 
-  // Sprint 119F-4 — build schemes map from design_brief_sections JOIN design_color_schemes.
-  // On any failure or empty result, pass an empty Map so behavior is identical to pre-119F-4.
-  const schemes = new Map<string, SectionColorScheme | null>()
-  try {
-    const schemeRows = await env.DB
-      .prepare(
-        `SELECT dbs.slug, dcs.palette_json
-         FROM design_brief_sections dbs
-         JOIN design_color_schemes dcs ON dcs.id = dbs.scheme_id
-         WHERE dbs.brief_id = ? AND dbs.scheme_id IS NOT NULL`,
-      )
-      .bind(brief.id)
-      .all<{ slug: string; palette_json: string }>()
-    for (const row of schemeRows.results ?? []) {
-      try {
-        const p = JSON.parse(row.palette_json) as { bg: string; text: string; accent: string; border: string }
-        schemes.set(row.slug, { bg: p.bg, text: p.text, accent: p.accent, border: p.border })
-      } catch {
-        // malformed palette_json — skip this section's scheme
-      }
-    }
-  } catch {
-    // query failed — proceed with empty schemes map (no-op)
-  }
+  // Sprint 119F-7 — load scheme assignments via shared helper (replaces inline 119F-4 query).
+  // Returns empty Map on any error → byte-identical to pre-119F-6 output.
+  const schemes = await loadSchemesMap(env, brief.id)
 
   const html = renderFullHtml({ brief, tokens: designTokens, sections, skills, feedbackContext, schemes })
   return { output: html, cost_usd: 0, tokens: 0 }
