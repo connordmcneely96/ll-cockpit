@@ -454,6 +454,10 @@ export interface CloudflareEnv {
   SUPABASE_SERVICE_ROLE_KEY: string
   ASSETS: Fetcher
   WORKER_SELF_REFERENCE?: Fetcher
+  // Sprint 121F — Cloudflare management API credentials for Pages deploys.
+  // Set via: wrangler secret put CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
+  CLOUDFLARE_API_TOKEN?: string
+  CLOUDFLARE_ACCOUNT_ID?: string
 }
 
 export interface CommandItem {
