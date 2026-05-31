@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Code2, Globe, TerminalSquare,
-  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History, Wallet, Library, Database, Rocket, Box,
+  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History, Wallet, Library, Database, Rocket, Box, GraduationCap,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { icon: Cpu,             label: 'Orchestrator',  href: '/orchestrator' },
   { icon: Palette,         label: 'Design Build',  href: '/api/design/launch' },
   { icon: Box,             label: 'Design Studio', href: '/design-studio' },
+  { icon: GraduationCap,   label: 'Learn',         href: '/learn' },
   { icon: History,         label: 'History',       href: '/history' },
 ]
 
