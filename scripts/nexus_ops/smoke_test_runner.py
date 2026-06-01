@@ -3,15 +3,12 @@
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — optimized for PaaS model routing.
 
-v4 Changes:
-- THREE-DIMENSIONAL REWARD: quality + cost efficiency + latency efficiency
-- TASK-TIER AWARENESS: routing tasks penalize latency; reasoning tasks ignore it
-- HARD LATENCY CAPS: Tier 1 (routing) = 15s max; Tier 2 (standard) = 60s max; Tier 3 (deep) = none
-- SCORER: Sonnet 4.6 (3x faster, 5x cheaper than Opus)
-- 25 core cases across 19 agent/task slots
-
-fix: handle response-body errors from OpenRouter/OpenAI (HTTP 200 with {"error":{...}} body)
-     and missing "choices" key — prevents silent garbage scores entering the bandit
+v5 Changes:
+- PER-SLOT COMPETITOR CAP: max 7 models per (agent, task_type) slot per run
+  5 veterans (ranked by alpha) + 2 new entrants (first trial)
+  Prevents alpha dilution that was stalling convergence at 13-16 models/slot
+- All v4 features retained: 3D reward, task-tier weights, hard latency caps,
+  Sonnet scorer, response-body error handling
 """
 
 from __future__ import annotations
@@ -37,6 +34,11 @@ SCORE_RETRY_BASE_DELAY = 5
 QUALITY_FLOOR = 0.75
 MAX_COST_CEILING = 12.0
 MAX_LAT_CEILING = 300.0
+
+# Per-slot competitor cap — prevents alpha dilution from too many models
+# Each (agent, task_type) slot tests at most MAX_SLOT_VETERANS + MAX_NEW_ENTRANTS models per run
+MAX_SLOT_VETERANS = 5
+MAX_NEW_ENTRANTS  = 2
 
 TASK_TIERS = {
     "intent_classify":      1,
@@ -300,30 +302,21 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
             )
             resp.raise_for_status()
             data = resp.json()
-
-            # OpenRouter and OpenAI sometimes return HTTP 200 with an error body
-            # (auth failures, model access denied, rate limits on specific models)
             if "error" in data:
                 err_msg = data["error"].get("message", str(data["error"]))
-                return {"output": None,
-                        "error": f"api_error: {err_msg[:150]}",
+                return {"output": None, "error": f"api_error: {err_msg[:150]}",
                         "latency_ms": int((time.monotonic() - start) * 1000),
                         "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-
             if not data.get("choices"):
-                return {"output": None,
-                        "error": "no_choices_in_response",
+                return {"output": None, "error": "no_choices_in_response",
                         "latency_ms": int((time.monotonic() - start) * 1000),
                         "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-
             choice = data["choices"][0]
             output = (choice.get("message") or {}).get("content") or ""
             if not output:
-                return {"output": None,
-                        "error": "empty_content_in_choice",
+                return {"output": None, "error": "empty_content_in_choice",
                         "latency_ms": int((time.monotonic() - start) * 1000),
                         "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-
             usage = data.get("usage", {})
             in_tok, out_tok, cost = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), 0.0
 
@@ -384,26 +377,23 @@ def compute_bandit_reward(
     Tier 1: 55% quality, 25% cost, 20% latency | hard cap 15s
     Tier 2: 65% quality, 25% cost, 10% latency | hard cap 60s
     Tier 3: 75% quality, 25% cost, 0% latency  | no cap
-    Quality floor: 0.75 — below this reward is always 0.0
+    Quality floor: 0.75
     """
     tier = TASK_TIERS.get(task_type, 2)
     lat_s = latency_ms / 1000.0
-
     if lat_s > TIER_LAT_HARD_CAP[tier]:
         return 0.0
     if composite_score < QUALITY_FLOOR:
         return 0.0
-
     qw, cw, lw = TIER_WEIGHTS[tier]
     cost_avg = (cost_input + cost_output * 2) / 3.0
     cost_eff = 1.0 - min(cost_avg / MAX_COST_CEILING, 1.0)
     lat_eff = (1.0 - min(lat_s / MAX_LAT_CEILING, 1.0)) if lw > 0 else 0.0
-
     return round(qw * composite_score + cw * cost_eff + lw * lat_eff, 4)
 
 
 def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Optional[Dict]:
-    """Score with Sonnet 4.6. Retries 3x. Returns None on all failures — caller skips result."""
+    """Score with Sonnet 4.6. Retries 3x. Returns None on failure — caller skips result."""
     prompt = f"Task:\n{task_prompt[:1000]}\n\nResponse:\n{output[:4000]}\n\nCriteria:\n{json.dumps(criteria)}\n\nScore strictly. Output only JSON."
     for attempt in range(SCORE_RETRY_ATTEMPTS):
         try:
@@ -426,6 +416,45 @@ def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config
             else:
                 log.error(f"Sonnet scoring failed after {SCORE_RETRY_ATTEMPTS} attempts: {e} — result SKIPPED")
                 return None
+
+
+def get_slot_competitors(
+    d1: D1Client,
+    agent: str,
+    task_type: str,
+    all_models: List[Dict],
+) -> List[Dict]:
+    """
+    Return at most MAX_SLOT_VETERANS + MAX_NEW_ENTRANTS models for this slot.
+
+    Veterans  = models with existing bandit params, ranked by alpha DESC (top 5).
+    New entrants = models with no params yet for this slot (up to 2 get first trial).
+
+    This hard-caps competition at 7 per slot regardless of registry size.
+    Without this cap, adding new models dilutes alpha across 13-16 competitors
+    and makes convergence mathematically impossible within a reasonable run count.
+    """
+    params = d1.query_rows(
+        "SELECT model_id, alpha, n_trials FROM model_bandit_params WHERE agent=? AND task_type=? ORDER BY alpha DESC",
+        [agent, task_type],
+    )
+    ranked_ids = [r["model_id"] for r in params]
+    param_set  = {r["model_id"] for r in params}
+
+    veterans     = [m for m in all_models if m["model_id"] in param_set]
+    new_entrants = [m for m in all_models if m["model_id"] not in param_set]
+
+    id_to_rank = {mid: i for i, mid in enumerate(ranked_ids)}
+    veterans.sort(key=lambda m: id_to_rank.get(m["model_id"], 9999))
+
+    n_new    = min(MAX_NEW_ENTRANTS, len(new_entrants))
+    n_vets   = min(MAX_SLOT_VETERANS, len(veterans))
+    selected = veterans[:n_vets] + new_entrants[:n_new]
+    skipped  = len(all_models) - len(selected)
+    if skipped > 0:
+        log.info(f"  Slot cap: {len(selected)}/{len(all_models)} models "
+                 f"({n_vets} veterans + {n_new} new) — {skipped} benched this run")
+    return selected
 
 
 def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str) -> Optional[str]:
@@ -476,6 +505,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         "started_at": datetime.now(timezone.utc).isoformat(),
         "scorer": SCORER_MODEL,
         "reward_fn": "v4: quality+cost+latency, task-tier aware",
+        "slot_cap": f"{MAX_SLOT_VETERANS} veterans + {MAX_NEW_ENTRANTS} new = {MAX_SLOT_VETERANS+MAX_NEW_ENTRANTS} max/slot",
         "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
         "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
         "errors": [], "scoring_skipped": 0,
@@ -493,13 +523,14 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
             f"SELECT model_id, provider, display_name, cost_input_per_1m, cost_output_per_1m FROM model_registry {sql}",
             params,
         )
-        log.info(f"Loaded {len(models)} models | Scorer: {SCORER_MODEL} | Reward: v4 (quality+cost+latency, tier-aware)")
+        log.info(f"Loaded {len(models)} active models | Scorer: {SCORER_MODEL} | "
+                 f"Slot cap: {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}=7 max/slot")
 
         total_cases = sum(
             len(cases)
             for ag, tasks in TEST_CASES.items() if (not agent_filter or ag == agent_filter)
             for tt, cases in tasks.items() if (not task_type_filter or tt == task_type_filter)
-        ) * len(models)
+        ) * min(len(models), MAX_SLOT_VETERANS + MAX_NEW_ENTRANTS)
 
         d1.execute(
             "INSERT OR IGNORE INTO smoke_test_runs (id, suite_id, trigger, triggered_by, status, models_under_test, n_cases_planned, started_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -515,9 +546,13 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                 if task_type_filter and task_type != task_type_filter:
                     continue
                 tier = TASK_TIERS.get(task_type, 2)
-                log.info(f"\n{'='*60}\nAGENT: {agent} | TASK: {task_type} (Tier {tier}) | {len(cases)} cases x {len(models)} models\n{'='*60}")
 
-                for model in models:
+                # KEY FIX: cap competitors per slot to prevent alpha dilution
+                slot_models = get_slot_competitors(d1, agent, task_type, models) if not cfg.dry_run else models
+                log.info(f"\n{'='*60}\nAGENT: {agent} | TASK: {task_type} (Tier {tier}) | "
+                         f"{len(cases)} cases x {len(slot_models)} models\n{'='*60}")
+
+                for model in slot_models:
                     model_id, provider = model["model_id"], model["provider"]
                     cost_in = float(model.get("cost_input_per_1m") or 0)
                     cost_out = float(model.get("cost_output_per_1m") or 0)
@@ -578,7 +613,8 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         summary["total_cost_usd"] += actual_cost
 
                         lat_flag = " ⚠LAT" if response["latency_ms"] > TIER_LAT_HARD_CAP[tier] * 1000 else ""
-                        log.info(f"    + {case['name']:36} q={scores['composite_score']:.3f} r={bandit_reward:.3f} {response['latency_ms']}ms{lat_flag}")
+                        log.info(f"    + {case['name']:36} q={scores['composite_score']:.3f} "
+                                 f"r={bandit_reward:.3f} {response['latency_ms']}ms{lat_flag}")
 
                         all_results.append(result)
                         result_id = str(uuid.uuid4())
@@ -600,10 +636,10 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
 
                     if model_rewards and not cfg.dry_run:
                         avg_reward = sum(model_rewards) / len(model_rewards)
-                        valid_lat = [r.get("latency_ms", 0) for r in model_results_batch if r.get("latency_ms")]
-                        valid_cost = [r.get("cost_usd", 0) for r in model_results_batch if r.get("cost_usd")]
+                        valid_lat  = [r.get("latency_ms", 0) for r in model_results_batch if r.get("latency_ms")]
+                        valid_cost = [r.get("cost_usd", 0)   for r in model_results_batch if r.get("cost_usd")]
                         avg_quality = sum(r.get("composite_score", 0) for r in model_results_batch) / len(model_results_batch)
-                        n_wins = sum(1 for r in model_results_batch if r.get("bandit_reward", 0) > 0)
+                        n_wins   = sum(1 for r in model_results_batch if r.get("bandit_reward", 0) > 0)
                         n_losses = len(model_rewards) - n_wins
                         d1.execute(
                             """INSERT INTO model_bandit_params
@@ -623,7 +659,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                             [str(uuid.uuid4()), agent, task_type, model_id,
                              1.0 + avg_reward, 1.0 + (1.0 - avg_reward),
                              n_wins, n_losses,
-                             round(sum(valid_lat) / len(valid_lat) if valid_lat else 0, 1),
+                             round(sum(valid_lat)  / len(valid_lat)  if valid_lat  else 0, 1),
                              round(sum(valid_cost) / len(valid_cost) if valid_cost else 0, 8),
                              round(avg_quality, 4), avg_reward,
                              int(datetime.now(timezone.utc).timestamp() * 1000),
@@ -645,6 +681,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
                        {"run_id": run_id, "scorer": SCORER_MODEL, "reward_fn": "v4",
+                        "slot_cap": f"{MAX_SLOT_VETERANS+MAX_NEW_ENTRANTS}/slot",
                         "filters": summary["filters"], "total_cost_usd": summary["total_cost_usd"],
                         "routing_updates": summary["routing_updates"],
                         "total_results": len(all_results), "scoring_skipped": summary["scoring_skipped"]})
@@ -671,6 +708,7 @@ if __name__ == "__main__":
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
     print(f"  Scorer:      {SCORER_MODEL}")
     print(f"  Reward fn:   v4 (quality+cost+latency, task-tier aware)")
+    print(f"  Slot cap:    {MAX_SLOT_VETERANS} veterans + {MAX_NEW_ENTRANTS} new = 7 max/slot")
     print(f"  Results:     {result['total_results']}")
     print(f"  Cost:        ${result['total_cost_usd']:.4f}")
     print(f"  DryRun:      {result['dry_run']}")
