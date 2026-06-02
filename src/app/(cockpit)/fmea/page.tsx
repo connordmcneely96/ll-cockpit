@@ -35,7 +35,7 @@ export default function FmeaPage() {
         <AgentRunStream
           agentName="nexus"
           prompt={buildFmeaPrompt(brief)}
-          sections={FMEA_SECTIONS}
+          workingLabel="Analyzing failure modes…"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

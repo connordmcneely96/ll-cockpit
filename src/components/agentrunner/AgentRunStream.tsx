@@ -1,12 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { RunnerSection } from '@/lib/agent-runner'
 
 interface Props {
   agentName: string
   prompt: string
-  sections: RunnerSection[]
+  workingLabel: string
   onComplete: (full: string, meta: { tokensUsed: number; costUsd: number }) => void
 }
 
@@ -16,7 +15,7 @@ type SSEEvent =
   | { type: 'done'; tokensUsed: number; costUsd: number; taskId?: string; chatId?: string }
   | { type: 'error'; message: string }
 
-export function AgentRunStream({ agentName, prompt, onComplete }: Props) {
+export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: Props) {
   const [text, setText] = useState('')
   const [eventCount, setEventCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -96,7 +95,7 @@ export function AgentRunStream({ agentName, prompt, onComplete }: Props) {
         {!done && (
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--t-p)' }} />
-            {agentName.toUpperCase()} is working…
+            {workingLabel}
           </span>
         )}
         <span style={{ color: 'var(--t-tx3)' }}>{eventCount} events</span>

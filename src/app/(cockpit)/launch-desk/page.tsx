@@ -35,7 +35,7 @@ export default function LaunchDeskPage() {
         <AgentRunStream
           agentName="herald"
           prompt={buildLaunchPrompt(brief)}
-          sections={LAUNCH_SECTIONS}
+          workingLabel="HERALD is working…"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

@@ -35,7 +35,7 @@ export default function ProposalPage() {
         <AgentRunStream
           agentName="herald"
           prompt={buildProposalPrompt(brief)}
-          sections={PROPOSAL_SECTIONS}
+          workingLabel="Drafting proposal…"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}
