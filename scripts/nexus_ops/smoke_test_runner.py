@@ -3,12 +3,23 @@
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — optimized for PaaS model routing.
 
-v5.1 Changes (on top of v5):
-- POST-SLOT PRUNE: after every slot completes, bandit_params is pruned to top 5
-  by alpha. This is the definitive fix for alpha dilution — the pool stays at
-  max 5 competitors permanently, not just during testing.
-- Combined with the slot cap (5 veterans + 2 new entrants = 7 tested per run),
-  this guarantees convergence math always works against a 5-model pool.
+v5.2 — Fair evaluation update:
+- MINIMUM 3 TEST CASES PER SLOT: all 19 slots now have 3+ cases.
+  Single-case slots were statistically meaningless — one bad response
+  could permanently penalize a good model. 3 cases per slot gives
+  ~50% noise reduction and fair signal before any routing decision.
+- PRUNE PROTECTION: models with <5 trials are never pruned, regardless
+  of alpha rank. New entrants need time to build a stable alpha estimate.
+  Without this, a model entering at #6 after 1 trial gets permanently
+  eliminated based on a single data point.
+- Post-slot prune (v5.1) retained — pool stays at max 5 per slot.
+- Slot cap (v5) retained — 5 veterans + 2 new entrants = 7 tested/run.
+
+Remaining known limitations (not fixable without structural change):
+- Sonnet scorer may slightly favor Anthropic models (~7% avg quality gap).
+  Cost-weight in v4 reward partially compensates.
+- Veterans (50-77 trials) have more stable alpha than new entrants (1-8).
+  This closes naturally as new entrants accumulate trials.
 """
 
 from __future__ import annotations
@@ -35,9 +46,10 @@ QUALITY_FLOOR = 0.75
 MAX_COST_CEILING = 12.0
 MAX_LAT_CEILING = 300.0
 
-MAX_SLOT_VETERANS = 5
-MAX_NEW_ENTRANTS  = 2
-MAX_SLOT_SIZE     = 5   # hard pool size — prune to this after every slot
+MAX_SLOT_VETERANS       = 5   # top veterans tested per slot per run
+MAX_NEW_ENTRANTS        = 2   # new models allowed per slot per run
+MAX_SLOT_SIZE           = 5   # hard pool size after post-slot prune
+MIN_TRIALS_BEFORE_PRUNE = 5   # protect models with fewer trials from elimination
 
 TASK_TIERS = {
     "intent_classify":      1,
@@ -87,8 +99,13 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
             },
             {
                 "name": "route_proposal_request", "difficulty": "medium",
-                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Classify and route incoming requests. DO NOT write the proposal yourself.\n\nAgents: FORGE (code), HERALD (content), SCOUT (outreach), INTAKE (client proposals/onboarding/scope extraction), ATLAS (engineering/FMEA), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: A refinery contacted us. They need FMEA documentation for 12 centrifugal pumps. Can you put together a proposal?\n\nRoute to INTAKE to handle this proposal. State why INTAKE owns proposals and what FMEA and pump count context to pass. Use INTAKE, proposal, and FMEA explicitly.",
+                "prompt": "You are NEXUS, the AI orchestrator for Leadership Legacy Digital. Classify and route incoming requests. DO NOT write the proposal yourself.\n\nAgents: FORGE (code), HERALD (content), SCOUT (outreach), INTAKE (client proposals/onboarding/scope extraction), ATLAS (engineering/FMEA), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: A refinery contacted us. They need FMEA documentation for 12 centrifugal pumps. Can you put together a proposal?\n\nRoute to INTAKE. State why INTAKE owns proposals and what context to pass. Use INTAKE, proposal, and FMEA explicitly.",
                 "criteria": {"must_include": ["INTAKE", "proposal", "FMEA"]}
+            },
+            {
+                "name": "route_content_request", "difficulty": "easy",
+                "prompt": "You are NEXUS. Route this request. DO NOT write the content yourself.\n\nAgents: FORGE (code), HERALD (content writing — LinkedIn, case studies, emails, articles), SCOUT (outreach), INTAKE (proposals), ATLAS (engineering), SENTINEL (QA), ANCHOR (analytics), ORACLE (research)\n\nRequest: Write a LinkedIn post about how we reduced FMEA documentation time by 80% for a Gulf Coast refinery.\n\nRoute to HERALD. State why and what context to pass.",
+                "criteria": {"must_include": ["HERALD", "content", "LinkedIn"]}
             },
         ],
         "strategic_decide": [
@@ -96,6 +113,16 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "name": "product_vertical_decision", "difficulty": "hard",
                 "prompt": "We have $8K MRR, 3 active engineering clients, and 40hrs/week capacity. Should we launch an FMEA SaaS product now, or focus on growing the agency revenue first? Our ME background is the moat.",
                 "criteria": {"must_include": ["revenue", "capacity", "risk", "moat"]}
+            },
+            {
+                "name": "pricing_strategy_decision", "difficulty": "hard",
+                "prompt": "We deliver AI-generated FMEA documentation packages for process plants. Currently charging $3,500 per project (10-15 pumps, 2-week turnaround). Should we shift to $800/month retainer or keep project-based? We close about 2 projects/month now.",
+                "criteria": {"must_include": ["retainer", "project", "revenue", "churn", "risk"]}
+            },
+            {
+                "name": "expansion_vs_focus", "difficulty": "hard",
+                "prompt": "Currently serving 3 Gulf Coast refinery clients with FMEA automation. Should we expand into power generation (adjacent industry, similar pain) or go deeper in refining (more clients like our current 3)? We have $12K in the pipeline from each option.",
+                "criteria": {"must_include": ["focus", "expand", "risk", "pipeline", "expertise"]}
             },
         ],
     },
@@ -112,12 +139,27 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Write a TypeScript function implementing Thompson Sampling: given array of {model_id, alpha, beta}, sample each model's Beta distribution, return the model_id with highest sample. Use Box-Muller method for Beta sampling (CF Workers only has Math.random()).",
                 "criteria": {"must_include": ["alpha", "beta", "sample", "return", "TypeScript"], "must_not_include": ["TODO"]}
             },
+            {
+                "name": "d1_bandit_updater", "difficulty": "medium",
+                "prompt": "Write a TypeScript function that updates a Thompson Sampling bandit in D1 after an agent task completes. Signature: updateBandit(db: D1Database, agent: string, taskType: string, modelId: string, reward: number): Promise<void>. Uses ON CONFLICT UPSERT to increment alpha (reward) or beta (1-reward). Include input validation and error handling.",
+                "criteria": {"must_include": ["D1Database", "alpha", "beta", "ON CONFLICT", "Promise", "TypeScript"], "must_not_include": ["TODO"]}
+            },
         ],
         "code_complex": [
             {
                 "name": "multi_agent_orchestration", "difficulty": "hard",
                 "prompt": "Write TypeScript orchestration for NEXUS handling an FMEA request: classify intent -> call INTAKE for scope -> call ATLAS for engineering context -> call FORGE for template -> compile unified response. Handle failures at each step.",
                 "criteria": {"must_include": ["INTAKE", "ATLAS", "FORGE", "error", "Promise", "async"]}
+            },
+            {
+                "name": "bandit_router_production", "difficulty": "hard",
+                "prompt": "Write a production-grade TypeScript model router for Cloudflare Workers. Given agent name and task_type, query D1 for bandit params, implement Thompson Sampling selection, call the winning model via fetch, return result. Include: D1 read with fallback to default model, Cloudflare KV cache for params (TTL 60s), error handling, structured logging.",
+                "criteria": {"must_include": ["D1", "KV", "alpha", "beta", "fallback", "cache", "TypeScript"], "must_not_include": ["TODO"]}
+            },
+            {
+                "name": "webhook_queue_processor", "difficulty": "hard",
+                "prompt": "Write a Cloudflare Queue consumer in TypeScript that processes agent task webhooks. Each message has: {task_id, agent, task_type, payload, retry_count}. Requirements: max 3 retries with exponential backoff, dead-letter to a 'failed_tasks' D1 table on final failure, call the appropriate agent endpoint via service binding, mark task complete in D1.",
+                "criteria": {"must_include": ["retry", "dead-letter", "D1", "TypeScript", "Queue", "exponential"], "must_not_include": ["TODO"]}
             },
         ],
     },
@@ -134,12 +176,27 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Write 3-email cold outreach sequence to Engineering Directors at mid-size pump manufacturers. Pain: FMEA docs slow/inconsistent/compliance risk. Solution: AI agents cut time 60%. 100 words each, no fluff.",
                 "criteria": {"must_include": ["FMEA", "documentation", "compliance"], "must_not_include": ["I hope this email finds you"]}
             },
+            {
+                "name": "linkedin_thought_leadership", "difficulty": "medium",
+                "prompt": "Write a 200-word LinkedIn post from Connor Pattern (ME, AI developer) on why most AI tools fail for mechanical engineers: they lack domain depth. Specific examples: FMEA, API 610, NPSHa calculations. Position Leadership Legacy Digital's approach as different. Founder voice, specific, no fluff.",
+                "criteria": {"must_include": ["mechanical engineer", "FMEA", "API 610", "domain", "fail"], "must_not_include": ["game-changer", "revolutionary", "synergy"]}
+            },
         ],
         "caption_short": [
             {
                 "name": "linkedin_build_update", "difficulty": "easy",
                 "prompt": "LinkedIn post (150 words max): Thompson Sampling model router first smoke test — Haiku won intent classification at 84% quality, Sonnet won code generation at 91%. Founder, engineer voice.",
                 "criteria": {"must_include": ["Thompson", "Haiku", "Sonnet", "quality"]}
+            },
+            {
+                "name": "twitter_product_launch", "difficulty": "easy",
+                "prompt": "Write a tweet (280 chars max) announcing that NEXUS Cockpit just routed its first live FMEA request to the optimal model automatically using Thompson Sampling. Engineer/founder voice. Include a concrete win number.",
+                "criteria": {"must_include": ["Thompson", "FMEA", "model"]}
+            },
+            {
+                "name": "linkedin_client_win", "difficulty": "easy",
+                "prompt": "Write a 120-word LinkedIn post: just closed a $18K contract with a Gulf Coast refinery to automate FMEA documentation for 28 centrifugal pumps. The client's reliability team was spending 6 weeks per audit cycle manually. Share the win without being braggy. Engineer voice.",
+                "criteria": {"must_include": ["FMEA", "$18K", "28", "refinery", "reliability"]}
             },
         ],
     },
@@ -151,6 +208,16 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Extract structured JSON: 'Hi Connor, we operate a hydrocracker unit with 28 centrifugal pumps needing FMEA documentation for API 610 compliance audit in Q3. Some RPN scores done but inconsistent. Budget ~$18K. Need in 6 weeks. Contact: Mike Torres, Reliability Engineer.'",
                 "criteria": {"must_include": ["pumps", "budget", "timeline", "contact", "compliance"]}
             },
+            {
+                "name": "website_rebuild_scope", "difficulty": "medium",
+                "prompt": "Extract structured JSON from this messy client message: 'hey we need a new website, ours is like 10 years old and looks bad on phones. we do industrial valve repair, mostly gate valves and check valves for oil and gas. we want people to be able to request quotes. maybe $5k budget? our guy Dave handles the marketing stuff, dave.r@valvetech.com, call him at 832-555-0192.'",
+                "criteria": {"must_include": ["budget", "contact", "service", "requirements", "mobile"]}
+            },
+            {
+                "name": "api_integration_scope", "difficulty": "hard",
+                "prompt": "Extract structured JSON: 'We need our CMMS (Maximo 7.6) to push work order data automatically to our new AI maintenance system. About 500 work orders/day, need equipment ID, failure description, priority, and assigned tech. We want this live before our Q4 turnaround. IT contact is Sarah Chen, sarah.chen@petroco.com. No hard budget set yet but we approved ~$25K for the integration.'",
+                "criteria": {"must_include": ["budget", "contact", "timeline", "volume", "fields", "integration"]}
+            },
         ],
     },
 
@@ -160,6 +227,16 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "name": "content_accuracy_check", "difficulty": "easy",
                 "prompt": "Safe to send to refinery engineering team? 'Our AI achieves 100% accuracy on FMEA documentation, eliminates all human error. Guaranteed compliance with API 610, ASME, and all industry standards.'",
                 "criteria": {"must_include": ["misleading", "accuracy", "claim", "liability"], "must_not_include": ["looks good", "seems fine"]}
+            },
+            {
+                "name": "proposal_claims_review", "difficulty": "medium",
+                "prompt": "Review this proposal excerpt before sending to a petrochemical plant: 'Our AI system will reduce your maintenance costs by 40%, eliminate unplanned downtime, and deliver full API 610 compliance in 2 weeks. We have implemented similar solutions at 50+ refineries across the Gulf Coast.'",
+                "criteria": {"must_include": ["unverified", "claims", "risk", "liability", "evidence"], "must_not_include": ["looks good", "send it"]}
+            },
+            {
+                "name": "sql_safety_check", "difficulty": "medium",
+                "prompt": "Is this safe to run in production D1? The input comes from a user-facing form field called 'client_name': SELECT * FROM projects WHERE client_name = '" + "' + userInput + '" + "' AND active = 1",
+                "criteria": {"must_include": ["injection", "parameterized", "unsafe", "input"], "must_not_include": ["looks safe", "should be fine"]}
             },
         ],
         "qa_review": [
@@ -172,6 +249,11 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "name": "code_pr_review", "difficulty": "hard",
                 "prompt": "Review before merging: `export async function routeToModel(taskType: string) { const models = await db.query('SELECT * FROM model_bandit_params'); const winner = models[0]; return callModel(winner.model_id); }` Thompson Sampling router for production.",
                 "criteria": {"must_include": ["sampling", "alpha", "beta", "filter", "error handling"]}
+            },
+            {
+                "name": "ai_output_hallucination_check", "difficulty": "hard",
+                "prompt": "Review this AI-generated engineering calculation before delivering to client: 'Per API 610 Table 6, the maximum allowable casing pressure for A216 WCB carbon steel at 300F is 285 psig. With a 1.5 safety factor, the design pressure is 427 psig. Note: API 610 12th edition removed Table 6 and now references ASME B16.34 directly.' Flag any issues.",
+                "criteria": {"must_include": ["verify", "API 610", "ASME", "accuracy", "reference"]}
             },
         ],
     },
@@ -188,12 +270,27 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "First critical speed: L=30in between bearings, shaft OD=1.75in solid steel (E=30e6 psi, density=0.283 lb/in3), impeller weight=15 lbs at midspan. Use Rayleigh method. Above or below 3560 RPM?",
                 "criteria": {"must_include": ["critical speed", "RPM", "Rayleigh", "formula", "3560"]}
             },
+            {
+                "name": "pump_specific_speed", "difficulty": "medium",
+                "prompt": "Calculate specific speed (Ns) for a centrifugal pump: flow rate 500 GPM, head 120 ft, speed 3550 RPM. State the formula, show work, give the result, and classify the pump type (radial, mixed, axial flow) based on the Ns value.",
+                "criteria": {"must_include": ["specific speed", "GPM", "formula", "RPM", "radial", "mixed", "axial"]}
+            },
         ],
         "long_doc_ingest": [
             {
                 "name": "fmea_methodology_summary", "difficulty": "medium",
                 "prompt": "Summarize FMEA methodology for rotating equipment per IEC 60812 and API RP 581: steps, RPN calculation and interpretation, typical centrifugal pump failure modes, RPN-based prioritization limitations.",
                 "criteria": {"must_include": ["RPN", "severity", "occurrence", "detection", "failure mode", "centrifugal pump"]}
+            },
+            {
+                "name": "api610_scope_summary", "difficulty": "medium",
+                "prompt": "Summarize the scope and key requirements of API 610 (Centrifugal Pumps for Petroleum, Petrochemical and Natural Gas Industries): what it covers, key design requirements, inspection/testing requirements, and what types of pumps are included vs excluded.",
+                "criteria": {"must_include": ["API 610", "centrifugal", "scope", "testing", "inspection", "requirements"]}
+            },
+            {
+                "name": "pump_failure_mode_library", "difficulty": "hard",
+                "prompt": "List the 8 most common failure modes for centrifugal pumps in refinery service. For each: failure mode name, typical causes, effects on operation, severity (1-10), and recommended detection method. Format as structured data suitable for an FMEA template.",
+                "criteria": {"must_include": ["seal", "bearing", "impeller", "cavitation", "severity", "detection", "FMEA"]}
             },
         ],
     },
@@ -205,12 +302,32 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Upwork proposal for: 'Need AI developer to automate FMEA docs for pump fleet. 35 pumps, API 610 service, RPN scoring and action tracking. Budget $15K-$25K.' Write as Connor Pattern, ME and AI developer. 200 words max.",
                 "criteria": {"must_include": ["mechanical engineer", "FMEA", "RPN", "API 610", "approach"]}
             },
+            {
+                "name": "linkedin_dm_plant_manager", "difficulty": "hard",
+                "prompt": "Write a cold LinkedIn DM to James Holloway, Maintenance Manager at Valero Energy. His LinkedIn shows he posted about their upcoming turnaround season and FMEA compliance challenges. 100 words max. Write as Connor Pattern, ME. Personalize to his post, offer specific value, no pitch decks or 'just checking in'.",
+                "criteria": {"must_include": ["FMEA", "turnaround", "personalized", "value"], "must_not_include": ["checking in", "hope you're well", "quick question"]}
+            },
+            {
+                "name": "follow_up_email_post_demo", "difficulty": "medium",
+                "prompt": "Write a follow-up email after a 30-minute product demo of our AI FMEA automation tool. The prospect was a Reliability Engineer at a mid-size refinery, seemed interested but mentioned budget approval takes 6-8 weeks and their next turnaround is in 5 months. Subject line + 150 word email. No pressure, add value.",
+                "criteria": {"must_include": ["turnaround", "timeline", "FMEA", "next step", "value"]}
+            },
         ],
         "social_intel": [
             {
                 "name": "fmea_pain_point_research", "difficulty": "medium",
                 "prompt": "Top 5 pain points reliability engineers discuss about FMEA documentation in process industries (2024-2025)? What makes it slow, inconsistent, or non-compliant? Cite refining, petrochemical, power gen. Format as content/outreach insights.",
                 "criteria": {"must_include": ["documentation", "inconsistent", "compliance", "reliability engineer"]}
+            },
+            {
+                "name": "competitor_landscape_analysis", "difficulty": "hard",
+                "prompt": "Map the current competitive landscape for AI tools serving mechanical engineers and reliability teams in process industries. Include: existing FMEA software (non-AI), any AI-native entrants, generic AI coding/content tools being used, and where the gaps are. Focus on what a solo ME founder could realistically own.",
+                "criteria": {"must_include": ["FMEA software", "gap", "AI", "competitor", "opportunity"]}
+            },
+            {
+                "name": "iiot_adoption_barriers", "difficulty": "medium",
+                "prompt": "What are the top barriers preventing wider AI and IIoT adoption in refineries and petrochemical plants as of 2025? Focus on organizational, budget, and technical factors that a B2B AI vendor needs to understand when selling to plant maintenance and reliability teams.",
+                "criteria": {"must_include": ["barrier", "budget", "IT", "OT", "trust", "integration", "maintenance"]}
             },
         ],
     },
@@ -222,12 +339,32 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Synthesize AI adoption in mechanical engineering and predictive maintenance as of 2025: leading companies, proven use cases, typical ROI, where resistance exists. Executive briefing for a founder choosing a vertical.",
                 "criteria": {"must_include": ["predictive maintenance", "ROI", "adoption", "resistance"]}
             },
+            {
+                "name": "cloudflare_workers_ai_assessment", "difficulty": "medium",
+                "prompt": "Assess Cloudflare Workers AI for production inference in a PaaS agent platform: available models, pricing, latency characteristics, limitations vs cloud providers (Anthropic API, OpenRouter), and whether it's viable for a production routing layer today.",
+                "criteria": {"must_include": ["Workers AI", "latency", "pricing", "model", "production", "limitation"]}
+            },
+            {
+                "name": "me_software_market_map", "difficulty": "hard",
+                "prompt": "Map the software tools market for mechanical engineers in process industries (refineries, petrochemical, power generation): what categories exist (simulation, compliance, maintenance, documentation), market sizes where known, dominant vendors, and underserved gaps an AI-native company could target.",
+                "criteria": {"must_include": ["market", "gap", "software", "compliance", "maintenance", "vendor"]}
+            },
         ],
         "genesis_score_gap": [
             {
                 "name": "fmea_saas_opportunity", "difficulty": "hard",
                 "prompt": "Score 1-10 with reasoning: AI-powered FMEA documentation SaaS for process industries. Dimensions: (1) Market size (2) Competition density (3) Willingness to pay (4) Founder ME moat (5) Time to first revenue (6) Scalability. Recommend: launch now, wait, or skip.",
                 "criteria": {"must_include": ["market size", "competition", "willingness", "moat", "revenue", "scale"]}
+            },
+            {
+                "name": "api610_navigator_opportunity", "difficulty": "hard",
+                "prompt": "Score 1-10: AI tool that helps mechanical engineers navigate API 610 compliance — answers specific standard questions, calculates compliance margins, flags non-conformances in pump specs. Same 6 dimensions. Who buys it, what do they pay, how does a solo ME founder build it?",
+                "criteria": {"must_include": ["API 610", "buyer", "pricing", "moat", "competition", "build"]}
+            },
+            {
+                "name": "maintenance_report_automation", "difficulty": "hard",
+                "prompt": "Score 1-10: AI system that automatically generates maintenance reports for rotating equipment from raw technician notes, sensor data, and work order history. Target: refineries and power plants. Same 6 dimensions plus: what's the biggest technical risk and what would kill this business?",
+                "criteria": {"must_include": ["maintenance", "rotating", "risk", "market", "buyer", "kill"]}
             },
         ],
     },
@@ -239,6 +376,16 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Optimal LLM cost structure at $10K MRR: Haiku for classification, Sonnet for primary, Opus for gates. Average 500 input + 800 output tokens/task, ~500 tasks/day. What % of revenue = LLM costs? Optimization path? At what scale does it break?",
                 "criteria": {"must_include": ["cost", "tokens", "percentage", "optimization", "Haiku", "Sonnet"]}
             },
+            {
+                "name": "revenue_growth_levers", "difficulty": "hard",
+                "prompt": "Current state: $8K MRR, 3 engineering clients paying $1.5K/2K/4.5K per month, 40% churn risk on the $2K client. What are the top 3 levers to reach $20K MRR in 6 months? Quantify each lever's potential. What's the sequencing? What kills this plan?",
+                "criteria": {"must_include": ["churn", "lever", "$20K", "sequence", "risk", "upsell"]}
+            },
+            {
+                "name": "client_portfolio_analysis", "difficulty": "medium",
+                "prompt": "Analyze this client portfolio: Client A pays $1,500/mo (refinery, 6 months, satisfied, no expansion interest), Client B pays $2,000/mo (pump manufacturer, 2 months, at-risk, main contact leaving), Client C pays $4,500/mo (engineering firm, 1 month, wants 3 more modules). Where should focus go? What's the 90-day priority?",
+                "criteria": {"must_include": ["churn", "expansion", "priority", "risk", "Client C", "90-day"]}
+            },
         ],
     },
 
@@ -249,12 +396,32 @@ TEST_CASES: Dict[str, Dict[str, List[Dict]]] = {
                 "prompt": "Describe a well-designed Cockpit routing intelligence dashboard: shows winning model per agent/task_type, convergence status, win rates as bars, cost per model, run smoke test button. Layout, color coding, data hierarchy for a founder checking daily.",
                 "criteria": {"must_include": ["layout", "color", "hierarchy", "win rate", "convergence"]}
             },
+            {
+                "name": "mobile_agent_monitor", "difficulty": "medium",
+                "prompt": "Design a mobile-first (375px) agent monitoring screen for NEXUS Cockpit. Needs to show: 5 most recent agent runs (agent name, status, latency, model used), a trigger button for a new run, and one alert if any run failed. Describe the layout, component hierarchy, and what to show vs hide on small screens.",
+                "criteria": {"must_include": ["mobile", "layout", "recent runs", "alert", "button", "hierarchy"]}
+            },
+            {
+                "name": "onboarding_flow_critique", "difficulty": "hard",
+                "prompt": "Critique this onboarding flow for a new Cockpit user: Step 1: Create account. Step 2: 40-field configuration form (API keys, agent settings, D1 database IDs, Cloudflare credentials, webhook URLs). Step 3: Run first test. What are the UX problems? How would you redesign it for a solo founder who just wants to see the product work in 5 minutes?",
+                "criteria": {"must_include": ["friction", "onboarding", "reduce", "progressive", "first value"]}
+            },
         ],
         "code_generate": [
             {
                 "name": "cockpit_routing_panel", "difficulty": "hard",
                 "prompt": "React TypeScript component for Routing Intelligence panel: fetch from /api/routing/standings, table with agent/task_type rows, colored badge (green=converged, yellow=provisional), win rate progress bar, n_trials, refresh button. Tailwind only.",
                 "criteria": {"must_include": ["useState", "useEffect", "fetch", "TypeScript", "badge", "progress"], "must_not_include": ["TODO"]}
+            },
+            {
+                "name": "d1_explorer_component", "difficulty": "hard",
+                "prompt": "React TypeScript component: D1 Explorer panel. User enters a SQL query in a textarea, clicks Run, results display in a sortable table. Use /api/d1/query (POST with {sql: string}). Show row count, query latency, and error messages clearly. Tailwind only. Handle empty results and SQL errors gracefully.",
+                "criteria": {"must_include": ["useState", "useEffect", "TypeScript", "sortable", "error", "POST"], "must_not_include": ["TODO"]}
+            },
+            {
+                "name": "model_registry_form", "difficulty": "medium",
+                "prompt": "React TypeScript form component to add a model to the registry. Fields: model_id (text), provider (select: anthropic/openai/openrouter), display_name (text), cost_input_per_1m (number), cost_output_per_1m (number), context_window (number), active (toggle). POST to /api/registry/models on submit. Validate all fields before submit. Tailwind only.",
+                "criteria": {"must_include": ["useState", "TypeScript", "validation", "POST", "provider", "select"], "must_not_include": ["TODO"]}
             },
         ],
     },
@@ -266,6 +433,16 @@ TEST_CASES["META_COGNITION"] = {
             "name": "prompt_quality_analysis", "difficulty": "hard",
             "prompt": "Analyze and rewrite this agent system prompt:\n\nCURRENT: 'You are HERALD, the content agent. Write good content for Connor's business. Make LinkedIn posts, emails, and other content. Be professional and helpful. Write about engineering and AI topics. Help Connor grow his business.'\n\nContext: HERALD serves a ME building AI tools for process industries. Quality score 0.62 over 20 tasks. Rewrite to score 0.85+.",
             "criteria": {"must_include": ["mechanical engineer", "FMEA", "API 610", "output schema"], "must_not_include": ["be helpful", "be professional"]}
+        },
+        {
+            "name": "atlas_prompt_evaluation", "difficulty": "hard",
+            "prompt": "Evaluate this ATLAS engineering agent system prompt: 'You are ATLAS, the engineering specialist. Answer questions about pumps, FMEA, API standards, and rotating equipment. Provide accurate calculations and reference standards where applicable. Be thorough and precise.'\n\nATLAS handles: API 610/682 queries, NPSHa calculations, FMEA RPN scoring, shaft analysis, equipment selection. Current quality score: 0.71. What are the 3 biggest weaknesses? Rewrite the prompt to hit 0.88+ with explicit output schemas for each task type.",
+            "criteria": {"must_include": ["output schema", "API 610", "calculation", "FMEA", "weakness"], "must_not_include": ["be thorough", "be accurate"]}
+        },
+        {
+            "name": "routing_decision_audit", "difficulty": "hard",
+            "prompt": "Audit this routing decision: NEXUS received 'What is the NPSHr requirement for our slurry pump running at 1750 RPM?' and routed it to ORACLE (research_summarize) instead of ATLAS (engineering_calc). What went wrong in the classification? Write a corrected routing rule that would catch this pattern, and suggest what the intent_classify prompt needs to say to prevent similar misroutes.",
+            "criteria": {"must_include": ["ATLAS", "ORACLE", "NPSHr", "misroute", "classification", "rule"]}
         },
     ],
 }
@@ -436,25 +613,30 @@ def get_slot_competitors(
     return selected
 
 
-def prune_slot(d1: D1Client, agent: str, task_type: str) -> int:
+def prune_slot(d1: D1Client, agent: str, task_type: str) -> None:
     """
-    Keep only top MAX_SLOT_SIZE models in bandit_params for this slot.
-    Called after every slot completes — ensures convergence math always
-    works against a tight pool regardless of how many models have ever run.
-    Returns number of rows deleted.
+    Prune bandit_params for this slot to MAX_SLOT_SIZE after every slot completes.
+
+    PROTECTION: models with fewer than MIN_TRIALS_BEFORE_PRUNE trials are NEVER
+    pruned, even if they rank outside the top 5. A new entrant with 1-4 trials
+    has not had a fair evaluation and should not be permanently eliminated based
+    on limited data. Once they cross the threshold, they compete on merit.
+
+    This keeps the alpha pool tight (max 5 veterans) while ensuring every model
+    gets a genuine evaluation window before facing elimination.
     """
     d1.execute(
         """DELETE FROM model_bandit_params
            WHERE agent=? AND task_type=?
+           AND n_trials >= ?
            AND model_id NOT IN (
              SELECT model_id FROM model_bandit_params
              WHERE agent=? AND task_type=?
              ORDER BY alpha DESC, avg_quality DESC
              LIMIT ?
            )""",
-        [agent, task_type, agent, task_type, MAX_SLOT_SIZE],
+        [agent, task_type, MIN_TRIALS_BEFORE_PRUNE, agent, task_type, MAX_SLOT_SIZE],
     )
-    return MAX_SLOT_SIZE
 
 
 def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str) -> Optional[str]:
@@ -505,7 +687,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         "started_at": datetime.now(timezone.utc).isoformat(),
         "scorer": SCORER_MODEL,
         "reward_fn": "v4: quality+cost+latency, task-tier aware",
-        "slot_cap": f"{MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS} tested, {MAX_SLOT_SIZE} kept",
+        "slot_config": f"test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep top {MAX_SLOT_SIZE}, protect <{MIN_TRIALS_BEFORE_PRUNE} trials",
         "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
         "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
         "errors": [], "scoring_skipped": 0,
@@ -524,7 +706,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
             params,
         )
         log.info(f"Loaded {len(models)} active models | Scorer: {SCORER_MODEL} | "
-                 f"Slot: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep top {MAX_SLOT_SIZE}")
+                 f"Slot: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE}, protect <{MIN_TRIALS_BEFORE_PRUNE}")
 
         total_cases = sum(
             len(cases)
@@ -665,12 +847,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         )
 
                 if not cfg.dry_run:
-                    # POST-SLOT PRUNE — hard cap pool at MAX_SLOT_SIZE (5)
-                    # This is the definitive fix for alpha dilution.
-                    # New entrant models may have entered this run — prune back to top 5
-                    # so convergence math always works against a 5-model pool, not 7+.
                     prune_slot(d1, agent, task_type)
-
                     winner = refresh_routing_table(d1, agent, task_type, run_id)
                     if winner:
                         summary["routing_updates"].append({"agent": agent, "task_type": task_type, "winner": winner})
@@ -685,7 +862,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
                        {"run_id": run_id, "scorer": SCORER_MODEL, "reward_fn": "v4",
-                        "slot_cap": f"{MAX_SLOT_VETERANS+MAX_NEW_ENTRANTS} tested / {MAX_SLOT_SIZE} kept",
+                        "slot_config": summary["slot_config"],
                         "filters": summary["filters"], "total_cost_usd": summary["total_cost_usd"],
                         "routing_updates": summary["routing_updates"],
                         "total_results": len(all_results), "scoring_skipped": summary["scoring_skipped"]})
@@ -709,10 +886,19 @@ if __name__ == "__main__":
         agent_filter=args.agent,
         task_type_filter=args.task_type,
     )
+    # Count cases
+    total_cases = sum(
+        len(cases) for ag, tasks in TEST_CASES.items()
+        for tt, cases in tasks.items()
+    )
+    min_cases = min(
+        len(cases) for ag, tasks in TEST_CASES.items()
+        for tt, cases in tasks.items()
+    )
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
     print(f"  Scorer:      {SCORER_MODEL}")
-    print(f"  Reward fn:   v4 (quality+cost+latency, task-tier aware)")
-    print(f"  Slot config: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep top {MAX_SLOT_SIZE}")
+    print(f"  Slot config: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE}, protect <{MIN_TRIALS_BEFORE_PRUNE} trials")
+    print(f"  Test cases:  {total_cases} total across {len(TEST_CASES)} agents (min {min_cases}/slot)")
     print(f"  Results:     {result['total_results']}")
     print(f"  Cost:        ${result['total_cost_usd']:.4f}")
     print(f"  DryRun:      {result['dry_run']}")
