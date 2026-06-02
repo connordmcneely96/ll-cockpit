@@ -1,10 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { LaunchBrief } from '@/lib/launch-desk'
+import { LaunchBrief, buildLaunchPrompt, LAUNCH_SECTIONS } from '@/lib/launch-desk'
 import { IntakeForm } from '@/components/launchdesk/IntakeForm'
-import { RunStream } from '@/components/launchdesk/RunStream'
-import { StructuredOutput } from '@/components/launchdesk/StructuredOutput'
+import { AgentRunStream } from '@/components/agentrunner/AgentRunStream'
+import { SectionedOutput } from '@/components/agentrunner/SectionedOutput'
 
 type Phase = 'form' | 'running' | 'done'
 
@@ -32,24 +32,21 @@ export default function LaunchDeskPage() {
       )}
 
       {phase === 'running' && brief && (
-        <RunStream
-          brief={brief}
+        <AgentRunStream
+          agentName="herald"
+          prompt={buildLaunchPrompt(brief)}
+          sections={LAUNCH_SECTIONS}
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}
 
       {phase === 'done' && result && (
         <div className="flex flex-col gap-4">
-          <StructuredOutput full={result.full} meta={result.meta} />
+          <SectionedOutput full={result.full} sections={LAUNCH_SECTIONS} meta={result.meta} />
           <button
             onClick={() => { setResult(null); setPhase('form') }}
             className="self-start px-4 py-2 rounded-lg text-[11px] font-mono uppercase tracking-widest transition-all"
-            style={{
-              background: 'var(--d-elevated)',
-              border: '1px solid var(--t-glass-bdr)',
-              color: 'var(--t-tx2)',
-              cursor: 'pointer',
-            }}
+            style={{ background: 'var(--d-elevated)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx2)', cursor: 'pointer' }}
           >
             New Launch Plan
           </button>
