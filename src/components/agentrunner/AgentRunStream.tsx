@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { LaunchBrief, buildLaunchPrompt } from '@/lib/launch-desk'
 
 interface Props {
-  brief: LaunchBrief
+  agentName: string
+  prompt: string
+  workingLabel: string
   onComplete: (full: string, meta: { tokensUsed: number; costUsd: number }) => void
 }
 
@@ -14,19 +15,16 @@ type SSEEvent =
   | { type: 'done'; tokensUsed: number; costUsd: number; taskId?: string; chatId?: string }
   | { type: 'error'; message: string }
 
-export function RunStream({ brief, onComplete }: Props) {
+export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: Props) {
   const [text, setText] = useState('')
   const [eventCount, setEventCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     const ctrl = new AbortController()
-    abortRef.current = ctrl
     const timer = setTimeout(() => ctrl.abort(), 60_000)
-
     let accumulated = ''
 
     async function run() {
@@ -34,17 +32,13 @@ export function RunStream({ brief, onComplete }: Props) {
         const res = await fetch('/api/agent/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentName: 'herald', message: buildLaunchPrompt(brief) }),
+          body: JSON.stringify({ agentName, message: prompt }),
           signal: ctrl.signal,
         })
-        if (!res.ok || !res.body) {
-          setError(`HTTP ${res.status}`)
-          return
-        }
+        if (!res.ok || !res.body) { setError(`HTTP ${res.status}`); return }
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''
-
         while (true) {
           const { value, done: streamDone } = await reader.read()
           if (streamDone) break
@@ -81,12 +75,10 @@ export function RunStream({ brief, onComplete }: Props) {
 
     run()
     return () => { ctrl.abort(); clearTimeout(timer) }
-  }, [brief, onComplete])
+  }, [agentName, prompt, onComplete])
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [text])
 
   if (error) {
@@ -102,11 +94,8 @@ export function RunStream({ brief, onComplete }: Props) {
       <div className="flex items-center gap-3 text-[11px] font-mono" style={{ color: 'var(--t-tx3)' }}>
         {!done && (
           <span className="flex items-center gap-1.5">
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
-              style={{ background: 'var(--t-p)' }}
-            />
-            HERALD is working…
+            <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--t-p)' }} />
+            {workingLabel}
           </span>
         )}
         <span style={{ color: 'var(--t-tx3)' }}>{eventCount} events</span>
@@ -114,13 +103,7 @@ export function RunStream({ brief, onComplete }: Props) {
       <div
         ref={scrollRef}
         className="rounded-lg px-4 py-3 text-[11px] font-mono whitespace-pre-wrap overflow-auto"
-        style={{
-          background: 'var(--d-elevated)',
-          border: '1px solid var(--t-glass-bdr)',
-          color: 'var(--t-tx1)',
-          maxHeight: '60vh',
-          minHeight: 200,
-        }}
+        style={{ background: 'var(--d-elevated)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx1)', maxHeight: '60vh', minHeight: 200 }}
       >
         {text || <span style={{ color: 'var(--t-tx3)' }}>Waiting for response…</span>}
       </div>

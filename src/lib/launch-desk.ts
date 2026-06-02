@@ -1,3 +1,13 @@
+import { RunnerSection } from '@/lib/agent-runner'
+
+export const LAUNCH_SECTIONS: RunnerSection[] = [
+  { title: 'Launch Plan',          color: 'var(--t-blue, #3b82f6)' },
+  { title: 'Risk Register',        color: 'var(--t-gold, #f59e0b)' },
+  { title: 'Owner Checklist',      color: 'var(--t-green, #22c55e)' },
+  { title: 'Launch Copy',          color: 'var(--t-cyan, #00d4ff)' },
+  { title: 'Follow-Up Questions',  color: 'var(--t-tx2, #94a3b8)' },
+]
+
 export interface LaunchBrief {
   productBrief: string
   audience: string
