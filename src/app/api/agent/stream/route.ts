@@ -25,12 +25,13 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
 
-  let agentName: string, message: string, providedChatId: string | undefined
+  let agentName: string, message: string, providedChatId: string | undefined, source: string
   try {
-    const body = await req.json() as { agentName: string; message: string; chatId?: string }
+    const body = await req.json() as { agentName: string; message: string; chatId?: string; source?: string }
     agentName = body.agentName
     message = body.message
     providedChatId = body.chatId
+    source = body.source ?? 'chat'
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
@@ -78,8 +79,8 @@ export async function POST(req: NextRequest) {
   const taskId = crypto.randomUUID()
   await DB.prepare(
     `INSERT INTO agent_tasks (id, user_id, agent_name, task_type, input, status, created_at)
-     VALUES (?, ?, ?, 'chat', ?, 'running', unixepoch())`
-  ).bind(taskId, user.id, agentName, message).run()
+     VALUES (?, ?, ?, ?, ?, 'running', unixepoch())`
+  ).bind(taskId, user.id, agentName, source, message).run()
 
   const messages: AnthropicMessage[] = [...priorMessages, { role: 'user', content: message }]
 
