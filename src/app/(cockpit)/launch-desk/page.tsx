@@ -36,6 +36,7 @@ export default function LaunchDeskPage() {
           agentName="herald"
           prompt={buildLaunchPrompt(brief)}
           workingLabel="HERALD is working…"
+          source="launch-desk"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

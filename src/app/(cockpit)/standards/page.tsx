@@ -39,6 +39,7 @@ export default function StandardsPage() {
           agentName="atlas"
           prompt={buildStandardsPrompt(brief)}
           workingLabel="Researching standards…"
+          source="standards"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

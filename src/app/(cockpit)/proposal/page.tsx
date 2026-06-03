@@ -36,6 +36,7 @@ export default function ProposalPage() {
           agentName="herald"
           prompt={buildProposalPrompt(brief)}
           workingLabel="Drafting proposal…"
+          source="proposal"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

@@ -36,6 +36,7 @@ export default function FmeaPage() {
           agentName="atlas"
           prompt={buildFmeaPrompt(brief)}
           workingLabel="Analyzing failure modes…"
+          source="fmea"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}
