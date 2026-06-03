@@ -5,6 +5,7 @@ import { LaunchBrief, buildLaunchPrompt, LAUNCH_SECTIONS } from '@/lib/launch-de
 import { IntakeForm } from '@/components/launchdesk/IntakeForm'
 import { AgentRunStream } from '@/components/agentrunner/AgentRunStream'
 import { SectionedOutput } from '@/components/agentrunner/SectionedOutput'
+import { RunHistory } from '@/components/agentrunner/RunHistory'
 
 type Phase = 'form' | 'running' | 'done'
 
@@ -25,10 +26,13 @@ export default function LaunchDeskPage() {
       </div>
 
       {phase === 'form' && (
-        <IntakeForm
-          disabled={false}
-          onSubmit={b => { setBrief(b); setPhase('running') }}
-        />
+        <>
+          <IntakeForm
+            disabled={false}
+            onSubmit={b => { setBrief(b); setPhase('running') }}
+          />
+          <RunHistory source="launch-desk" onLoad={(full, meta) => { setResult({ full, meta }); setPhase('done') }} />
+        </>
       )}
 
       {phase === 'running' && brief && (

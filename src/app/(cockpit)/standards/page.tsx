@@ -5,6 +5,7 @@ import { StandardsBrief, buildStandardsPrompt, STANDARDS_SECTIONS } from '@/lib/
 import { StandardsForm } from '@/components/standards/StandardsForm'
 import { AgentRunStream } from '@/components/agentrunner/AgentRunStream'
 import { SectionedOutput } from '@/components/agentrunner/SectionedOutput'
+import { RunHistory } from '@/components/agentrunner/RunHistory'
 
 type Phase = 'form' | 'running' | 'done'
 
@@ -28,10 +29,13 @@ export default function StandardsPage() {
       </div>
 
       {phase === 'form' && (
-        <StandardsForm
-          disabled={false}
-          onSubmit={b => { setBrief(b); setPhase('running') }}
-        />
+        <>
+          <StandardsForm
+            disabled={false}
+            onSubmit={b => { setBrief(b); setPhase('running') }}
+          />
+          <RunHistory source="standards" onLoad={(full, meta) => { setResult({ full, meta }); setPhase('done') }} />
+        </>
       )}
 
       {phase === 'running' && brief && (
