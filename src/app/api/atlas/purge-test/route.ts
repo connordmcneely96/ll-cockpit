@@ -4,7 +4,9 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 // TEMPORARY admin route (Sprint 30C) — purge the three legacy 30A test snippets
 // (test-1/2/3) from atlas-engineering. They predate the metadata schema (doc/section
 // null) and pollute retrieval + can never satisfy the eval's metadata checks.
-// Remove this route once the purge is confirmed. Lesson 12: getCloudflareContext only.
+// Accepts BOTH GET and POST so it can be triggered from a browser address bar
+// (work-computer, no terminal). Remove this route once the purge is confirmed.
+// Lesson 12: getCloudflareContext only.
 
 type VecIndex = {
   deleteByIds: (ids: string[]) => Promise<{ mutationId?: string; count?: number }>;
@@ -16,7 +18,7 @@ type Env = { ATLAS_RAG?: VecIndex };
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
+async function purge(req: NextRequest) {
   const url = new URL(req.url);
   if (url.searchParams.get("secret") !== "engineering-30b") {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
@@ -42,4 +44,12 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return purge(req);
+}
+
+export async function POST(req: NextRequest) {
+  return purge(req);
 }
