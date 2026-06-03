@@ -23,11 +23,30 @@ const DEFAULT_MAX = 1800;
 const HARD_CAP = 2000;
 const DEFAULT_OVERLAP = 250;
 
-// Heading patterns: markdown # / ##, spec section numbers at line start, §-prefixed
-const HEADING_RE = /^(#{1,6}\s+.+|(?:§\s*)?\d[\d.]*\s+\S.*|[A-Z]{1,4}-\d[\d.]*(?:\.\d+)*\b.*|Table\s+[\d.]+\b.*)$/;
+// Heading detection — length-gated (≤80 chars) to exclude prose sentences.
+// Alternatives:
+//   1. Markdown: # / ## / etc — always unambiguous.
+//   2. Multi-part section number: must contain a '.' OR be followed by a Title-Case word.
+//      Prevents bare "6 inches of clearance..." from matching.
+//   3. Spec code (UG-27, MG-1): 1–4 uppercase letters, hyphen, digits. Must be followed by
+//      end-of-line or a capitalized word. Prevents "A106-B has an allowable..." (lowercase
+//      "has", long line) from matching while allowing "UG-27 Thickness of Shells".
+//   4. Table N.N — unambiguous.
+const MAX_HEADING_CHARS = 80;
+
+// Multi-part section number: "6.2.4 Title" or "§6.1" but NOT bare "6 inches…"
+const SPEC_NUM_RE = /^(?:§\s*)?\d[\d.]*\.[\d.]*(?:\s+\S.*)?$|^(?:§\s*)?\d[\d.]*\s+[A-Z]\S*/;
+// Spec code: "UG-27" or "UG-27 Thickness of Shells" but NOT "A106-B has an allowable..."
+const SPEC_CODE_RE = /^[A-Z]{1,4}-\d[\d.]*(?:\.\d+)*(?:\s+[A-Z]\S*.*)?$/;
 
 function isHeading(line: string): boolean {
-  return HEADING_RE.test(line.trim());
+  const t = line.trim();
+  if (t.length > MAX_HEADING_CHARS) return false;
+  if (/^#{1,6}\s+/.test(t)) return true;
+  if (/^Table\s+[\d.]+\b/.test(t)) return true;
+  if (SPEC_NUM_RE.test(t)) return true;
+  if (SPEC_CODE_RE.test(t)) return true;
+  return false;
 }
 
 function headingLabel(line: string): string {

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { chunkDocument } from "@/lib/atlas/chunker";
+import { ingestDocument, IngestEnv } from "@/lib/atlas/ingest-core";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
-// Inline Env cast (Sprint 18B ADR — do NOT rely on generated CloudflareEnv).
+// Inline Env cast (Sprint 18B ADR). Uses shared ingest-core — no logic drift with seed-corpus.
 
 type AiRunner = { run: (model: string, opts: { text: string[] }) => Promise<{ data: number[][] }> };
 type VecIndex = {
@@ -11,9 +11,6 @@ type VecIndex = {
 };
 type R2Bucket = { get: (key: string) => Promise<{ text: () => Promise<string> } | null> };
 type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex; R2?: R2Bucket };
-
-const EMBED_MODEL = "@cf/baai/bge-large-en-v1.5";
-const BATCH_SIZE = 50;
 
 export const dynamic = "force-dynamic";
 
@@ -52,48 +49,20 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const chunks = chunkDocument(sourceText, { doc, page: page ?? null });
-    if (chunks.length === 0) {
+    const ingestEnv: IngestEnv = { AI, ATLAS_RAG };
+    const result = await ingestDocument(ingestEnv, { doc, text: sourceText, page: page ?? null });
+
+    if (result.chunks_ingested === 0) {
       return NextResponse.json({ error: "no_chunks_produced" }, { status: 400 });
     }
 
-    // Embed in batches of BATCH_SIZE
-    const allVectors: number[][] = [];
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-      const batch = chunks.slice(i, i + BATCH_SIZE).map(c => c.text);
-      const embedResp = await AI.run(EMBED_MODEL, { text: batch });
-      if (i === 0 && embedResp.data[0]?.length !== 1024) {
-        return NextResponse.json({ error: "unexpected_dim", got: embedResp.data[0]?.length, expected: 1024 }, { status: 500 });
-      }
-      allVectors.push(...embedResp.data);
-    }
-
-    // Upsert to ATLAS_RAG with structured metadata
-    const upsertResult = await ATLAS_RAG.upsert(
-      chunks.map((c, i) => ({
-        id: `${doc}::${c.chunk_index}`,
-        values: allVectors[i],
-        metadata: {
-          doc: c.doc,
-          section: c.section,
-          page: c.page,
-          chunk_index: c.chunk_index,
-          text: c.text,
-          ...(c.oversized ? { oversized: true } : {}),
-        },
-      }))
-    );
-
-    const sections = [...new Set(chunks.map(c => c.section).filter(Boolean))];
-    const oversizedCount = chunks.filter(c => c.oversized).length;
-
     return NextResponse.json({
-      doc,
-      chunks_ingested: upsertResult.count ?? chunks.length,
-      sections_detected: sections.length,
-      oversized_count: oversizedCount,
-      sample: chunks[0]
-        ? { id: `${doc}::${chunks[0].chunk_index}`, section: chunks[0].section, text: chunks[0].text.slice(0, 200) }
+      doc: result.doc,
+      chunks_ingested: result.chunks_ingested,
+      sections_detected: result.sections_detected,
+      oversized_count: result.oversized_count,
+      sample: result.chunks[0]
+        ? { id: `${doc}::${result.chunks[0].chunk_index}`, section: result.chunks[0].section, text: result.chunks[0].text.slice(0, 200) }
         : null,
     });
   } catch (e) {
