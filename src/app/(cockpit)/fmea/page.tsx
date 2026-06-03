@@ -33,7 +33,7 @@ export default function FmeaPage() {
 
       {phase === 'running' && brief && (
         <AgentRunStream
-          agentName="nexus"
+          agentName="atlas"
           prompt={buildFmeaPrompt(brief)}
           workingLabel="Analyzing failure modes…"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}

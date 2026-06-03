@@ -36,7 +36,7 @@ export default function StandardsPage() {
 
       {phase === 'running' && brief && (
         <AgentRunStream
-          agentName="nexus"
+          agentName="atlas"
           prompt={buildStandardsPrompt(brief)}
           workingLabel="Researching standards…"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
