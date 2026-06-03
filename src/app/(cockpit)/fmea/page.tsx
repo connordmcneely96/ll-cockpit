@@ -20,7 +20,7 @@ export default function FmeaPage() {
           FMEA / 8D Copilot
         </h1>
         <p className="text-[11px] font-mono mt-1" style={{ color: 'var(--t-tx3)' }}>
-          Describe equipment and failure modes → NEXUS generates a structured FMEA with RPN scoring and corrective actions.
+          Describe equipment and failure modes → ATLAS generates a structured FMEA with RPN scoring and corrective actions.
         </p>
       </div>
 
@@ -42,7 +42,7 @@ export default function FmeaPage() {
 
       {phase === 'done' && result && (
         <div className="flex flex-col gap-4">
-          <SectionedOutput full={result.full} sections={FMEA_SECTIONS} meta={result.meta} />
+          <SectionedOutput full={result.full} sections={FMEA_SECTIONS} meta={result.meta} exportTitle="FMEA / 8D Analysis" exportSubtitle={brief?.equipment ?? ''} />
           <button
             onClick={() => { setResult(null); setBrief(null); setPhase('form') }}
             className="self-start px-4 py-2 rounded-lg text-[11px] font-mono uppercase tracking-widest transition-all"

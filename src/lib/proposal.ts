@@ -64,5 +64,7 @@ Pricing structure (fixed-fee, T&M, or hybrid), payment schedule, rate card if ap
 ## Assumptions & Exclusions
 List explicit assumptions made and what is OUT of scope to prevent scope creep. 5+ items each.
 
+Where commercial figures, rates, or timelines involve calculations, you may use LaTeX math notation ($...$) for clarity; otherwise plain professional prose.
+
 Write as a premium engineering consultancy. Be specific, credible, and commercial. No boilerplate filler.`
 }

@@ -59,5 +59,7 @@ Condition monitoring plan: sensors, inspection intervals, vibration/temperature 
 ## Open Questions
 3-5 engineering questions whose answers would materially change the FMEA. Include data gaps and assumptions made.
 
+Express all quantitative relationships and calculations using LaTeX math notation: inline math wrapped in single dollar signs, block equations in double dollar signs. For example, render the RPN formula as $RPN = S \\times O \\times D$ and show computed values like $RPN = 8 \\times 6 \\times 4 = 192$. Use LaTeX for any stress, flow, or dimensional calculations.
+
 Be specific. Reference equipment standards where applicable (API 610, API 682, ISO 13709). No generic filler.`
 }

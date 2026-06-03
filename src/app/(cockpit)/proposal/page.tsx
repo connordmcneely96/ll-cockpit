@@ -42,7 +42,7 @@ export default function ProposalPage() {
 
       {phase === 'done' && result && (
         <div className="flex flex-col gap-4">
-          <SectionedOutput full={result.full} sections={PROPOSAL_SECTIONS} meta={result.meta} />
+          <SectionedOutput full={result.full} sections={PROPOSAL_SECTIONS} meta={result.meta} exportTitle="Engineering Services Proposal" exportSubtitle={brief?.clientName ?? ''} />
           <button
             onClick={() => { setResult(null); setBrief(null); setPhase('form') }}
             className="self-start px-4 py-2 rounded-lg text-[11px] font-mono uppercase tracking-widest transition-all"

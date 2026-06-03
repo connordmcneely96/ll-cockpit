@@ -6,11 +6,14 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { parseSections, RunnerSection } from '@/lib/agent-runner'
+import { ExportButtons } from './ExportButtons'
 
 interface Props {
   full: string
   sections: RunnerSection[]
   meta: { tokensUsed: number; costUsd: number }
+  exportTitle?: string
+  exportSubtitle?: string
 }
 
 const MD = {
@@ -25,7 +28,7 @@ const MD = {
   code: (p: object) => <code style={{ color: 'var(--t-p)' }} {...p} />,
 }
 
-export function SectionedOutput({ full, sections, meta }: Props) {
+export function SectionedOutput({ full, sections, meta, exportTitle, exportSubtitle }: Props) {
   const parsed = parseSections(full, sections.map(s => s.title))
   const colorMap = Object.fromEntries(sections.map(s => [s.title, s.color]))
   const copyAll = () => navigator.clipboard.writeText(full)
@@ -56,6 +59,9 @@ export function SectionedOutput({ full, sections, meta }: Props) {
             </div>
           </div>
         ))
+      )}
+      {exportTitle && parsed.length > 0 && (
+        <ExportButtons docTitle={exportTitle} docSubtitle={exportSubtitle ?? ''} full={full} sections={sections} />
       )}
       <div
         className="flex items-center justify-between px-4 py-2 rounded-lg text-[10px] font-mono"
