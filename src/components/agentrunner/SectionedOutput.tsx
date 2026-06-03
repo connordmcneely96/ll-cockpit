@@ -1,11 +1,28 @@
 'use client'
 
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import rehypeHighlight from 'rehype-highlight'
 import { parseSections, RunnerSection } from '@/lib/agent-runner'
 
 interface Props {
   full: string
   sections: RunnerSection[]
   meta: { tokensUsed: number; costUsd: number }
+}
+
+const MD = {
+  h3: (p: object) => <h3 className="font-semibold mt-3 mb-1" style={{ color: 'var(--t-tx1)' }} {...p} />,
+  p: (p: object) => <p className="mb-2" style={{ color: 'var(--t-tx2)' }} {...p} />,
+  ul: (p: object) => <ul className="list-disc pl-5 mb-2 space-y-0.5" {...p} />,
+  ol: (p: object) => <ol className="list-decimal pl-5 mb-2 space-y-0.5" {...p} />,
+  li: (p: object) => <li style={{ color: 'var(--t-tx2)' }} {...p} />,
+  table: (p: object) => <table className="w-full text-[11px] my-2 border-collapse" {...p} />,
+  th: (p: object) => <th className="border px-2 py-1 text-left" style={{ borderColor: 'var(--t-glass-bdr)', color: 'var(--t-tx1)' }} {...p} />,
+  td: (p: object) => <td className="border px-2 py-1" style={{ borderColor: 'var(--t-glass-bdr)', color: 'var(--t-tx2)' }} {...p} />,
+  code: (p: object) => <code style={{ color: 'var(--t-p)' }} {...p} />,
 }
 
 export function SectionedOutput({ full, sections, meta }: Props) {
@@ -30,7 +47,13 @@ export function SectionedOutput({ full, sections, meta }: Props) {
             <div className="text-[10px] uppercase tracking-widest font-mono mb-2" style={{ color: colorMap[title] ?? 'var(--t-tx3)' }}>
               {title}
             </div>
-            <div className="whitespace-pre-wrap font-mono text-[11px]" style={{ color: 'var(--t-tx1)' }}>{body}</div>
+            <div className="text-[12px] leading-relaxed" style={{ color: 'var(--t-tx1)' }}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex, rehypeHighlight]}
+                components={MD}
+              >{body}</ReactMarkdown>
+            </div>
           </div>
         ))
       )}
