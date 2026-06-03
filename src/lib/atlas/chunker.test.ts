@@ -109,3 +109,72 @@ describe("chunkDocument", () => {
     expect(pages).toContain(2);
   });
 });
+
+// ── 30C additions: hardened HEADING_RE regression + negatives + positives ──
+
+const B31_ACCEPTANCE = `## 301 General
+Process piping systems shall be designed to safely contain the pressures and temperatures to which they will be subjected during all phases of operation.
+
+## 302.3 Allowable Stresses
+The allowable stress values shall be used in the design equations. These values are dependent on material, temperature, and applicable code.
+
+## 304.1.2 Straight Pipe
+The minimum thickness t is determined from the formula:
+t = PD / (2(SE + PY))
+where P is the internal design pressure, D is the outside diameter, S is the allowable stress, E is the quality factor, and Y is a coefficient.`;
+
+describe("chunker — 30C hardened regex", () => {
+  it("REGRESSION: 30B acceptance input still produces exactly 3 sections", () => {
+    const chunks = chunkDocument(B31_ACCEPTANCE, { doc: "b31_reg" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections.length).toBe(3);
+    expect(sections.some(s => s.includes("301"))).toBe(true);
+    expect(sections.some(s => s.includes("302"))).toBe(true);
+    expect(sections.some(s => s.includes("304"))).toBe(true);
+  });
+
+  it("NEGATIVE: 'A36-grade steel is commonly specified for...' does NOT start a new section", () => {
+    const doc = `## Setup\nSome intro text.\nA36-grade steel is commonly specified for structural frames due to its weldability.\nMore content here.`;
+    const chunks = chunkDocument(doc, { doc: "neg_test" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections.length).toBe(1);
+  });
+
+  it("NEGATIVE: '6 inches of clearance is required...' does NOT start a new section", () => {
+    const doc = `## Pump Installation\n6 inches of axial clearance is required between the coupling and the pump casing for maintenance access.`;
+    const chunks = chunkDocument(doc, { doc: "neg_test2" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections.length).toBe(1);
+  });
+
+  it("NEGATIVE: 'A106-B pipe has an allowable stress of 20 ksi' does NOT start a new section", () => {
+    const doc = `## 302.3 Allowable Stresses\nA106-B pipe has an allowable stress of 20 ksi at 100°F per B31.3 Table A-1.`;
+    const chunks = chunkDocument(doc, { doc: "neg_test3" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    // A106-B line is prose inside 302.3, not a new section
+    expect(sections.length).toBe(1);
+    expect(sections[0]).toContain("302");
+  });
+
+  it("POSITIVE: 'UG-27 Thickness of Shells Under Internal Pressure' IS a heading", () => {
+    const doc = `## Intro\nSome text.\nUG-27 Thickness of Shells Under Internal Pressure\nThe required shell thickness is determined by...`;
+    const chunks = chunkDocument(doc, { doc: "pos_test" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections.some(s => s.includes("UG-27"))).toBe(true);
+  });
+
+  it("POSITIVE: '6.2.4 Rotor Dynamics' IS a heading", () => {
+    const doc = `## Chapter 6\nIntroduction.\n6.2.4 Rotor Dynamics\nCritical speed analysis must be performed for all shafts.`;
+    const chunks = chunkDocument(doc, { doc: "pos_test2" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections.some(s => s.includes("6.2.4"))).toBe(true);
+  });
+
+  it("POSITIVE: 'MG-1 Part 12' is handled sensibly (recognized as heading)", () => {
+    const doc = `## Motor Standards\nNEMA standards overview.\nMG-1 Part 12\nFrame dimensions for AC motors...`;
+    const chunks = chunkDocument(doc, { doc: "pos_test3" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    // MG-1 Part 12 — "Part" starts with capital P, so it should be recognized
+    expect(sections.some(s => s.includes("MG-1"))).toBe(true);
+  });
+});
