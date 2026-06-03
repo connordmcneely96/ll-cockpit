@@ -45,7 +45,7 @@ export default function StandardsPage() {
 
       {phase === 'done' && result && (
         <div className="flex flex-col gap-4">
-          <SectionedOutput full={result.full} sections={STANDARDS_SECTIONS} meta={result.meta} />
+          <SectionedOutput full={result.full} sections={STANDARDS_SECTIONS} meta={result.meta} exportTitle="Standards Guidance" exportSubtitle={brief?.discipline ?? ''} />
           <button
             onClick={() => { setResult(null); setBrief(null); setPhase('form') }}
             className="self-start px-4 py-2 rounded-lg text-[11px] font-mono uppercase tracking-widest transition-all"

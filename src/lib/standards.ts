@@ -71,5 +71,7 @@ Where engineers commonly get this wrong; jurisdiction-specific compliance, inspe
 A bulleted list of EVERY specific citation (clause numbers, section references, numeric thresholds, table references) made in the sections above. Format each as:
 - "<citation>" — [confident] or [VERIFY — do not rely on this exact reference without checking the published standard]
 
+Express any formulas, numeric thresholds, or calculations using LaTeX math notation (inline $...$, block $$...$$), e.g. pressure relief sizing or dimensional limits.
+
 Write for a practicing mechanical engineer. Be specific where you are confident; be honest where you are not.`
 }
