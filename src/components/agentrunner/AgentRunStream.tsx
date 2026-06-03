@@ -24,7 +24,7 @@ export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: 
 
   useEffect(() => {
     const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 60_000)
+    const timer = setTimeout(() => ctrl.abort(), 180_000)
     let accumulated = ''
 
     async function run() {
@@ -66,8 +66,24 @@ export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: 
             }
           }
         }
+        // Stream closed without an explicit done event — finalize with what we have
+        if (accumulated.trim().length > 0) {
+          clearTimeout(timer)
+          setDone(true)
+          onComplete(accumulated, { tokensUsed: 0, costUsd: 0 })
+        } else {
+          setError('Stream ended without output — the run may have timed out. Try again.')
+        }
       } catch (e: unknown) {
-        if ((e as { name?: string }).name !== 'AbortError') {
+        const name = (e as { name?: string }).name
+        if (name === 'AbortError') {
+          if (accumulated.trim().length > 0) {
+            setDone(true)
+            onComplete(accumulated, { tokensUsed: 0, costUsd: 0 })
+          } else {
+            setError('Run timed out after 3 minutes with no output. Try a more focused brief.')
+          }
+        } else {
           setError(e instanceof Error ? e.message : String(e))
         }
       }
