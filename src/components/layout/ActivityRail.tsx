@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Code2, Globe, TerminalSquare,
-  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History, Wallet, Library, Database, Rocket, Box, GraduationCap, ShieldAlert, FileText, BookMarked, ClipboardCheck,
+  HardDrive, BarChart2, Bot, Cpu, Brain, Settings, Palette, History, Wallet, Library, Database, Rocket, Box, GraduationCap, ShieldAlert, FileText, BookMarked, ClipboardCheck, Wrench,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { icon: FileText,        label: 'Proposal',       href: '/proposal' },
   { icon: BookMarked,      label: 'Standards',      href: '/standards' },
   { icon: ClipboardCheck,  label: 'RFQ Deep-Dive', href: '/rfq' },
+  { icon: Wrench,          label: 'Maintenance',   href: '/maintenance' },
   { icon: Bot,             label: 'AI Providers',  href: '/ai-providers' },
   { icon: Cpu,             label: 'Orchestrator',  href: '/orchestrator' },
   { icon: Palette,         label: 'Design Build',  href: '/api/design/launch' },
