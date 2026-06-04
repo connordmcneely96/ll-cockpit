@@ -1,4 +1,4 @@
-import { RunnerSection } from '@/lib/agent-runner'
+import { RunnerSection, ENGINEERING_RIGOR } from '@/lib/agent-runner'
 
 export interface FmeaBrief {
   equipment: string
@@ -42,7 +42,7 @@ ${brief.criticality}
 FAILURE HISTORY & SYMPTOMS:
 ${brief.history}
 
-Produce your analysis in EXACTLY these five sections, each with a markdown H2 header using this exact text:
+Produce your analysis in EXACTLY these five sections, each with a markdown H2 header using this exact text. You MUST include all five sections below with their exact headers, even if a section is brief. Do not merge or omit sections.
 
 ## Failure Modes & Effects
 For each failure mode: mechanism, effect on system, severity (1-10), occurrence likelihood (1-10), detectability (1-10), RPN = S×O×D. Present as structured list.
@@ -60,6 +60,8 @@ Condition monitoring plan: sensors, inspection intervals, vibration/temperature 
 3-5 engineering questions whose answers would materially change the FMEA. Include data gaps and assumptions made.
 
 Express all quantitative relationships and calculations using LaTeX math notation: inline math wrapped in single dollar signs, block equations in double dollar signs. For example, render the RPN formula as $RPN = S \\times O \\times D$ and show computed values like $RPN = 8 \\times 6 \\times 4 = 192$. Use LaTeX for any stress, flow, or dimensional calculations.
+
+${ENGINEERING_RIGOR}
 
 Be specific. Reference equipment standards where applicable (API 610, API 682, ISO 13709). No generic filler.`
 }

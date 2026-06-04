@@ -1,4 +1,4 @@
-import { RunnerSection } from '@/lib/agent-runner'
+import { RunnerSection, ENGINEERING_RIGOR } from '@/lib/agent-runner'
 
 export interface MaintenanceBrief {
   asset: string
@@ -65,6 +65,8 @@ For each parameter (vibration, oil analysis, thermography, performance trending,
 
 ## Spares & Recommendations
 Critical spares to hold (with justification tied to criticality + lead time from the brief), and a prioritized list of reliability-improvement recommendations (installed spare, upgraded seal flush plan, vibration baseline, etc.) — sequenced by impact-per-effort.
+
+${ENGINEERING_RIGOR}
 
 Write for a maintenance / reliability manager. Direct, technically grounded, no filler.`
 }
