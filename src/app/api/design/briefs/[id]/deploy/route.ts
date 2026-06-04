@@ -1,18 +1,18 @@
 /**
- * POST /api/design/briefs/[id]/deploy — deploy the brief's latest iteration to Cloudflare Pages.
+ * POST /api/design/briefs/[id]/deploy — publish the brief's latest iteration to R2 (nexus-sites).
  * GET  /api/design/briefs/[id]/deploy — return the current live deployment for the brief.
  *
  * Auth: Bearer token (design Worker cross-calls) OR Supabase cookie (Cockpit UI).
  * Ownership: 404 (not 403) on miss to avoid leaking brief existence.
  *
- * Sprint 121F — Hub half of the one-click Pages deploy feature.
- * The design Worker button that calls this route is a separate follow-up prompt.
+ * Sprint 121F-R2 — publishes published/{slug}/index.html to R2; the nexus-sites Worker serves it
+ * at https://nexus-sites.connorpattern.workers.dev/{slug}/. No Cloudflare token required.
  */
 
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
-import { deployBriefToPages } from '@/lib/design/deploy'
+import { publishBriefToR2 } from '@/lib/design/deploy'
 import type { User } from '@supabase/supabase-js'
 
 async function getUserFromRequest(req: NextRequest): Promise<User | null> {
@@ -42,9 +42,9 @@ export async function POST(
 
   // 404 (not 403) on ownership miss to avoid leaking brief existence
   const brief = await env.DB
-    .prepare(`SELECT id FROM design_briefs WHERE id = ? AND user_id = ?`)
+    .prepare(`SELECT id, client_name FROM design_briefs WHERE id = ? AND user_id = ?`)
     .bind(id, user.id)
-    .first<{ id: string }>()
+    .first<{ id: string; client_name: string }>()
   if (!brief) {
     return new Response(JSON.stringify({ error: 'Brief not found' }), { status: 404 })
   }
@@ -64,22 +64,14 @@ export async function POST(
     )
   }
 
-  const result = await deployBriefToPages(env, {
+  const result = await publishBriefToR2(env, {
     briefId: id,
     html: iteration.page_html,
     iterationNumber: iteration.iteration_number ?? null,
+    clientName: brief.client_name,
   })
 
   if (!result.ok) {
-    if (result.code === 'MISSING_SECRETS') {
-      return new Response(
-        JSON.stringify({
-          error: result.error,
-          setup: 'Run: wrangler secret put CLOUDFLARE_API_TOKEN && wrangler secret put CLOUDFLARE_ACCOUNT_ID',
-        }),
-        { status: 503 },
-      )
-    }
     return new Response(JSON.stringify({ error: result.error }), { status: 502 })
   }
 
@@ -96,15 +88,15 @@ export async function POST(
 
   await env.DB
     .prepare(
-      `INSERT INTO design_deployments (id, brief_id, iteration_number, live_url, cf_deployment_id, status, deployed_by, created_at)
-       VALUES (?, ?, ?, ?, ?, 'live', ?, ?)`,
+      `INSERT INTO design_deployments (id, brief_id, iteration_number, live_url, slug, cf_deployment_id, status, deployed_by, created_at)
+       VALUES (?, ?, ?, ?, ?, NULL, 'live', ?, ?)`,
     )
     .bind(
       deploymentId,
       id,
       iteration.iteration_number ?? null,
       result.liveUrl,
-      result.cfDeploymentId ?? null,
+      result.slug,
       user.id,
       now,
     )
@@ -114,6 +106,7 @@ export async function POST(
     JSON.stringify({
       ok: true,
       live_url: result.liveUrl,
+      slug: result.slug,
       deployment_id: deploymentId,
       iteration_number: iteration.iteration_number ?? null,
     }),
@@ -144,10 +137,10 @@ export async function GET(
 
   const deployment = await env.DB
     .prepare(
-      `SELECT live_url, status, created_at, iteration_number FROM design_deployments WHERE brief_id = ? AND status = 'live' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT live_url, slug, status, created_at, iteration_number FROM design_deployments WHERE brief_id = ? AND status = 'live' ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(id)
-    .first<{ live_url: string; status: string; created_at: number; iteration_number: number | null }>()
+    .first<{ live_url: string; slug: string | null; status: string; created_at: number; iteration_number: number | null }>()
 
   if (!deployment) {
     return new Response(
@@ -160,6 +153,7 @@ export async function GET(
     JSON.stringify({
       deployed: true,
       live_url: deployment.live_url,
+      slug: deployment.slug,
       status: deployment.status,
       created_at: deployment.created_at,
       iteration_number: deployment.iteration_number,
