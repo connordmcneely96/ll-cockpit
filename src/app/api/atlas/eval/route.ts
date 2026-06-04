@@ -118,6 +118,12 @@ const EVAL_SET = [
 
 const EMBED_MODEL = "@cf/baai/bge-large-en-v1.5";
 
+// A/B mode is subrequest-heavy: each question ≈ 1 baseline query + 1 Llama + up to 5 variant
+// queries ≈ 7 subrequests. The free plan caps a single invocation at 50 external subrequests,
+// so the full 18-question A/B (~126) 500s with "Too many subrequests". Window the A/B loop:
+// default 5 questions/call (~35 subrequests, safely under 50). Paginate with ?from=&to=.
+const AB_WINDOW = 5;
+
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
@@ -150,7 +156,7 @@ export async function GET(req: NextRequest) {
 
   try {
     if (mode === "baseline") {
-      // Legacy single-query mode — reproduces 30C behaviour
+      // Legacy single-query mode — reproduces 30C behaviour (single query/question = light)
       const results: { q: string; hit: boolean; top3: { doc: string | null; section: string | null; score: number }[] }[] = [];
       for (const item of EVAL_SET) {
         const embedResp = await AI.run(EMBED_MODEL, { text: [item.q] });
@@ -166,15 +172,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ mode: "baseline", passed, total: results.length, pass_rate: parseFloat((passed / results.length).toFixed(2)), results });
     }
 
-    // A/B mode (default) — runs both baseline and rewriter on every question
+    // A/B mode (default) — WINDOWED to stay under the subrequest cap.
+    // ?from=&to= select a slice of EVAL_SET; default = first AB_WINDOW questions.
+    const total = EVAL_SET.length;
+    const from = Math.max(0, parseInt(url.searchParams.get("from") ?? "0", 10) || 0);
+    const to = Math.min(total, parseInt(url.searchParams.get("to") ?? String(from + AB_WINDOW), 10) || from + AB_WINDOW);
+    const windowItems = EVAL_SET.slice(from, to);
+
     const results: {
+      idx: number;
       q: string;
       baseline_hit: boolean;
       rewriter_hit: boolean;
       rewriter_top3: { doc: string | null; section: string | null; score: number }[];
     }[] = [];
 
-    for (const item of EVAL_SET) {
+    for (let i = 0; i < windowItems.length; i++) {
+      const item = windowItems[i];
       // Baseline: single query
       const baseMatches = await retrieve(retrieveEnv, item.q, { topK: 3, useRewriter: false });
       const baseline_hit = hit(baseMatches, item.expect_doc_contains, item.expect_section_contains);
@@ -184,6 +198,7 @@ export async function GET(req: NextRequest) {
       const rewriter_hit = hit(rewriterMatches, item.expect_doc_contains, item.expect_section_contains);
 
       results.push({
+        idx: from + i,
         q: item.q,
         baseline_hit,
         rewriter_hit,
@@ -193,14 +208,16 @@ export async function GET(req: NextRequest) {
 
     const baseline_passed = results.filter(r => r.baseline_hit).length;
     const rewriter_passed = results.filter(r => r.rewriter_hit).length;
-    const total = results.length;
+    const window_size = results.length;
+    const next_from = to < total ? to : null;
 
     return NextResponse.json({
       mode: "ab",
-      baseline_pass_rate: parseFloat((baseline_passed / total).toFixed(2)),
-      rewriter_pass_rate: parseFloat((rewriter_passed / total).toFixed(2)),
-      delta: parseFloat(((rewriter_passed - baseline_passed) / total).toFixed(2)),
-      total,
+      window: { from, to, window_size, total },
+      next_from, // call again with ?from=next_from to continue; null = done
+      window_baseline_passed: baseline_passed,
+      window_rewriter_passed: rewriter_passed,
+      window_delta: rewriter_passed - baseline_passed,
       results,
     });
   } catch (e) {
