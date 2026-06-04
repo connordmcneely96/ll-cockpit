@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
 
   const anthropicBody: Record<string, unknown> = {
     model: 'claude-sonnet-4-5',
-    max_tokens: 8096,
+    max_tokens: 16000,
     stream: true,
     system: agent.systemPrompt,
     messages,
@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const send = (event: SSEEvent) => controller.enqueue(sseChunk(event))
       let fullResponse = ''
+      let stopReason = ''
       let totalInputTokens = 0
       let totalOutputTokens = 0
       let currentToolId = ''
@@ -181,8 +182,15 @@ export async function POST(req: NextRequest) {
             } else if (evt.type === 'message_delta') {
               const e = evt as AnthropicMessageDelta
               if (e.usage?.output_tokens) totalOutputTokens = e.usage.output_tokens
+              if (e.delta?.stop_reason) stopReason = e.delta.stop_reason
             }
           }
+        }
+
+        if (stopReason === 'max_tokens') {
+          const notice = '\n\n---\n\n_⚠️ Output reached the length limit and may be truncated. Re-run with a more focused brief for complete results._'
+          fullResponse += notice
+          send({ type: 'text', content: notice })
         }
 
         const totalTokens = totalInputTokens + totalOutputTokens
