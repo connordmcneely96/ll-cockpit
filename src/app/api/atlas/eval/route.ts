@@ -14,7 +14,9 @@ type VecIndex = {
     matches: { id: string; score: number; metadata?: Record<string, unknown> }[];
   }>;
 };
-type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex };
+type D1Stmt = { bind: (...v: unknown[]) => D1Stmt; run: () => Promise<unknown> };
+type D1 = { prepare: (sql: string) => D1Stmt };
+type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex; DB?: D1 };
 
 // ── Eval question set ──
 // ORIGINAL 10 from 30C (regression baseline) + 8 NEW honest questions.
@@ -135,7 +137,7 @@ export async function GET(req: NextRequest) {
   const mode = url.searchParams.get("mode") ?? "ab";
 
   const { env } = await getCloudflareContext({ async: true });
-  const { AI, ATLAS_RAG } = env as unknown as Env;
+  const { AI, ATLAS_RAG, DB } = env as unknown as Env;
   if (!AI || !ATLAS_RAG) {
     return NextResponse.json({ error: "bindings_missing", ai: !!AI, atlas_rag: !!ATLAS_RAG }, { status: 500 });
   }
@@ -172,7 +174,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ mode: "baseline", passed, total: results.length, pass_rate: parseFloat((passed / results.length).toFixed(2)), results });
     }
 
-    // A/B mode (default) — WINDOWED to stay under the subrequest cap.
+    // A/B mode — WINDOWED to stay under the subrequest cap.
     // ?from=&to= select a slice of EVAL_SET; default = first AB_WINDOW questions.
     const total = EVAL_SET.length;
     const from = Math.max(0, parseInt(url.searchParams.get("from") ?? "0", 10) || 0);
@@ -189,11 +191,9 @@ export async function GET(req: NextRequest) {
 
     for (let i = 0; i < windowItems.length; i++) {
       const item = windowItems[i];
-      // Baseline: single query
       const baseMatches = await retrieve(retrieveEnv, item.q, { topK: 3, useRewriter: false });
       const baseline_hit = hit(baseMatches, item.expect_doc_contains, item.expect_section_contains);
 
-      // Rewriter: expand + RRF
       const rewriterMatches = await retrieve(retrieveEnv, item.q, { topK: 3, useRewriter: true });
       const rewriter_hit = hit(rewriterMatches, item.expect_doc_contains, item.expect_section_contains);
 
@@ -208,13 +208,51 @@ export async function GET(req: NextRequest) {
 
     const baseline_passed = results.filter(r => r.baseline_hit).length;
     const rewriter_passed = results.filter(r => r.rewriter_hit).length;
-    const window_size = results.length;
     const next_from = to < total ? to : null;
+
+    // mode=ab-store: persist this window's per-question results to D1 so the SE can read
+    // the aggregate via the Cloudflare MCP — no terminal, no JSON transcription. Browser-
+    // triggerable (GET). run_label groups a full pass; default "latest".
+    if (mode === "ab-store") {
+      if (!DB) {
+        return NextResponse.json({ error: "bindings_missing", db: false }, { status: 500 });
+      }
+      const runLabel = url.searchParams.get("run_label") ?? "latest";
+      // Clear any prior rows for this window+label so re-runs are idempotent.
+      await DB.prepare("DELETE FROM atlas_eval_runs WHERE run_label = ? AND q_idx >= ? AND q_idx < ?")
+        .bind(runLabel, from, to)
+        .run();
+      for (const r of results) {
+        await DB.prepare(
+          "INSERT INTO atlas_eval_runs (id, run_label, q_idx, question, baseline_hit, rewriter_hit, rewriter_top3_json) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+          .bind(
+            `${runLabel}:${r.idx}`,
+            runLabel,
+            r.idx,
+            r.q,
+            r.baseline_hit ? 1 : 0,
+            r.rewriter_hit ? 1 : 0,
+            JSON.stringify(r.rewriter_top3)
+          )
+          .run();
+      }
+      return NextResponse.json({
+        mode: "ab-store",
+        run_label: runLabel,
+        window: { from, to, total },
+        stored: results.length,
+        window_baseline_passed: baseline_passed,
+        window_rewriter_passed: rewriter_passed,
+        next_from, // paste again with ?from=next_from until null
+        done: next_from === null,
+      });
+    }
 
     return NextResponse.json({
       mode: "ab",
-      window: { from, to, window_size, total },
-      next_from, // call again with ?from=next_from to continue; null = done
+      window: { from, to, window_size: results.length, total },
+      next_from,
       window_baseline_passed: baseline_passed,
       window_rewriter_passed: rewriter_passed,
       window_delta: rewriter_passed - baseline_passed,
