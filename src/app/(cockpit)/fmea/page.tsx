@@ -5,6 +5,7 @@ import { FmeaBrief, buildFmeaPrompt, FMEA_SECTIONS } from '@/lib/fmea'
 import { FmeaForm } from '@/components/fmea/FmeaForm'
 import { AgentRunStream } from '@/components/agentrunner/AgentRunStream'
 import { SectionedOutput } from '@/components/agentrunner/SectionedOutput'
+import { RunHistory } from '@/components/agentrunner/RunHistory'
 
 type Phase = 'form' | 'running' | 'done'
 
@@ -25,10 +26,13 @@ export default function FmeaPage() {
       </div>
 
       {phase === 'form' && (
-        <FmeaForm
-          disabled={false}
-          onSubmit={b => { setBrief(b); setPhase('running') }}
-        />
+        <>
+          <FmeaForm
+            disabled={false}
+            onSubmit={b => { setBrief(b); setPhase('running') }}
+          />
+          <RunHistory source="fmea" onLoad={(full, meta) => { setResult({ full, meta }); setPhase('done') }} />
+        </>
       )}
 
       {phase === 'running' && brief && (
@@ -36,6 +40,7 @@ export default function FmeaPage() {
           agentName="atlas"
           prompt={buildFmeaPrompt(brief)}
           workingLabel="Analyzing failure modes…"
+          source="fmea"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

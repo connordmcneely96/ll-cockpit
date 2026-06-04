@@ -5,6 +5,7 @@ import { ProposalBrief, buildProposalPrompt, PROPOSAL_SECTIONS } from '@/lib/pro
 import { ProposalForm } from '@/components/proposal/ProposalForm'
 import { AgentRunStream } from '@/components/agentrunner/AgentRunStream'
 import { SectionedOutput } from '@/components/agentrunner/SectionedOutput'
+import { RunHistory } from '@/components/agentrunner/RunHistory'
 
 type Phase = 'form' | 'running' | 'done'
 
@@ -25,10 +26,13 @@ export default function ProposalPage() {
       </div>
 
       {phase === 'form' && (
-        <ProposalForm
-          disabled={false}
-          onSubmit={b => { setBrief(b); setPhase('running') }}
-        />
+        <>
+          <ProposalForm
+            disabled={false}
+            onSubmit={b => { setBrief(b); setPhase('running') }}
+          />
+          <RunHistory source="proposal" onLoad={(full, meta) => { setResult({ full, meta }); setPhase('done') }} />
+        </>
       )}
 
       {phase === 'running' && brief && (
@@ -36,6 +40,7 @@ export default function ProposalPage() {
           agentName="herald"
           prompt={buildProposalPrompt(brief)}
           workingLabel="Drafting proposal…"
+          source="proposal"
           onComplete={(full, meta) => { setResult({ full, meta }); setPhase('done') }}
         />
       )}

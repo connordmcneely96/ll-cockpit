@@ -6,6 +6,7 @@ interface Props {
   agentName: string
   prompt: string
   workingLabel: string
+  source: string
   onComplete: (full: string, meta: { tokensUsed: number; costUsd: number }) => void
 }
 
@@ -15,7 +16,7 @@ type SSEEvent =
   | { type: 'done'; tokensUsed: number; costUsd: number; taskId?: string; chatId?: string }
   | { type: 'error'; message: string }
 
-export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: Props) {
+export function AgentRunStream({ agentName, prompt, workingLabel, source, onComplete }: Props) {
   const [text, setText] = useState('')
   const [eventCount, setEventCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -32,7 +33,7 @@ export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: 
         const res = await fetch('/api/agent/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentName, message: prompt }),
+          body: JSON.stringify({ agentName, message: prompt, source }),
           signal: ctrl.signal,
         })
         if (!res.ok || !res.body) { setError(`HTTP ${res.status}`); return }
@@ -91,7 +92,7 @@ export function AgentRunStream({ agentName, prompt, workingLabel, onComplete }: 
 
     run()
     return () => { ctrl.abort(); clearTimeout(timer) }
-  }, [agentName, prompt, onComplete])
+  }, [agentName, prompt, source, onComplete])
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
