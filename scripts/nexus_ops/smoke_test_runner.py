@@ -3,30 +3,22 @@
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — optimized for PaaS model routing.
 
-v5.3 — Convergence + model pool update:
-- CONVERGENCE THRESHOLD: 60% → 50% with 8-trial minimum.
-  At 50%, the leader holds MORE alpha than all competitors combined.
-  That is dominant, statistically meaningful signal for production routing.
-  60% was academic benchmark territory — overkill for a PaaS router.
-  Effect: wins needed drop 35-60% across all slots.
-- MINIMUM TRIALS: 5 → 8 for convergence declaration.
-  Lower threshold needs higher trial confidence to compensate.
-- MODEL POOL: 18 active models (+Grok 4.1 Fast, +Opus 4.8,
-  reactivated Gemini 2.5 Flash and Gemini 2.5 Pro with updated notes).
-  Gemini 2.5 Pro latency risk mitigated by slot cap (max 2 new-entrant
-  slots per run means limited exposure per GHA job).
+v5.3.1 — Strict pool enforcement:
+- POST-SLOT PRUNE is now unconditional. No trial-count protection.
+  Previous protection (keep models with <5 trials) caused pool to compound
+  to 9-10 per slot across successive runs — each run added 2-3 new entrants
+  that survived the prune, stacking rather than replacing.
+  New behavior: after every slot, all models pruned to top-5 by alpha.
+  A new entrant gets 1 trial, then either cracks top-5 or is cut.
+  Pool stays at max 5+2=7 during a slot test, then snaps back to 5.
+- MIN_TRIALS_BEFORE_PRUNE removed — no longer used.
 
-v5.2 features retained:
-- Minimum 3 test cases per slot (47 total)
-- Prune protection for models with <5 trials
-- Post-slot prune to MAX_SLOT_SIZE=5
-- Slot cap: 5 veterans + 2 new entrants = 7 tested per run
-
-Remaining known limitations:
-- Sonnet scorer ~7% avg quality bias toward Anthropic models.
-  Cost-weight in v4 reward partially compensates.
-- Trial disparity (veterans 20-80 trials vs new entrants 1-5).
-  Closes naturally as new entrants accumulate trials.
+v5.3 features retained:
+- Convergence threshold: 50% alpha + 8 trials minimum
+- v4 three-dimensional reward: quality + cost + latency, task-tier aware
+- Slot cap: 5 veterans + 2 new entrants tested per slot per run
+- 47 test cases, minimum 3 per slot
+- Response-body error handling (HTTP 200 + {"error":{}} body)
 """
 
 from __future__ import annotations
@@ -53,12 +45,11 @@ QUALITY_FLOOR = 0.75
 MAX_COST_CEILING = 12.0
 MAX_LAT_CEILING = 300.0
 
-MAX_SLOT_VETERANS        = 5   # top veterans tested per slot per run
-MAX_NEW_ENTRANTS         = 2   # new models allowed per slot per run
-MAX_SLOT_SIZE            = 5   # hard pool size after post-slot prune
-MIN_TRIALS_BEFORE_PRUNE  = 5   # protect models with fewer trials from elimination
-CONVERGENCE_THRESHOLD    = 50  # % alpha share required to declare convergence (was 60)
-CONVERGENCE_MIN_TRIALS   = 8   # minimum trials leader must have to be declared converged
+MAX_SLOT_VETERANS     = 5   # top veterans tested per slot per run
+MAX_NEW_ENTRANTS      = 2   # new models allowed per slot per run
+MAX_SLOT_SIZE         = 5   # hard pool size — enforced after every slot, no exceptions
+CONVERGENCE_THRESHOLD = 50  # % alpha share required to declare convergence
+CONVERGENCE_MIN_TRIALS = 8  # minimum trials leader must have to be declared converged
 
 TASK_TIERS = {
     "intent_classify":      1,
@@ -566,7 +557,7 @@ def compute_bandit_reward(
     qw, cw, lw = TIER_WEIGHTS[tier]
     cost_avg = (cost_input + cost_output * 2) / 3.0
     cost_eff = 1.0 - min(cost_avg / MAX_COST_CEILING, 1.0)
-    lat_eff = (1.0 - min(lat_s / MAX_LAT_CEILING, 1.0)) if lw > 0 else 0.0
+    lat_eff  = (1.0 - min(lat_s / MAX_LAT_CEILING, 1.0)) if lw > 0 else 0.0
     return round(qw * composite_score + cw * cost_eff + lw * lat_eff, 4)
 
 
@@ -612,8 +603,8 @@ def get_slot_competitors(
     new_entrants = [m for m in all_models if m["model_id"] not in param_set]
     id_to_rank   = {mid: i for i, mid in enumerate(ranked_ids)}
     veterans.sort(key=lambda m: id_to_rank.get(m["model_id"], 9999))
-    n_new  = min(MAX_NEW_ENTRANTS, len(new_entrants))
     n_vets = min(MAX_SLOT_VETERANS, len(veterans))
+    n_new  = min(MAX_NEW_ENTRANTS,  len(new_entrants))
     selected = veterans[:n_vets] + new_entrants[:n_new]
     skipped  = len(all_models) - len(selected)
     if skipped > 0:
@@ -624,20 +615,27 @@ def get_slot_competitors(
 
 def prune_slot(d1: D1Client, agent: str, task_type: str) -> None:
     """
-    Prune bandit_params for this slot to MAX_SLOT_SIZE after every slot completes.
-    Models with fewer than MIN_TRIALS_BEFORE_PRUNE trials are protected from elimination.
+    Hard-cap this slot at MAX_SLOT_SIZE after every slot completes.
+    NO trial-count protection — every model is eligible for pruning.
+    Only the top MAX_SLOT_SIZE by alpha survive.
+
+    Why no protection:
+    Trial-count protection caused pools to compound to 9-10 per slot.
+    Each run added 2 new entrants (protected) → they never got pruned
+    → pool grew monotonically. Strict pruning means a new model enters,
+    gets 1 trial, and either outscores an incumbent or is immediately cut.
+    Superior new models enter the pool; mediocre ones don't persist.
     """
     d1.execute(
         """DELETE FROM model_bandit_params
            WHERE agent=? AND task_type=?
-           AND n_trials >= ?
            AND model_id NOT IN (
              SELECT model_id FROM model_bandit_params
              WHERE agent=? AND task_type=?
              ORDER BY alpha DESC, avg_quality DESC
              LIMIT ?
            )""",
-        [agent, task_type, MIN_TRIALS_BEFORE_PRUNE, agent, task_type, MAX_SLOT_SIZE],
+        [agent, task_type, agent, task_type, MAX_SLOT_SIZE],
     )
 
 
@@ -652,12 +650,10 @@ def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str)
     )
     if not rows:
         return None
-    winner = rows[0]
+    winner    = rows[0]
     runner_up = rows[1] if len(rows) > 1 else None
     total_alpha = sum(float(r["alpha"]) for r in rows)
-    conv_pct = round((float(winner["alpha"]) / total_alpha) * 100, 1) if total_alpha > 0 else 0.0
-    # v5.3: lowered threshold to 50% (from 60%), raised min trials to 8 (from 5)
-    # At 50%, leader holds more alpha than ALL competitors combined — dominant signal
+    conv_pct    = round((float(winner["alpha"]) / total_alpha) * 100, 1) if total_alpha > 0 else 0.0
     status = "converged" if conv_pct >= CONVERGENCE_THRESHOLD and winner["n_trials"] >= CONVERGENCE_MIN_TRIALS else "provisional"
     now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
     d1.execute(
@@ -683,7 +679,7 @@ def refresh_routing_table(d1: D1Client, agent: str, task_type: str, run_id: str)
 
 
 def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=None) -> Dict:
-    cfg = Config()
+    cfg    = Config()
     run_id = str(uuid.uuid4())
     now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
     summary = {
@@ -692,7 +688,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         "scorer": SCORER_MODEL,
         "reward_fn": "v4: quality+cost+latency, task-tier aware",
         "convergence": f"{CONVERGENCE_THRESHOLD}% alpha + {CONVERGENCE_MIN_TRIALS} trials",
-        "slot_config": f"test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep top {MAX_SLOT_SIZE}, protect <{MIN_TRIALS_BEFORE_PRUNE} trials",
+        "slot_config": f"test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep top {MAX_SLOT_SIZE} (strict, no trial protection)",
         "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
         "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
         "errors": [], "scoring_skipped": 0,
@@ -712,7 +708,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         )
         log.info(f"Loaded {len(models)} active models | Scorer: {SCORER_MODEL} | "
                  f"Converge at {CONVERGENCE_THRESHOLD}%+{CONVERGENCE_MIN_TRIALS}T | "
-                 f"Slot: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE}")
+                 f"Slot: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE} (strict)")
 
         total_cases = sum(
             len(cases)
@@ -733,7 +729,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
             for task_type, cases in task_map.items():
                 if task_type_filter and task_type != task_type_filter:
                     continue
-                tier = TASK_TIERS.get(task_type, 2)
+                tier        = TASK_TIERS.get(task_type, 2)
                 slot_models = get_slot_competitors(d1, agent, task_type, models) if not cfg.dry_run else models
                 log.info(f"\n{'='*60}\nAGENT: {agent} | TASK: {task_type} (Tier {tier}) | "
                          f"{len(cases)} cases x {len(slot_models)} models\n{'='*60}")
@@ -823,10 +819,10 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                     if model_rewards and not cfg.dry_run:
                         avg_reward  = sum(model_rewards) / len(model_rewards)
                         valid_lat   = [r.get("latency_ms", 0) for r in model_results_batch if r.get("latency_ms")]
-                        valid_cost  = [r.get("cost_usd", 0)   for r in model_results_batch if r.get("cost_usd")]
+                        valid_cost  = [r.get("cost_usd",   0) for r in model_results_batch if r.get("cost_usd")]
                         avg_quality = sum(r.get("composite_score", 0) for r in model_results_batch) / len(model_results_batch)
-                        n_wins      = sum(1 for r in model_results_batch if r.get("bandit_reward", 0) > 0)
-                        n_losses    = len(model_rewards) - n_wins
+                        n_wins   = sum(1 for r in model_results_batch if r.get("bandit_reward", 0) > 0)
+                        n_losses = len(model_rewards) - n_wins
                         d1.execute(
                             """INSERT INTO model_bandit_params
                                (id, agent, task_type, model_id, alpha, beta, n_trials, n_successes, n_failures,
@@ -853,6 +849,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         )
 
                 if not cfg.dry_run:
+                    # Strict post-slot prune — no trial-count protection
                     prune_slot(d1, agent, task_type)
                     winner = refresh_routing_table(d1, agent, task_type, run_id)
                     if winner:
@@ -898,7 +895,7 @@ if __name__ == "__main__":
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
     print(f"  Scorer:      {SCORER_MODEL}")
     print(f"  Convergence: {CONVERGENCE_THRESHOLD}% alpha share + {CONVERGENCE_MIN_TRIALS} trials minimum")
-    print(f"  Slot config: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE}, protect <{MIN_TRIALS_BEFORE_PRUNE}")
+    print(f"  Slot config: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE} (strict, no trial protection)")
     print(f"  Test cases:  {total_cases} total across {len(TEST_CASES)} agents (min {min_cases}/slot)")
     print(f"  Results:     {result['total_results']}")
     print(f"  Cost:        ${result['total_cost_usd']:.4f}")
