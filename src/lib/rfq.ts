@@ -1,4 +1,4 @@
-import { RunnerSection } from '@/lib/agent-runner'
+import { RunnerSection, ENGINEERING_RIGOR } from '@/lib/agent-runner'
 
 export interface RfqBrief {
   rfqText: string
@@ -78,6 +78,8 @@ A clear GO / NO-GO / GO-WITH-CONDITIONS recommendation, with reasoning tied to O
 - If GO: the win themes (why we're the right firm) and the must-resolve items before submission.
 - If GO-WITH-CONDITIONS: list the conditions that must be true (or made true via clarifying questions) for the bid to make sense.
 - If NO-GO: the specific reasons — capability gaps, unacceptable risk transfer, deal-breaker terms.
+
+${ENGINEERING_RIGOR}
 
 Write for the consultancy principal making the bid decision. Direct, specific, no hedging.`
 }
