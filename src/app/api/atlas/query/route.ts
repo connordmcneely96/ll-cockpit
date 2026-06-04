@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { z } from "zod";
 import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). route() receives the raw env (CloudflareEnv).
+// NOTE: hand-validate the body — the hub does not depend on `zod` (artifact-stack-
+// vs-deployed-deps trap: zod typechecks in the editor but isn't in package.json,
+// so webpack can't resolve it at build). Plain validation = zero new dependency.
 
 // ── Inline Env types ──
 type AiRunner = {
@@ -28,11 +30,46 @@ type Env = {
 
 export const dynamic = "force-dynamic";
 
-const BodySchema = z.object({
-  question: z.string().min(1),
-  project_context: z.string().optional(),
-  max_sources: z.number().int().min(1).max(10).default(5),
-});
+interface QueryBody {
+  question: string;
+  project_context?: string;
+  max_sources: number;
+}
+
+// Hand validation (replaces zod). Returns the parsed body or an error string.
+function parseBody(raw: unknown): { ok: true; body: QueryBody } | { ok: false; error: string } {
+  if (typeof raw !== "object" || raw === null) {
+    return { ok: false, error: "body must be a JSON object" };
+  }
+  const r = raw as Record<string, unknown>;
+
+  if (typeof r.question !== "string" || r.question.trim().length < 1) {
+    return { ok: false, error: "question is required and must be a non-empty string" };
+  }
+  if (r.project_context !== undefined && typeof r.project_context !== "string") {
+    return { ok: false, error: "project_context must be a string" };
+  }
+
+  let max_sources = 5;
+  if (r.max_sources !== undefined) {
+    if (typeof r.max_sources !== "number" || !Number.isInteger(r.max_sources)) {
+      return { ok: false, error: "max_sources must be an integer" };
+    }
+    if (r.max_sources < 1 || r.max_sources > 10) {
+      return { ok: false, error: "max_sources must be between 1 and 10" };
+    }
+    max_sources = r.max_sources;
+  }
+
+  return {
+    ok: true,
+    body: {
+      question: r.question,
+      project_context: r.project_context as string | undefined,
+      max_sources,
+    },
+  };
+}
 
 // Engineering value heuristic: number followed (or not) by a known unit.
 // Used for both unit-verification and citation enforcement.
@@ -69,10 +106,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  let body: z.infer<typeof BodySchema>;
+  let body: QueryBody;
   try {
     const raw = await req.json();
-    body = BodySchema.parse(raw);
+    const parsed = parseBody(raw);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: "invalid_body", detail: parsed.error }, { status: 400 });
+    }
+    body = parsed.body;
   } catch (e) {
     return NextResponse.json({ error: "invalid_body", detail: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }
