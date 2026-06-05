@@ -42,15 +42,9 @@ jobs:
     timeout-minutes: 110
 
     strategy:
-      # openrouter_and_openai runs both providers in parallel — primary mode.
-      # anthropic is a separate option for when Haiku needs re-evaluation.
-      # fail-fast: false ensures one provider failing does not cancel the other.
       fail-fast: false
       matrix:
-        provider: ${{ fromJson(
-          inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' ||
-          format('["{0}"]', inputs.provider)
-        ) }}
+        provider: ${{ fromJson(inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
 
     steps:
       - name: Checkout
