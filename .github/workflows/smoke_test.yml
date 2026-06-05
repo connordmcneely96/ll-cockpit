@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: 'Provider (or "all" to run all 3 in parallel)'
+        description: 'Provider — openrouter+openai run in parallel. anthropic only when re-evaluating Haiku.'
         required: true
         type: choice
         options:
-          - all
-          - anthropic
+          - openrouter_and_openai
           - openrouter
           - openai
-        default: all
+          - anthropic
+        default: openrouter_and_openai
       agent:
-        description: 'Agent to test (leave blank for all)'
+        description: 'Agent to test (leave blank for all active slots)'
         required: false
         type: choice
         options:
@@ -42,11 +42,15 @@ jobs:
     timeout-minutes: 110
 
     strategy:
-      # Run all providers in parallel — safe with Sonnet scorer (higher rate limits than Opus)
-      # fail-fast: false ensures one provider failing doesn't cancel others
+      # openrouter_and_openai runs both providers in parallel — primary mode.
+      # anthropic is a separate option for when Haiku needs re-evaluation.
+      # fail-fast: false ensures one provider failing does not cancel the other.
       fail-fast: false
       matrix:
-        provider: ${{ fromJson(inputs.provider == 'all' && '["anthropic","openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
+        provider: ${{ fromJson(
+          inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' ||
+          format('["{0}"]', inputs.provider)
+        ) }}
 
     steps:
       - name: Checkout

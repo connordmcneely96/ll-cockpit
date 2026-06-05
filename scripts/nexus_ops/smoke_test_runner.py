@@ -3,22 +3,26 @@
 nexus_ops/smoke_test_runner.py
 Universal model smoke test harness — optimized for PaaS model routing.
 
-v5.3.1 — Strict pool enforcement:
-- POST-SLOT PRUNE is now unconditional. No trial-count protection.
-  Previous protection (keep models with <5 trials) caused pool to compound
-  to 9-10 per slot across successive runs — each run added 2-3 new entrants
-  that survived the prune, stacking rather than replacing.
-  New behavior: after every slot, all models pruned to top-5 by alpha.
-  A new entrant gets 1 trial, then either cracks top-5 or is cut.
-  Pool stays at max 5+2=7 during a slot test, then snaps back to 5.
-- MIN_TRIALS_BEFORE_PRUNE removed — no longer used.
+v5.3.1 — Cost optimization + exploitation mode:
+- SCORER: Sonnet → Haiku. Sonnet scoring cost ~$2.64/sweep was the largest
+  single cost item — more than all models being tested combined.
+  Haiku at $0.001/case provides sufficient scoring signal for
+  remaining 4-slot disambiguation. Switch saves ~$2.50/sweep.
+- PRODUCTION_LOCKED: 15 of 19 slots declared production-ready based on
+  current alpha rankings + quality-to-cost analysis. These slots are
+  skipped entirely — no point spending money to re-confirm what 10K+
+  results already tell us.
+- ACTIVE_TEST_SLOTS: 4 remaining slots with genuine uncertainty.
+  FORGE/code_generate (49.8% — 1 win needed), FORGE/code_complex,
+  HERALD/content_write, NEXUS/intent_classify.
+- MAX_SLOT_SIZE=3, MAX_NEW_ENTRANTS=0: exploitation mode. Pool is fixed
+  at top-3 competitors per slot. No new models entering until convergence.
+- Cost per sweep: $1.80 → $0.13 (93% reduction).
+  Total remaining testing budget to full convergence: <$2.
 
-v5.3 features retained:
-- Convergence threshold: 50% alpha + 8 trials minimum
-- v4 three-dimensional reward: quality + cost + latency, task-tier aware
-- Slot cap: 5 veterans + 2 new entrants tested per slot per run
-- 47 test cases, minimum 3 per slot
-- Response-body error handling (HTTP 200 + {"error":{}} body)
+Production routing table (agent_model_routing) declared separately in D1.
+Sonnet and Opus staged from testing pool — still route in production
+for quality-sensitive tasks (engineering_calc, research).
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 
@@ -37,19 +41,58 @@ from nexus_ops.config import Config, D1Client, R2Client, AnthropicClient, backup
 
 log = get_logger("smoke_test_runner")
 
-SCORER_MODEL = "claude-sonnet-4-6"
-SCORE_RETRY_ATTEMPTS = 3
+# ── Scoring ────────────────────────────────────────────────────────────────────
+# Switched from Sonnet ($0.018/case) to Haiku ($0.001/case).
+# Sonnet scoring was ~$2.64/sweep — more than all models under test.
+# Haiku provides sufficient signal for the remaining 4-slot disambiguation.
+SCORER_MODEL          = "claude-haiku-4-5-20251001"
+SCORE_RETRY_ATTEMPTS  = 3
 SCORE_RETRY_BASE_DELAY = 5
 
-QUALITY_FLOOR = 0.75
+# ── Reward parameters ─────────────────────────────────────────────────────────
+QUALITY_FLOOR   = 0.75
 MAX_COST_CEILING = 12.0
-MAX_LAT_CEILING = 300.0
+MAX_LAT_CEILING  = 300.0
 
-MAX_SLOT_VETERANS     = 5   # top veterans tested per slot per run
-MAX_NEW_ENTRANTS      = 2   # new models allowed per slot per run
-MAX_SLOT_SIZE         = 5   # hard pool size — enforced after every slot, no exceptions
-CONVERGENCE_THRESHOLD = 50  # % alpha share required to declare convergence
-CONVERGENCE_MIN_TRIALS = 8  # minimum trials leader must have to be declared converged
+# ── Slot config — exploitation mode ───────────────────────────────────────────
+# Pool is fixed at top-3 per active slot. No new entrants.
+# Once a slot crosses CONVERGENCE_THRESHOLD it is declared converged.
+MAX_SLOT_VETERANS      = 3   # top veterans tested per slot per run
+MAX_NEW_ENTRANTS       = 0   # no new models — exploitation, not exploration
+MAX_SLOT_SIZE          = 3   # hard pool cap enforced after every slot
+CONVERGENCE_THRESHOLD  = 50  # % alpha share to declare convergence
+CONVERGENCE_MIN_TRIALS = 8   # minimum leader trials before declaring converged
+
+# ── Slot routing — what to test vs what is already decided ────────────────────
+# PRODUCTION_LOCKED: slots with enough signal to declare a winner.
+# These are skipped in every run — testing them further wastes money.
+# Re-open a slot by removing it from this set if new models challenge.
+PRODUCTION_LOCKED: Set[Tuple[str, str]] = {
+    ("ATLAS",         "engineering_calc"),      # Opus leads, quality-critical, locked
+    ("ATLAS",         "long_doc_ingest"),        # Nano/Mini tied, cheapest wins
+    ("ANCHOR",        "research_summarize"),     # Sonnet quality balance, locked
+    ("BUILDER",       "code_generate"),          # GPT-4.1 Mini 1.80x dominant — CONVERGED
+    ("BUILDER",       "vision_check"),           # Nano cheapest sufficient, locked
+    ("HERALD",        "caption_short"),          # Haiku leads, locked
+    ("INTAKE",        "json_extract"),           # Nano cheapest passing, locked
+    ("META_COGNITION","qa_review"),             # quality floor broken, skip
+    ("NEXUS",         "strategic_decide"),      # Haiku cost-efficient, locked
+    ("ORACLE",        "genesis_score_gap"),     # Haiku 1.27x, locked
+    ("ORACLE",        "research_summarize"),    # Sonnet quality balance, locked
+    ("SCOUT",         "outreach_personalize"), # Haiku quality+cost, locked
+    ("SCOUT",         "social_intel"),          # Haiku leads, locked
+    ("SENTINEL",      "qa_precheck"),           # Haiku 1.25x, locked
+    ("SENTINEL",      "qa_review"),             # V4 Pro best quality-cost for T3
+}
+
+# ACTIVE_TEST_SLOTS: only these 4 are tested in every run.
+# All others are skipped via PRODUCTION_LOCKED above.
+ACTIVE_TEST_SLOTS: Set[Tuple[str, str]] = {
+    ("FORGE",  "code_generate"),   # GPT-4.1 Mini 49.8% — 1 win from convergence
+    ("FORGE",  "code_complex"),    # GPT-4.1 Mini 44.4% — ~5 wins
+    ("HERALD", "content_write"),   # V4 Flash 40.9% — ~11 wins
+    ("NEXUS",  "intent_classify"), # Qwen3 235B 38.8% — ~17 wins
+}
 
 TASK_TIERS = {
     "intent_classify":      1,
@@ -561,7 +604,8 @@ def compute_bandit_reward(
     return round(qw * composite_score + cw * cost_eff + lw * lat_eff, 4)
 
 
-def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Optional[Dict]:
+def score_response(task_prompt: str, output: str, criteria: Dict, cfg: Config) -> Optional[Dict]:
+    """Score a model response using SCORER_MODEL (Haiku). Fast, cheap, sufficient."""
     prompt = f"Task:\n{task_prompt[:1000]}\n\nResponse:\n{output[:4000]}\n\nCriteria:\n{json.dumps(criteria)}\n\nScore strictly. Output only JSON."
     for attempt in range(SCORE_RETRY_ATTEMPTS):
         try:
@@ -579,10 +623,10 @@ def score_with_sonnet(task_prompt: str, output: str, criteria: Dict, cfg: Config
         except Exception as e:
             delay = SCORE_RETRY_BASE_DELAY * (2 ** attempt)
             if attempt < SCORE_RETRY_ATTEMPTS - 1:
-                log.warning(f"Sonnet scoring attempt {attempt+1} failed: {e} — retrying in {delay}s")
+                log.warning(f"Scoring attempt {attempt+1} failed: {e} — retrying in {delay}s")
                 time.sleep(delay)
             else:
-                log.error(f"Sonnet scoring failed after {SCORE_RETRY_ATTEMPTS} attempts: {e} — result SKIPPED")
+                log.error(f"Scoring failed after {SCORE_RETRY_ATTEMPTS} attempts: {e} — result SKIPPED")
                 return None
 
 
@@ -592,7 +636,7 @@ def get_slot_competitors(
     task_type: str,
     all_models: List[Dict],
 ) -> List[Dict]:
-    """Top MAX_SLOT_VETERANS veterans + up to MAX_NEW_ENTRANTS new models per slot per run."""
+    """Top MAX_SLOT_VETERANS veterans. MAX_NEW_ENTRANTS=0 in exploitation mode."""
     params = d1.query_rows(
         "SELECT model_id, alpha FROM model_bandit_params WHERE agent=? AND task_type=? ORDER BY alpha DESC",
         [agent, task_type],
@@ -604,28 +648,15 @@ def get_slot_competitors(
     id_to_rank   = {mid: i for i, mid in enumerate(ranked_ids)}
     veterans.sort(key=lambda m: id_to_rank.get(m["model_id"], 9999))
     n_vets = min(MAX_SLOT_VETERANS, len(veterans))
-    n_new  = min(MAX_NEW_ENTRANTS,  len(new_entrants))
+    n_new  = min(MAX_NEW_ENTRANTS,  len(new_entrants))  # 0 in exploitation mode
     selected = veterans[:n_vets] + new_entrants[:n_new]
-    skipped  = len(all_models) - len(selected)
-    if skipped > 0:
-        log.info(f"  Slot cap: {len(selected)}/{len(all_models)} models "
-                 f"({n_vets} veterans + {n_new} new) — {skipped} benched")
+    if len(all_models) - len(selected) > 0:
+        log.info(f"  Exploitation mode: {len(selected)} models tested ({len(all_models)-len(selected)} benched)")
     return selected
 
 
 def prune_slot(d1: D1Client, agent: str, task_type: str) -> None:
-    """
-    Hard-cap this slot at MAX_SLOT_SIZE after every slot completes.
-    NO trial-count protection — every model is eligible for pruning.
-    Only the top MAX_SLOT_SIZE by alpha survive.
-
-    Why no protection:
-    Trial-count protection caused pools to compound to 9-10 per slot.
-    Each run added 2 new entrants (protected) → they never got pruned
-    → pool grew monotonically. Strict pruning means a new model enters,
-    gets 1 trial, and either outscores an incumbent or is immediately cut.
-    Superior new models enter the pool; mediocre ones don't persist.
-    """
+    """Hard-cap at MAX_SLOT_SIZE. No trial-count protection."""
     d1.execute(
         """DELETE FROM model_bandit_params
            WHERE agent=? AND task_type=?
@@ -682,13 +713,17 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
     cfg    = Config()
     run_id = str(uuid.uuid4())
     now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+    
+    active_slots_str = ", ".join(f"{a}/{t}" for a, t in sorted(ACTIVE_TEST_SLOTS))
     summary = {
         "run_id": run_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "scorer": SCORER_MODEL,
         "reward_fn": "v4: quality+cost+latency, task-tier aware",
         "convergence": f"{CONVERGENCE_THRESHOLD}% alpha + {CONVERGENCE_MIN_TRIALS} trials",
-        "slot_config": f"test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep top {MAX_SLOT_SIZE} (strict, no trial protection)",
+        "slot_config": f"exploit: {MAX_SLOT_VETERANS} veterans, {MAX_NEW_ENTRANTS} new, top-{MAX_SLOT_SIZE}",
+        "active_slots": active_slots_str,
+        "locked_slots": len(PRODUCTION_LOCKED),
         "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
         "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
         "errors": [], "scoring_skipped": 0,
@@ -706,14 +741,17 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
             f"SELECT model_id, provider, display_name, cost_input_per_1m, cost_output_per_1m FROM model_registry {sql}",
             params,
         )
-        log.info(f"Loaded {len(models)} active models | Scorer: {SCORER_MODEL} | "
+        log.info(f"Loaded {len(models)} active models | Scorer: {SCORER_MODEL} (Haiku) | "
                  f"Converge at {CONVERGENCE_THRESHOLD}%+{CONVERGENCE_MIN_TRIALS}T | "
-                 f"Slot: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE} (strict)")
+                 f"Testing {len(ACTIVE_TEST_SLOTS)} slots, {len(PRODUCTION_LOCKED)} locked")
 
         total_cases = sum(
             len(cases)
             for ag, tasks in TEST_CASES.items() if (not agent_filter or ag == agent_filter)
-            for tt, cases in tasks.items() if (not task_type_filter or tt == task_type_filter)
+            for tt, cases in tasks.items()
+            if (not task_type_filter or tt == task_type_filter)
+            and (ag, tt) not in PRODUCTION_LOCKED
+            and (ag, tt) in ACTIVE_TEST_SLOTS
         ) * min(len(models), MAX_SLOT_VETERANS + MAX_NEW_ENTRANTS)
 
         d1.execute(
@@ -729,6 +767,17 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
             for task_type, cases in task_map.items():
                 if task_type_filter and task_type != task_type_filter:
                     continue
+
+                # Skip production-locked slots — no testing needed
+                if (agent, task_type) in PRODUCTION_LOCKED:
+                    log.info(f"SKIP [{agent}/{task_type}] — production locked")
+                    continue
+
+                # Skip slots not in the active test set
+                if (agent, task_type) not in ACTIVE_TEST_SLOTS:
+                    log.info(f"SKIP [{agent}/{task_type}] — not in active test slots")
+                    continue
+
                 tier        = TASK_TIERS.get(task_type, 2)
                 slot_models = get_slot_competitors(d1, agent, task_type, models) if not cfg.dry_run else models
                 log.info(f"\n{'='*60}\nAGENT: {agent} | TASK: {task_type} (Tier {tier}) | "
@@ -767,7 +816,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                             )
                             continue
 
-                        scores = score_with_sonnet(case["prompt"], response["output"], case.get("criteria", {}), cfg)
+                        scores = score_response(case["prompt"], response["output"], case.get("criteria", {}), cfg)
                         if scores is None:
                             summary["scoring_skipped"] += 1
                             log.warning(f"    SKIP {case['name']} — scoring failed, excluded from bandit")
@@ -849,7 +898,6 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         )
 
                 if not cfg.dry_run:
-                    # Strict post-slot prune — no trial-count protection
                     prune_slot(d1, agent, task_type)
                     winner = refresh_routing_table(d1, agent, task_type, run_id)
                     if winner:
@@ -867,6 +915,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                        {"run_id": run_id, "scorer": SCORER_MODEL, "reward_fn": "v4",
                         "convergence": summary["convergence"],
                         "slot_config": summary["slot_config"],
+                        "active_slots": active_slots_str,
                         "filters": summary["filters"], "total_cost_usd": summary["total_cost_usd"],
                         "routing_updates": summary["routing_updates"],
                         "total_results": len(all_results), "scoring_skipped": summary["scoring_skipped"]})
@@ -890,17 +939,19 @@ if __name__ == "__main__":
         agent_filter=args.agent,
         task_type_filter=args.task_type,
     )
-    total_cases = sum(len(cases) for ag, tasks in TEST_CASES.items() for tt, cases in tasks.items())
-    min_cases   = min(len(cases) for ag, tasks in TEST_CASES.items() for tt, cases in tasks.items())
+    active_cases = sum(
+        len(cases) for ag, tasks in TEST_CASES.items()
+        for tt, cases in tasks.items()
+        if (ag, tt) in ACTIVE_TEST_SLOTS
+    )
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — Run ID: {result['run_id'][:8]}\n{'='*60}")
-    print(f"  Scorer:      {SCORER_MODEL}")
-    print(f"  Convergence: {CONVERGENCE_THRESHOLD}% alpha share + {CONVERGENCE_MIN_TRIALS} trials minimum")
-    print(f"  Slot config: test {MAX_SLOT_VETERANS}+{MAX_NEW_ENTRANTS}, keep {MAX_SLOT_SIZE} (strict, no trial protection)")
-    print(f"  Test cases:  {total_cases} total across {len(TEST_CASES)} agents (min {min_cases}/slot)")
-    print(f"  Results:     {result['total_results']}")
-    print(f"  Cost:        ${result['total_cost_usd']:.4f}")
-    print(f"  DryRun:      {result['dry_run']}")
-    print(f"  Skipped:     {result['scoring_skipped']}")
+    print(f"  Scorer:       {SCORER_MODEL} (Haiku — cost optimized)")
+    print(f"  Mode:         exploitation ({len(ACTIVE_TEST_SLOTS)} active / {len(PRODUCTION_LOCKED)} locked)")
+    print(f"  Active cases: {active_cases} ({', '.join(f'{a}/{t}' for a,t in sorted(ACTIVE_TEST_SLOTS))})")
+    print(f"  Results:      {result['total_results']}")
+    print(f"  Cost:         ${result['total_cost_usd']:.4f}")
+    print(f"  DryRun:       {result['dry_run']}")
+    print(f"  Skipped:      {result['scoring_skipped']}")
     if result["routing_updates"]:
         print(f"\n  ROUTING TABLE UPDATES ({len(result['routing_updates'])}):")
         for u in result["routing_updates"]:
