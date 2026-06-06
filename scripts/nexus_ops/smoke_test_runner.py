@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
 """
-nexus_ops/smoke_test_runner.py  v5.4 (bugfix: __main__ active_slots_str)
+nexus_ops/smoke_test_runner.py  v5.5 — dual-tier routing
+
+Standard tier (--tier standard, default):
+  Cost-optimised. TIER_WEIGHTS = 75% quality / 25% cost for Tier 3.
+  Quality floor 0.75. Current winners: Nano, V4 Flash, GPT-4.1 Mini, Qwen3 235B.
+  Written to: model_bandit_params (tier='standard'), agent_model_routing.
+
+Premium tier (--tier premium):
+  Quality-dominant. PREMIUM_TIER_WEIGHTS = 95% quality / 5% cost for Tier 3.
+  Quality floor 0.82. Cost ceiling $50 (cost barely matters).
+  Candidates: GPT-4.1, o4-mini, Gemini 2.5 Pro, Gemini 3.5 Flash,
+              Gemini 2.5 Flash, Claude Opus 4.8.
+  Written to: model_bandit_params (tier='premium'), premium_routing.
+  Purpose: tenants paying for premium tier get quality-maximised routing.
+           Exposed as a per-tenant toggle in Cockpit Worker routing layer.
 """
 
 from __future__ import annotations
@@ -12,18 +26,46 @@ from nexus_ops.config import Config, D1Client, R2Client, AnthropicClient, backup
 
 log = get_logger("smoke_test_runner")
 
+# ── Shared ────────────────────────────────────────────────────────────────────
 SCORER_MODEL          = "claude-haiku-4-5-20251001"
 SCORE_RETRY_ATTEMPTS  = 3
 SCORE_RETRY_BASE_DELAY = 5
+
+# ── Standard-tier reward params ───────────────────────────────────────────────
 QUALITY_FLOOR    = 0.75
 MAX_COST_CEILING = 12.0
 MAX_LAT_CEILING  = 300.0
+TIER_WEIGHTS     = {1: (0.55, 0.25, 0.20), 2: (0.65, 0.25, 0.10), 3: (0.75, 0.25, 0.00)}
+
+# ── Premium-tier reward params ────────────────────────────────────────────────
+# Quality is almost all that matters. Cost ceiling is loose ($50) so expensive
+# models don't get zeroed out. Quality floor raised to 0.82.
+PREMIUM_QUALITY_FLOOR = 0.82
+PREMIUM_COST_CEILING  = 50.0
+PREMIUM_TIER_WEIGHTS  = {1: (0.80, 0.10, 0.10), 2: (0.88, 0.07, 0.05), 3: (0.95, 0.05, 0.00)}
+
+# Premium model candidates — only these compete in the premium bandit
+PREMIUM_MODELS: Set[str] = {
+    "gpt-4.1",
+    "o4-mini",
+    "google/gemini-2.5-pro",
+    "google/gemini-3.5-flash",
+    "google/gemini-2.5-flash",
+    "claude-opus-4-8",
+}
+
+# ── Slot config ───────────────────────────────────────────────────────────────
 MAX_SLOT_VETERANS      = 4
 MAX_NEW_ENTRANTS       = 2
 MAX_SLOT_SIZE          = 4
+PREMIUM_SLOT_VETERANS  = 6   # all premium candidates can be veterans
+PREMIUM_NEW_ENTRANTS   = 2
+PREMIUM_SLOT_SIZE      = 6
 CONVERGENCE_THRESHOLD  = 50
 CONVERGENCE_MIN_TRIALS = 8
+PREMIUM_CONV_MIN_TRIALS = 5  # premium converges faster — smaller pool
 
+# ── Slot routing ──────────────────────────────────────────────────────────────
 PRODUCTION_LOCKED: Set[Tuple[str, str]] = {
     ("ATLAS",         "long_doc_ingest"),
     ("ANCHOR",        "research_summarize"),
@@ -49,7 +91,6 @@ ACTIVE_TEST_SLOTS: Set[Tuple[str, str]] = {
     ("NEXUS",  "intent_classify"),
 }
 
-# Compute once at module level so __main__ can reference it
 ACTIVE_SLOTS_STR = ", ".join(f"{a}/{t}" for a, t in sorted(ACTIVE_TEST_SLOTS))
 
 TASK_TIERS = {
@@ -58,7 +99,6 @@ TASK_TIERS = {
     "social_intel": 2, "research_summarize": 2, "genesis_score_gap": 2, "vision_check": 2,
     "qa_review": 3, "code_generate": 3, "code_complex": 3, "engineering_calc": 3, "long_doc_ingest": 3,
 }
-TIER_WEIGHTS = {1: (0.55, 0.25, 0.20), 2: (0.65, 0.25, 0.10), 3: (0.75, 0.25, 0.00)}
 TIER_LAT_HARD_CAP = {1: 15.0, 2: 60.0, 3: 999.0}
 
 SCORER_SYSTEM = """You are a strict QA evaluator for an AI agent platform serving mechanical engineering and digital services clients.
@@ -363,13 +403,17 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
                 "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
 
 
-def compute_bandit_reward(composite_score, cost_input, cost_output, latency_ms, task_type):
-    tier = TASK_TIERS.get(task_type, 2)
-    lat_s = latency_ms / 1000.0
-    if lat_s > TIER_LAT_HARD_CAP[tier] or composite_score < QUALITY_FLOOR:
+def compute_bandit_reward(composite_score, cost_input, cost_output, latency_ms, task_type, mode="standard"):
+    """Compute reward. mode='premium' uses quality-dominant weights and loose cost ceiling."""
+    floor   = PREMIUM_QUALITY_FLOOR if mode == "premium" else QUALITY_FLOOR
+    ceiling = PREMIUM_COST_CEILING  if mode == "premium" else MAX_COST_CEILING
+    weights = PREMIUM_TIER_WEIGHTS  if mode == "premium" else TIER_WEIGHTS
+    tier    = TASK_TIERS.get(task_type, 2)
+    lat_s   = latency_ms / 1000.0
+    if lat_s > TIER_LAT_HARD_CAP[tier] or composite_score < floor:
         return 0.0
-    qw, cw, lw = TIER_WEIGHTS[tier]
-    cost_eff = 1.0 - min((cost_input + cost_output*2)/3.0 / MAX_COST_CEILING, 1.0)
+    qw, cw, lw = weights[tier]
+    cost_eff = 1.0 - min((cost_input + cost_output*2)/3.0 / ceiling, 1.0)
     lat_eff  = (1.0 - min(lat_s/MAX_LAT_CEILING, 1.0)) if lw > 0 else 0.0
     return round(qw*composite_score + cw*cost_eff + lw*lat_eff, 4)
 
@@ -398,80 +442,125 @@ def score_response(task_prompt, output, criteria, cfg):
                 return None
 
 
-def get_slot_competitors(d1, agent, task_type, all_models):
+def get_slot_competitors(d1, agent, task_type, all_models, mode="standard"):
+    """Select models to test this slot. Premium mode filters to PREMIUM_MODELS only."""
+    tier_clause = "AND tier='premium'" if mode == "premium" else "AND tier='standard'"
     params = d1.query_rows(
-        "SELECT model_id, alpha FROM model_bandit_params WHERE agent=? AND task_type=? ORDER BY alpha DESC",
+        f"SELECT model_id, alpha FROM model_bandit_params WHERE agent=? AND task_type=? {tier_clause} ORDER BY alpha DESC",
         [agent, task_type])
     ranked_ids = [r["model_id"] for r in params]
     param_set  = {r["model_id"] for r in params}
-    veterans     = sorted([m for m in all_models if m["model_id"] in param_set],
+
+    # Premium: restrict candidate pool to premium models only
+    pool = [m for m in all_models if m["model_id"] in PREMIUM_MODELS] if mode == "premium" else all_models
+
+    veterans     = sorted([m for m in pool if m["model_id"] in param_set],
                           key=lambda m: ranked_ids.index(m["model_id"]) if m["model_id"] in ranked_ids else 999)
-    new_entrants = [m for m in all_models if m["model_id"] not in param_set]
-    n_vets = min(MAX_SLOT_VETERANS, len(veterans))
-    n_new  = min(MAX_NEW_ENTRANTS, len(new_entrants))
+    new_entrants = [m for m in pool if m["model_id"] not in param_set]
+
+    n_vets = min(PREMIUM_SLOT_VETERANS if mode=="premium" else MAX_SLOT_VETERANS, len(veterans))
+    n_new  = min(PREMIUM_NEW_ENTRANTS  if mode=="premium" else MAX_NEW_ENTRANTS,  len(new_entrants))
     selected = veterans[:n_vets] + new_entrants[:n_new]
-    skipped = len(all_models) - len(selected)
+    skipped = len(pool) - len(selected)
     if skipped > 0:
-        log.info(f"  Slot cap: {len(selected)}/{len(all_models)} ({n_vets}V+{n_new}N, {skipped} benched)")
+        log.info(f"  [{mode}] Slot cap: {len(selected)}/{len(pool)} ({n_vets}V+{n_new}N, {skipped} benched)")
     return selected
 
 
-def prune_slot(d1, agent, task_type):
+def prune_slot(d1, agent, task_type, mode="standard"):
+    """Hard-cap slot at tier-appropriate size. No trial-count protection."""
+    size         = PREMIUM_SLOT_SIZE if mode=="premium" else MAX_SLOT_SIZE
+    tier_clause  = "AND tier='premium'" if mode=="premium" else "AND tier='standard'"
     d1.execute(
-        """DELETE FROM model_bandit_params WHERE agent=? AND task_type=?
+        f"""DELETE FROM model_bandit_params WHERE agent=? AND task_type=? {tier_clause}
            AND model_id NOT IN (
-             SELECT model_id FROM model_bandit_params WHERE agent=? AND task_type=?
+             SELECT model_id FROM model_bandit_params WHERE agent=? AND task_type=? {tier_clause}
              ORDER BY alpha DESC, avg_quality DESC LIMIT ?
            )""",
-        [agent, task_type, agent, task_type, MAX_SLOT_SIZE])
+        [agent, task_type, agent, task_type, size])
 
 
-def refresh_routing_table(d1, agent, task_type, run_id):
+def refresh_routing_table(d1, agent, task_type, run_id, mode="standard"):
+    """Update routing table. Standard writes to agent_model_routing, premium to premium_routing."""
+    tier_clause = "AND tier='premium'" if mode=="premium" else "AND tier='standard'"
     rows = d1.query_rows(
-        """SELECT model_id, alpha, beta, n_trials, n_successes,
+        f"""SELECT model_id, alpha, beta, n_trials, n_successes,
                  CAST(n_successes AS REAL)/NULLIF(n_trials,0) as win_rate, avg_quality
-           FROM model_bandit_params WHERE agent=? AND task_type=? AND n_trials>0
+           FROM model_bandit_params WHERE agent=? AND task_type=? {tier_clause} AND n_trials>0
            ORDER BY alpha DESC, avg_quality DESC""", [agent, task_type])
     if not rows: return None
-    winner = rows[0]
+    winner    = rows[0]
     runner_up = rows[1] if len(rows) > 1 else None
     total_alpha = sum(float(r["alpha"]) for r in rows)
-    conv_pct = round(float(winner["alpha"])/total_alpha*100, 1) if total_alpha > 0 else 0.0
-    status = "converged" if conv_pct >= CONVERGENCE_THRESHOLD and winner["n_trials"] >= CONVERGENCE_MIN_TRIALS else "provisional"
-    now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
-    d1.execute(
-        """INSERT INTO agent_model_routing
-            (id,agent,task_type,winning_model,win_rate,n_trials,convergence_pct,
-             runner_up_model,runner_up_rate,derived_from_run_id,last_test_date,status,promoted_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-           ON CONFLICT(agent,task_type) DO UPDATE SET
-             winning_model=excluded.winning_model, win_rate=excluded.win_rate,
-             n_trials=excluded.n_trials, convergence_pct=excluded.convergence_pct,
-             runner_up_model=excluded.runner_up_model, runner_up_rate=excluded.runner_up_rate,
-             derived_from_run_id=excluded.derived_from_run_id, last_test_date=excluded.last_test_date,
-             status=excluded.status, promoted_at=excluded.promoted_at""",
-        [str(uuid.uuid4()), agent, task_type,
-         winner["model_id"], round(float(winner.get("win_rate") or 0), 3), winner["n_trials"], conv_pct,
-         runner_up["model_id"] if runner_up else None,
-         round(float(runner_up.get("win_rate") or 0), 3) if runner_up else None,
-         run_id, datetime.now(timezone.utc).date().isoformat(), status, now_ts])
-    log.info(f"  routing [{agent}/{task_type}] -> {winner['model_id']} ({status}, conv={conv_pct:.0f}%)")
+    conv_pct    = round(float(winner["alpha"])/total_alpha*100, 1) if total_alpha > 0 else 0.0
+    min_trials  = PREMIUM_CONV_MIN_TRIALS if mode=="premium" else CONVERGENCE_MIN_TRIALS
+    status      = "converged" if conv_pct >= CONVERGENCE_THRESHOLD and winner["n_trials"] >= min_trials else "provisional"
+    now_ts      = int(datetime.now(timezone.utc).timestamp()*1000)
+    date_str    = datetime.now(timezone.utc).date().isoformat()
+
+    if mode == "premium":
+        cost_rows = d1.query_rows(
+            "SELECT cost_input_per_1m FROM model_registry WHERE model_id=?", [winner["model_id"]])
+        cost_val = cost_rows[0]["cost_input_per_1m"] if cost_rows else 0
+        d1.execute(
+            """INSERT INTO premium_routing
+                (id,agent,task_type,quality_tier,winning_model,runner_up_model,avg_quality,avg_reward,
+                 cost_input_per_1m,n_trials,derived_from_run_id,last_test_date,status,promoted_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(agent,task_type,quality_tier) DO UPDATE SET
+                 winning_model=excluded.winning_model, runner_up_model=excluded.runner_up_model,
+                 avg_quality=excluded.avg_quality, avg_reward=excluded.avg_reward,
+                 cost_input_per_1m=excluded.cost_input_per_1m, n_trials=excluded.n_trials,
+                 derived_from_run_id=excluded.derived_from_run_id, last_test_date=excluded.last_test_date,
+                 status=excluded.status, promoted_at=excluded.promoted_at""",
+            [str(uuid.uuid4()), agent, task_type, "premium",
+             winner["model_id"],
+             runner_up["model_id"] if runner_up else None,
+             round(float(winner.get("avg_quality") or 0), 4),
+             round(float(winner.get("win_rate") or 0), 3),
+             cost_val, winner["n_trials"],
+             run_id, date_str, status, now_ts])
+        log.info(f"  premium_routing [{agent}/{task_type}] -> {winner['model_id']} ({status}, conv={conv_pct:.0f}%)")
+    else:
+        d1.execute(
+            """INSERT INTO agent_model_routing
+                (id,agent,task_type,winning_model,win_rate,n_trials,convergence_pct,
+                 runner_up_model,runner_up_rate,derived_from_run_id,last_test_date,status,promoted_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(agent,task_type) DO UPDATE SET
+                 winning_model=excluded.winning_model, win_rate=excluded.win_rate,
+                 n_trials=excluded.n_trials, convergence_pct=excluded.convergence_pct,
+                 runner_up_model=excluded.runner_up_model, runner_up_rate=excluded.runner_up_rate,
+                 derived_from_run_id=excluded.derived_from_run_id, last_test_date=excluded.last_test_date,
+                 status=excluded.status, promoted_at=excluded.promoted_at""",
+            [str(uuid.uuid4()), agent, task_type,
+             winner["model_id"], round(float(winner.get("win_rate") or 0), 3), winner["n_trials"], conv_pct,
+             runner_up["model_id"] if runner_up else None,
+             round(float(runner_up.get("win_rate") or 0), 3) if runner_up else None,
+             run_id, date_str, status, now_ts])
+        log.info(f"  routing [{agent}/{task_type}] -> {winner['model_id']} ({status}, conv={conv_pct:.0f}%)")
+
     return winner["model_id"]
 
 
-def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=None):
-    cfg = Config()
+def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=None, mode="standard"):
+    cfg    = Config()
     run_id = str(uuid.uuid4())
     now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
-    summary = {"run_id": run_id, "started_at": datetime.now(timezone.utc).isoformat(),
-               "scorer": SCORER_MODEL, "convergence": f"{CONVERGENCE_THRESHOLD}%+{CONVERGENCE_MIN_TRIALS}T",
-               "slot_config": f"{MAX_SLOT_VETERANS}V+{MAX_NEW_ENTRANTS}N/top-{MAX_SLOT_SIZE}",
+    slot_cfg = (f"{PREMIUM_SLOT_VETERANS}V+{PREMIUM_NEW_ENTRANTS}N/top-{PREMIUM_SLOT_SIZE}"
+                if mode=="premium"
+                else f"{MAX_SLOT_VETERANS}V+{MAX_NEW_ENTRANTS}N/top-{MAX_SLOT_SIZE}")
+    summary = {"run_id": run_id, "mode": mode,
+               "started_at": datetime.now(timezone.utc).isoformat(),
+               "scorer": SCORER_MODEL,
+               "slot_config": slot_cfg,
                "active_slots": ACTIVE_SLOTS_STR, "locked_slots": len(PRODUCTION_LOCKED),
                "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
                "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
                "errors": [], "scoring_skipped": 0}
+
     with D1Client(cfg) as d1, R2Client(cfg) as r2:
-        backup_d1(d1, r2, ["model_bandit_params","agent_model_routing","smoke_test_results"],
+        backup_d1(d1, r2, ["model_bandit_params","agent_model_routing","premium_routing","smoke_test_results"],
                   f"pre_smoke_{run_id[:8]}")
         sql, params = "WHERE active=1", []
         if provider_filter:
@@ -479,13 +568,17 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
         models = d1.query_rows(
             f"SELECT model_id,provider,display_name,cost_input_per_1m,cost_output_per_1m FROM model_registry {sql}",
             params)
-        log.info(f"Loaded {len(models)} models | Scorer: {SCORER_MODEL} | "
-                 f"Slots: {len(ACTIVE_TEST_SLOTS)} active / {len(PRODUCTION_LOCKED)} locked | "
-                 f"Pool: {MAX_SLOT_VETERANS}V+{MAX_NEW_ENTRANTS}N/top-{MAX_SLOT_SIZE}")
+        log.info(f"Loaded {len(models)} models | Scorer: {SCORER_MODEL} | Mode: {mode.upper()} | "
+                 f"Slots: {len(ACTIVE_TEST_SLOTS)} active / {len(PRODUCTION_LOCKED)} locked | Pool: {slot_cfg}")
+        if mode == "premium":
+            active_premium = [m for m in models if m["model_id"] in PREMIUM_MODELS]
+            log.info(f"Premium candidates active: {[m['model_id'] for m in active_premium]}")
+
         d1.execute(
             "INSERT OR IGNORE INTO smoke_test_runs (id,suite_id,trigger,triggered_by,status,models_under_test,n_cases_planned,started_at) VALUES (?,?,?,?,?,?,?,?)",
-            [run_id,"universal","manual","connor","running",
+            [run_id, "universal", f"manual_{mode}", "connor", "running",
              ",".join(m["model_id"] for m in models), 0, now_ts])
+
         all_results = []
         for agent, task_map in TEST_CASES.items():
             if agent_filter and agent != agent_filter: continue
@@ -496,14 +589,17 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                 if (agent, task_type) not in ACTIVE_TEST_SLOTS:
                     log.info(f"SKIP [{agent}/{task_type}] — not active"); continue
                 tier = TASK_TIERS.get(task_type, 2)
-                slot_models = get_slot_competitors(d1, agent, task_type, models) if not cfg.dry_run else models
-                log.info(f"\n{'='*60}\n{agent}/{task_type} (T{tier}) | {len(cases)} cases x {len(slot_models)} models\n{'='*60}")
+                slot_models = get_slot_competitors(d1, agent, task_type, models, mode=mode) if not cfg.dry_run else models
+                log.info(f"\n{'='*60}\n[{mode.upper()}] {agent}/{task_type} (T{tier}) | "
+                         f"{len(cases)} cases x {len(slot_models)} models\n{'='*60}")
+
                 for model in slot_models:
                     model_id, provider = model["model_id"], model["provider"]
                     cost_in  = float(model.get("cost_input_per_1m") or 0)
                     cost_out = float(model.get("cost_output_per_1m") or 0)
                     log.info(f"\n  [{provider}] {model_id} (${cost_in:.3f}/${cost_out:.3f})")
                     model_rewards, model_results_batch = [], []
+
                     for case in cases:
                         if cfg.dry_run: log.info(f"    [DRY] {case['name']}"); continue
                         response = call_model(model_id, provider, case["prompt"], cfg)
@@ -526,13 +622,16 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         actual_cost = response["cost_usd"] or (
                             (response["input_tokens"]*cost_in + response["output_tokens"]*cost_out)/1_000_000)
                         bandit_reward = compute_bandit_reward(
-                            scores["composite_score"], cost_in, cost_out, response["latency_ms"], task_type)
+                            scores["composite_score"], cost_in, cost_out,
+                            response["latency_ms"], task_type, mode=mode)
                         result = {"run_id": run_id, "agent": agent, "task_type": task_type,
                                   "model_id": model_id, "provider": provider,
                                   "case_name": case["name"], "output_text": response["output"],
                                   "latency_ms": response["latency_ms"],
-                                  "input_tokens": response["input_tokens"], "output_tokens": response["output_tokens"],
-                                  "cost_usd": round(actual_cost,8), "bandit_reward": bandit_reward, **scores}
+                                  "input_tokens": response["input_tokens"],
+                                  "output_tokens": response["output_tokens"],
+                                  "cost_usd": round(actual_cost,8),
+                                  "bandit_reward": bandit_reward, "mode": mode, **scores}
                         model_rewards.append(bandit_reward)
                         model_results_batch.append(result)
                         summary["total_cost_usd"] += actual_cost
@@ -553,6 +652,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                              result.get("score_tone"),result.get("score_criteria_met"),
                              result.get("composite_score"),result.get("verdict"),
                              result.get("notes"),bandit_reward,now_ts])
+
                     if model_rewards and not cfg.dry_run:
                         avg_reward  = sum(model_rewards)/len(model_rewards)
                         valid_lat   = [r.get("latency_ms",0) for r in model_results_batch if r.get("latency_ms")]
@@ -560,11 +660,12 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                         avg_quality = sum(r.get("composite_score",0) for r in model_results_batch)/len(model_results_batch)
                         n_wins   = sum(1 for r in model_results_batch if r.get("bandit_reward",0)>0)
                         n_losses = len(model_rewards)-n_wins
+                        bandit_tier = mode  # 'standard' or 'premium'
                         d1.execute(
                             """INSERT INTO model_bandit_params
-                               (id,agent,task_type,model_id,alpha,beta,n_trials,n_successes,n_failures,
+                               (id,agent,task_type,model_id,tier,alpha,beta,n_trials,n_successes,n_failures,
                                 avg_latency_ms,avg_cost_usd,avg_quality,last_reward,last_updated)
-                               VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?)
+                               VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?)
                                ON CONFLICT(agent,task_type,model_id) DO UPDATE SET
                                  alpha=alpha+?, beta=beta+?, n_trials=n_trials+1,
                                  n_successes=n_successes+?, n_failures=n_failures+?,
@@ -572,28 +673,35 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
                                  avg_cost_usd=(avg_cost_usd*n_trials+excluded.avg_cost_usd)/(n_trials+1),
                                  avg_quality=(avg_quality*n_trials+excluded.avg_quality)/(n_trials+1),
                                  last_reward=excluded.last_reward,last_updated=excluded.last_updated""",
-                            [str(uuid.uuid4()),agent,task_type,model_id,
+                            [str(uuid.uuid4()),agent,task_type,model_id,bandit_tier,
                              1.0+avg_reward,1.0+(1.0-avg_reward),n_wins,n_losses,
                              round(sum(valid_lat)/len(valid_lat) if valid_lat else 0,1),
                              round(sum(valid_cost)/len(valid_cost) if valid_cost else 0,8),
                              round(avg_quality,4),avg_reward,
                              int(datetime.now(timezone.utc).timestamp()*1000),
                              avg_reward,(1.0-avg_reward),n_wins,n_losses])
+
                 if not cfg.dry_run:
-                    prune_slot(d1, agent, task_type)
-                    winner = refresh_routing_table(d1, agent, task_type, run_id)
+                    prune_slot(d1, agent, task_type, mode=mode)
+                    winner = refresh_routing_table(d1, agent, task_type, run_id, mode=mode)
                     if winner:
-                        summary["routing_updates"].append({"agent": agent, "task_type": task_type, "winner": winner})
+                        summary["routing_updates"].append(
+                            {"agent": agent, "task_type": task_type, "winner": winner, "mode": mode})
+
         d1.execute(
             "UPDATE smoke_test_runs SET status='completed',n_cases_complete=?,n_cases_passed=?,total_cost_usd=?,completed_at=? WHERE id=?",
             [len(all_results), sum(1 for r in all_results if r.get("bandit_reward",0)>0),
-             round(summary["total_cost_usd"],6), int(datetime.now(timezone.utc).timestamp()*1000), run_id])
+             round(summary["total_cost_usd"],6),
+             int(datetime.now(timezone.utc).timestamp()*1000), run_id])
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
-                       {"run_id": run_id, "scorer": SCORER_MODEL, "active_slots": ACTIVE_SLOTS_STR,
-                        "slot_config": summary["slot_config"], "total_cost_usd": summary["total_cost_usd"],
-                        "routing_updates": summary["routing_updates"], "total_results": len(all_results)})
+                       {"run_id": run_id, "mode": mode, "scorer": SCORER_MODEL,
+                        "active_slots": ACTIVE_SLOTS_STR, "slot_config": slot_cfg,
+                        "total_cost_usd": summary["total_cost_usd"],
+                        "routing_updates": summary["routing_updates"],
+                        "total_results": len(all_results)})
         log.info(f"\nR2: smoke_tests/{date_str}/{run_id}/")
+
     summary["completed_at"] = datetime.now(timezone.utc).isoformat()
     summary["total_results"] = len(all_results)
     return summary
@@ -604,15 +712,24 @@ if __name__ == "__main__":
     parser.add_argument("--provider")
     parser.add_argument("--agent")
     parser.add_argument("--task-type")
+    parser.add_argument("--tier", choices=["standard","premium"], default="standard",
+                        help="standard=cost-optimised routing  |  premium=quality-dominant routing")
     args = parser.parse_args()
-    result = run_smoke_tests(provider_filter=args.provider, agent_filter=args.agent, task_type_filter=args.task_type)
+    result = run_smoke_tests(
+        provider_filter=args.provider,
+        agent_filter=args.agent,
+        task_type_filter=args.task_type,
+        mode=args.tier,
+    )
     active_cases = sum(len(c) for a,t_map in TEST_CASES.items() for t,c in t_map.items() if (a,t) in ACTIVE_TEST_SLOTS)
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — {result['run_id'][:8]}\n{'='*60}")
-    print(f"  Mode:    v5.4 ({len(ACTIVE_TEST_SLOTS)} slots: {ACTIVE_SLOTS_STR})")
-    print(f"  Pool:    {MAX_SLOT_VETERANS}V+{MAX_NEW_ENTRANTS}N/top-{MAX_SLOT_SIZE}")
+    print(f"  Tier:    {args.tier.upper()}")
+    print(f"  Slots:   {len(ACTIVE_TEST_SLOTS)} ({ACTIVE_SLOTS_STR})")
+    print(f"  Pool:    {result['slot_config']}")
     print(f"  Cases:   {active_cases} | Results: {result['total_results']} | Cost: ${result['total_cost_usd']:.4f}")
     print(f"  Skipped: {result['scoring_skipped']}")
     if result["routing_updates"]:
-        print(f"\n  ROUTING UPDATES:")
+        table = "premium_routing" if args.tier=="premium" else "agent_model_routing"
+        print(f"\n  {table.upper()} UPDATES ({len(result['routing_updates'])}):")
         for u in result["routing_updates"]:
             print(f"    {u['agent']:20} {u['task_type']:25} -> {u['winner']}")
