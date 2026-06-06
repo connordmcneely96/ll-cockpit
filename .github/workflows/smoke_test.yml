@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: 'Provider — openrouter+openai run in parallel. anthropic only when re-evaluating Haiku.'
+        description: 'Provider — all runs anthropic+openrouter+openai (use for targeted pass). openrouter_and_openai is default for normal sweeps.'
         required: true
         type: choice
         options:
           - openrouter_and_openai
+          - all
           - openrouter
           - openai
           - anthropic
@@ -44,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: ${{ fromJson(inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
+        provider: ${{ fromJson(inputs.provider == 'all' && '["anthropic","openrouter","openai"]' || inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
 
     steps:
       - name: Checkout
