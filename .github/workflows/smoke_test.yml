@@ -15,7 +15,7 @@ on:
           - anthropic
         default: openrouter_and_openai
       tier:
-        description: 'Routing tier — standard (cost-optimised) or premium (quality-dominant, higher cost)'
+        description: 'Routing tier — standard (cost-optimised) or premium (quality-dominant)'
         required: true
         type: choice
         options:
@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: ${{ fromJson(inputs.provider == 'all' && '["anthropic","openrouter","openai"]' || inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{ 0}"]', inputs.provider)) }}
+        provider: ${{ fromJson(inputs.provider == 'all' && '["anthropic","openrouter","openai"]' || inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
 
     steps:
       - name: Checkout
