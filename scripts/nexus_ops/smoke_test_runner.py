@@ -1,36 +1,13 @@
 #!/usr/bin/env python3
 """
-nexus_ops/smoke_test_runner.py
-Universal model smoke test harness — optimized for PaaS model routing.
-
-v5.4 — Targeted pass: 3 slots re-opened for new model evaluation
-- ATLAS/engineering_calc RE-OPENED: Gemini 2.5 Pro ($1.25/$10) and
-  Gemini 3.5 Flash ($1.50/$9) compete fresh vs Opus 4.7 ($5) + Sonnet 4.6 ($3).
-  Opus has 0 cost_eff (cost > $12 ceiling) so both Gemini models beat it on
-  the reward formula if quality >= 0.76. This is the most important test.
-- NEXUS/intent_classify + HERALD/content_write: Grok 4.1 Fast ($0.20) and
-  Gemini 2.5 Flash Lite ($0.10, 0 tests so far) enter as new entrants.
-- MAX_SLOT_SIZE=4, MAX_NEW_ENTRANTS=2: temporarily expanded for this pass.
-  Reset to 3/0 once targeted pass concludes.
-- Anthropic must run this pass (Opus + Sonnet compete on engineering_calc).
-  GHA: use 'all' provider option.
-
-v5.3.1 retained: Haiku scorer, PRODUCTION_LOCKED, exploitation mode.
-Reset procedure after pass: stage Opus/Sonnet, MAX_SLOT_SIZE=3, MAX_NEW_ENTRANTS=0.
+nexus_ops/smoke_test_runner.py  v5.4 (bugfix: __main__ active_slots_str)
 """
 
 from __future__ import annotations
-
-import argparse
-import json
-import os
-import time
-import uuid
+import argparse, json, os, time, uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
-
 import httpx
-
 from nexus_ops.config import Config, D1Client, R2Client, AnthropicClient, backup_d1, get_logger
 
 log = get_logger("smoke_test_runner")
@@ -38,20 +15,16 @@ log = get_logger("smoke_test_runner")
 SCORER_MODEL          = "claude-haiku-4-5-20251001"
 SCORE_RETRY_ATTEMPTS  = 3
 SCORE_RETRY_BASE_DELAY = 5
-
 QUALITY_FLOOR    = 0.75
 MAX_COST_CEILING = 12.0
 MAX_LAT_CEILING  = 300.0
-
-# v5.4 targeted pass settings — revert to 3/0/3 after pass completes
-MAX_SLOT_VETERANS      = 4   # expanded: ATLAS has 4 competitors
-MAX_NEW_ENTRANTS       = 2   # re-enabled: Grok + Gemini Flash Lite enter NEXUS/HERALD
-MAX_SLOT_SIZE          = 4   # expanded to hold 4-model pools
+MAX_SLOT_VETERANS      = 4
+MAX_NEW_ENTRANTS       = 2
+MAX_SLOT_SIZE          = 4
 CONVERGENCE_THRESHOLD  = 50
 CONVERGENCE_MIN_TRIALS = 8
 
 PRODUCTION_LOCKED: Set[Tuple[str, str]] = {
-    # ATLAS/engineering_calc intentionally removed — RE-OPENED for targeted pass
     ("ATLAS",         "long_doc_ingest"),
     ("ANCHOR",        "research_summarize"),
     ("BUILDER",       "code_generate"),
@@ -69,12 +42,15 @@ PRODUCTION_LOCKED: Set[Tuple[str, str]] = {
 }
 
 ACTIVE_TEST_SLOTS: Set[Tuple[str, str]] = {
-    ("ATLAS",  "engineering_calc"),  # targeted: Gemini 2.5 Pro/Flash vs Opus vs Sonnet
-    ("FORGE",  "code_generate"),     # converged, monitoring only
-    ("FORGE",  "code_complex"),      # converged, monitoring only
-    ("HERALD", "content_write"),     # + Gemini Flash Lite new entrant
-    ("NEXUS",  "intent_classify"),   # + Grok 4.1 Fast + Gemini Flash Lite
+    ("ATLAS",  "engineering_calc"),
+    ("FORGE",  "code_generate"),
+    ("FORGE",  "code_complex"),
+    ("HERALD", "content_write"),
+    ("NEXUS",  "intent_classify"),
 }
+
+# Compute once at module level so __main__ can reference it
+ACTIVE_SLOTS_STR = ", ".join(f"{a}/{t}" for a, t in sorted(ACTIVE_TEST_SLOTS))
 
 TASK_TIERS = {
     "intent_classify": 1, "json_extract": 1, "qa_precheck": 1, "caption_short": 1,
@@ -82,13 +58,7 @@ TASK_TIERS = {
     "social_intel": 2, "research_summarize": 2, "genesis_score_gap": 2, "vision_check": 2,
     "qa_review": 3, "code_generate": 3, "code_complex": 3, "engineering_calc": 3, "long_doc_ingest": 3,
 }
-
-TIER_WEIGHTS = {
-    1: (0.55, 0.25, 0.20),
-    2: (0.65, 0.25, 0.10),
-    3: (0.75, 0.25, 0.00),
-}
-
+TIER_WEIGHTS = {1: (0.55, 0.25, 0.20), 2: (0.65, 0.25, 0.10), 3: (0.75, 0.25, 0.00)}
 TIER_LAT_HARD_CAP = {1: 15.0, 2: 60.0, 3: 999.0}
 
 SCORER_SYSTEM = """You are a strict QA evaluator for an AI agent platform serving mechanical engineering and digital services clients.
@@ -493,11 +463,10 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
     cfg = Config()
     run_id = str(uuid.uuid4())
     now_ts = int(datetime.now(timezone.utc).timestamp()*1000)
-    active_slots_str = ", ".join(f"{a}/{t}" for a,t in sorted(ACTIVE_TEST_SLOTS))
     summary = {"run_id": run_id, "started_at": datetime.now(timezone.utc).isoformat(),
                "scorer": SCORER_MODEL, "convergence": f"{CONVERGENCE_THRESHOLD}%+{CONVERGENCE_MIN_TRIALS}T",
                "slot_config": f"{MAX_SLOT_VETERANS}V+{MAX_NEW_ENTRANTS}N/top-{MAX_SLOT_SIZE}",
-               "active_slots": active_slots_str, "locked_slots": len(PRODUCTION_LOCKED),
+               "active_slots": ACTIVE_SLOTS_STR, "locked_slots": len(PRODUCTION_LOCKED),
                "filters": {"provider": provider_filter, "agent": agent_filter, "task_type": task_type_filter},
                "routing_updates": [], "total_cost_usd": 0.0, "dry_run": cfg.dry_run,
                "errors": [], "scoring_skipped": 0}
@@ -621,7 +590,7 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
              round(summary["total_cost_usd"],6), int(datetime.now(timezone.utc).timestamp()*1000), run_id])
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         r2.upload_json(f"smoke_tests/{date_str}/{run_id}/summary.json",
-                       {"run_id": run_id, "scorer": SCORER_MODEL, "active_slots": active_slots_str,
+                       {"run_id": run_id, "scorer": SCORER_MODEL, "active_slots": ACTIVE_SLOTS_STR,
                         "slot_config": summary["slot_config"], "total_cost_usd": summary["total_cost_usd"],
                         "routing_updates": summary["routing_updates"], "total_results": len(all_results)})
         log.info(f"\nR2: smoke_tests/{date_str}/{run_id}/")
@@ -639,7 +608,7 @@ if __name__ == "__main__":
     result = run_smoke_tests(provider_filter=args.provider, agent_filter=args.agent, task_type_filter=args.task_type)
     active_cases = sum(len(c) for a,t_map in TEST_CASES.items() for t,c in t_map.items() if (a,t) in ACTIVE_TEST_SLOTS)
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — {result['run_id'][:8]}\n{'='*60}")
-    print(f"  Mode:    v5.4 targeted pass ({len(ACTIVE_TEST_SLOTS)} slots: {active_slots_str})")
+    print(f"  Mode:    v5.4 ({len(ACTIVE_TEST_SLOTS)} slots: {ACTIVE_SLOTS_STR})")
     print(f"  Pool:    {MAX_SLOT_VETERANS}V+{MAX_NEW_ENTRANTS}N/top-{MAX_SLOT_SIZE}")
     print(f"  Cases:   {active_cases} | Results: {result['total_results']} | Cost: ${result['total_cost_usd']:.4f}")
     print(f"  Skipped: {result['scoring_skipped']}")
