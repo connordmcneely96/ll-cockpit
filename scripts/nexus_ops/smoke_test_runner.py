@@ -4,19 +4,27 @@ nexus_ops/smoke_test_runner.py  v5.5 — dual-tier routing
 
 Standard tier (--tier standard, default):
   Cost-optimised. TIER_WEIGHTS = 75% quality / 25% cost for Tier 3.
-  Quality floor 0.75. Current winners: Nano, V4 Flash, GPT-4.1 Mini, Qwen3 235B.
+  Quality floor 0.75.
   Written to: model_bandit_params (tier='standard'), agent_model_routing.
-  Slot routing: PRODUCTION_LOCKED skips 14 settled slots, ACTIVE_TEST_SLOTS
-  holds the 5 remaining standard slots under active evaluation.
+  Active standard slot: ATLAS/engineering_calc only.
+  V4 Pro ($0.27, quality 0.929) vs Nano ($0.10, quality 0.838).
+  52.8% vs 47.2% after 3 trials. Needs 5 more sweeps to hit 8-trial minimum.
+  MAX_NEW_ENTRANTS=0 — exploitation only, no more dilution.
+
+  Converged (locked):
+    FORGE/code_generate    → GPT-4.1 Mini  77.4%  34 trials
+    FORGE/code_complex     → GPT-4.1 Mini  53.9%  41 trials
+    HERALD/content_write   → V4 Flash      55.9%  29 trials
+    NEXUS/intent_classify  → Qwen3 235B    53.2%  35 trials
+    BUILDER/code_generate  → GPT-4.1 Mini  39.3%  27 trials
 
 Premium tier (--tier premium):
   Quality-dominant. PREMIUM_TIER_WEIGHTS = 95% quality / 5% cost for Tier 3.
-  Quality floor 0.82. Cost ceiling $50 (cost barely matters).
+  Quality floor 0.82. Cost ceiling $50.
   Candidates: GPT-4.1, Gemini 2.5 Pro, Gemini 3.5 Flash, Gemini 2.5 Flash, Opus 4.8.
   Written to: model_bandit_params (tier='premium'), premium_routing.
   Slot routing: tests ALL 18 slots except META_COGNITION (broken quality floor)
   and already-converged premium slots. PRODUCTION_LOCKED does NOT apply.
-  Purpose: tenants paying for premium tier get quality-maximised routing.
 """
 
 from __future__ import annotations
@@ -29,8 +37,8 @@ from nexus_ops.config import Config, D1Client, R2Client, AnthropicClient, backup
 log = get_logger("smoke_test_runner")
 
 # ── Shared ────────────────────────────────────────────────────────────────────
-SCORER_MODEL          = "claude-haiku-4-5-20251001"
-SCORE_RETRY_ATTEMPTS  = 3
+SCORER_MODEL           = "claude-haiku-4-5-20251001"
+SCORE_RETRY_ATTEMPTS   = 3
 SCORE_RETRY_BASE_DELAY = 5
 
 # ── Standard-tier reward params ───────────────────────────────────────────────
@@ -53,25 +61,31 @@ PREMIUM_MODELS: Set[str] = {
 }
 
 # ── Slot config ───────────────────────────────────────────────────────────────
-MAX_SLOT_VETERANS      = 4
-MAX_NEW_ENTRANTS       = 2
-MAX_SLOT_SIZE          = 4
-PREMIUM_SLOT_VETERANS  = 5
-PREMIUM_NEW_ENTRANTS   = 2
-PREMIUM_SLOT_SIZE      = 5
-CONVERGENCE_THRESHOLD  = 50
-CONVERGENCE_MIN_TRIALS = 8
+MAX_SLOT_VETERANS       = 2   # ATLAS race is 2 models — no extras needed
+MAX_NEW_ENTRANTS        = 0   # exploitation only — V4 Pro vs Nano, no new entrants
+MAX_SLOT_SIZE           = 2
+PREMIUM_SLOT_VETERANS   = 5
+PREMIUM_NEW_ENTRANTS    = 2
+PREMIUM_SLOT_SIZE       = 5
+CONVERGENCE_THRESHOLD   = 50
+CONVERGENCE_MIN_TRIALS  = 8
 PREMIUM_CONV_MIN_TRIALS = 5
 
-# ── Slot routing ──────────────────────────────────────────────────────────────
+# ── Standard slot routing ─────────────────────────────────────────────────────
+# All converged standard slots move to PRODUCTION_LOCKED.
+# Only ATLAS/engineering_calc remains active — sole outstanding standard race.
 PRODUCTION_LOCKED: Set[Tuple[str, str]] = {
     ("ATLAS",         "long_doc_ingest"),
     ("ANCHOR",        "research_summarize"),
     ("BUILDER",       "code_generate"),
     ("BUILDER",       "vision_check"),
+    ("FORGE",         "code_generate"),    # converged 77.4% — locked
+    ("FORGE",         "code_complex"),     # converged 53.9% — locked
     ("HERALD",        "caption_short"),
+    ("HERALD",        "content_write"),    # converged 55.9% — locked
     ("INTAKE",        "json_extract"),
     ("META_COGNITION","qa_review"),
+    ("NEXUS",         "intent_classify"),  # converged 53.2% — locked
     ("NEXUS",         "strategic_decide"),
     ("ORACLE",        "genesis_score_gap"),
     ("ORACLE",        "research_summarize"),
@@ -82,11 +96,7 @@ PRODUCTION_LOCKED: Set[Tuple[str, str]] = {
 }
 
 ACTIVE_TEST_SLOTS: Set[Tuple[str, str]] = {
-    ("ATLAS",  "engineering_calc"),
-    ("FORGE",  "code_generate"),
-    ("FORGE",  "code_complex"),
-    ("HERALD", "content_write"),
-    ("NEXUS",  "intent_classify"),
+    ("ATLAS", "engineering_calc"),   # V4 Pro vs Nano — 3 trials, needs 5 more
 }
 
 ACTIVE_SLOTS_STR = ", ".join(f"{a}/{t}" for a, t in sorted(ACTIVE_TEST_SLOTS))
@@ -402,7 +412,6 @@ def call_model(model_id: str, provider: str, prompt: str, cfg: Config, timeout: 
 
 
 def compute_bandit_reward(composite_score, cost_input, cost_output, latency_ms, task_type, mode="standard"):
-    """mode='premium' uses quality-dominant weights and loose cost ceiling."""
     floor   = PREMIUM_QUALITY_FLOOR if mode == "premium" else QUALITY_FLOOR
     ceiling = PREMIUM_COST_CEILING  if mode == "premium" else MAX_COST_CEILING
     weights = PREMIUM_TIER_WEIGHTS  if mode == "premium" else TIER_WEIGHTS
@@ -441,7 +450,6 @@ def score_response(task_prompt, output, criteria, cfg):
 
 
 def get_slot_competitors(d1, agent, task_type, all_models, mode="standard"):
-    """Select models to test this slot. Premium mode filters to PREMIUM_MODELS only."""
     tier_clause = "AND tier='premium'" if mode == "premium" else "AND tier='standard'"
     params = d1.query_rows(
         f"SELECT model_id, alpha FROM model_bandit_params WHERE agent=? AND task_type=? {tier_clause} ORDER BY alpha DESC",
@@ -571,13 +579,12 @@ def run_smoke_tests(provider_filter=None, agent_filter=None, task_type_filter=No
             for task_type, cases in task_map.items():
                 if task_type_filter and task_type != task_type_filter: continue
 
-                # ── Slot routing: standard locks 14 settled slots; premium tests all except broken/converged
                 if mode == "standard":
                     if (agent, task_type) in PRODUCTION_LOCKED:
                         log.info(f"SKIP [{agent}/{task_type}] — production locked"); continue
                     if (agent, task_type) not in ACTIVE_TEST_SLOTS:
                         log.info(f"SKIP [{agent}/{task_type}] — not active"); continue
-                else:  # premium: test all slots except META_COGNITION and already-converged
+                else:
                     if agent == "META_COGNITION":
                         log.info(f"SKIP [{agent}/{task_type}] — quality floor broken"); continue
                     ps = d1.query_rows(
@@ -717,14 +724,14 @@ if __name__ == "__main__":
         task_type_filter=args.task_type,
         mode=args.tier,
     )
-    active_cases = sum(len(c) for a,t_map in TEST_CASES.items() for t,c in t_map.items() if (a,t) in ACTIVE_TEST_SLOTS)
     print(f"\n{'='*60}\nSMOKE TEST COMPLETE — {result['run_id'][:8]}\n{'='*60}")
     print(f"  Tier:    {args.tier.upper()}")
+    print(f"  Slots:   {ACTIVE_SLOTS_STR}")
     print(f"  Pool:    {result['slot_config']}")
-    print(f"  Cases:   {active_cases} | Results: {result['total_results']} | Cost: ${result['total_cost_usd']:.4f}")
+    print(f"  Results: {result['total_results']} | Cost: ${result['total_cost_usd']:.4f}")
     print(f"  Skipped: {result['scoring_skipped']}")
     if result["routing_updates"]:
         table = "premium_routing" if args.tier=="premium" else "agent_model_routing"
-        print(f"\n  {table.upper()} UPDATES ({len(result['routing_updates'])}):")
+        print(f"\n  {table.upper()} UPDATES:")
         for u in result["routing_updates"]:
             print(f"    {u['agent']:20} {u['task_type']:25} -> {u['winner']}")
