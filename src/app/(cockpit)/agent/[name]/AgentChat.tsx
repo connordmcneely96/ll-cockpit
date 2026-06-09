@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useAgentStore } from '@/stores/agentStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useAgentStream } from '@/hooks/useAgentStream'
 import { AgentMessage } from './AgentMessage'
 import { PermissionGate } from './PermissionGate'
@@ -50,6 +51,9 @@ export function AgentChat({ agent }: AgentChatProps) {
   const loadChat = useAgentStore((s) => s.loadChat)
   const clearSession = useAgentStore((s) => s.clearSession)
 
+  const qualityTier = useUiStore((s) => s.qualityTier)
+  const setQualityTier = useUiStore((s) => s.setQualityTier)
+
   const { sendMessage } = useAgentStream(agent.name)
 
   const messageCount = messages.length
@@ -71,7 +75,6 @@ export function AgentChat({ agent }: AgentChatProps) {
         }
         if (cancelled) return
         if (data.chat.agent_name !== agent.name) {
-          // Chat belongs to a different agent
           alert(`This chat belongs to ${data.chat.agent_name.toUpperCase()}.`)
           return
         }
@@ -167,6 +170,22 @@ export function AgentChat({ agent }: AgentChatProps) {
               {tokens.toLocaleString()} tok · {formatCost(cost)}
             </span>
           )}
+          {/* Quality tier toggle — routes to standard or premium model routing table */}
+          <button
+            onClick={() => setQualityTier(qualityTier === 'standard' ? 'premium' : 'standard')}
+            disabled={isStreaming}
+            title={qualityTier === 'premium'
+              ? 'Premium tier active (GPT-4.1 / Opus 4.8) — click to switch to Standard'
+              : 'Standard tier active (cost-optimised) — click to switch to Premium'}
+            className={[
+              'px-2 py-0.5 rounded-full font-mono text-[10px] transition-all disabled:opacity-40',
+              qualityTier === 'premium'
+                ? 'bg-yellow-400/15 border border-yellow-400/30 text-yellow-400 hover:bg-yellow-400/25'
+                : 'bg-base-3 border border-white/[0.08] text-text3 hover:text-text2 hover:border-white/[0.15]',
+            ].join(' ')}
+          >
+            {qualityTier === 'premium' ? '✦ PRO' : 'STD'}
+          </button>
           <button
             onClick={handleNewChat}
             disabled={isStreaming}
