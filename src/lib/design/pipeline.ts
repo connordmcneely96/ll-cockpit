@@ -131,6 +131,12 @@ export function classifySection(name: string, description: string): 'compose_sim
 // DAG BUILDER — programmatic, no HERMES
 // ──────────────────────────────────────────────────────────────────────
 
+// Per-section cost constants — single source of truth for planner + DAG builder.
+export const DESIGNER_COST_USD = 0.02
+export const DESIGNER_COST_WITH_SYSTEM_USD = 0.03
+export const CRITIC_COST_USD = 0.015
+export const COMPOSER_COST_USD = { compose_simple: 0.015, compose_complex: 0.05 } as const
+
 export interface ParsedSection {
   name: string
   slug: string
@@ -172,8 +178,11 @@ export function buildDesignBuildDAG(
   iterationNumber: number = 1,
   clientFeedback?: string,
   attachedSystem?: AttachedDesignSystem,
+  approvedPlan?: ParsedSection[],
 ): DecompositionResult {
-  const sections = parseSections(brief.must_have_sections)
+  const sections = (approvedPlan && approvedPlan.length > 0)
+    ? approvedPlan
+    : parseSections(brief.must_have_sections)
   const subtasks: DecompositionResult['subtasks'] = []
 
   const briefSummary = [
@@ -212,7 +221,7 @@ export function buildDesignBuildDAG(
       }`,
     task_type: 'design_language',
     depends_on: [],
-    estimated_cost_usd: attachedSystem ? 0.03 : 0.02,
+    estimated_cost_usd: attachedSystem ? DESIGNER_COST_WITH_SYSTEM_USD : DESIGNER_COST_USD,
     estimated_duration_seconds: 15,
     risk_level: 'low',
     human_required: false,
@@ -225,7 +234,7 @@ export function buildDesignBuildDAG(
     const id = `st_${i + 2}`
     composerIds.push(id)
     const taskType = classifySection(sec.name, sec.description)
-    const estCost = taskType === 'compose_simple' ? 0.015 : 0.05
+    const estCost = COMPOSER_COST_USD[taskType]
     estimatedComposerCost += estCost
 
     const guidanceBlock =
@@ -270,13 +279,13 @@ export function buildDesignBuildDAG(
     task: `Review the assembled HTML page against this brief and your rubric. Score 0–100. Return JSON per your system prompt.\n\nBRIEF:\n${briefSummary}`,
     task_type: 'critique_design',
     depends_on: [assemblerId],
-    estimated_cost_usd: 0.015,
+    estimated_cost_usd: CRITIC_COST_USD,
     estimated_duration_seconds: 20,
     risk_level: 'low',
     human_required: false,
   })
 
-  const totalCost = (attachedSystem ? 0.03 : 0.02) + estimatedComposerCost + 0.015
+  const totalCost = (attachedSystem ? DESIGNER_COST_WITH_SYSTEM_USD : DESIGNER_COST_USD) + estimatedComposerCost + CRITIC_COST_USD
   const totalDurationSec = 15 + sections.length * 30 + 1 + 20
 
   return {
