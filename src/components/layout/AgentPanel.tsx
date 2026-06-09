@@ -44,7 +44,6 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
       })
       setVerdict(approved ? 'approved' : 'rejected')
 
-      // Add a system message into the chat showing the verdict
       addMessage(agentName, {
         id: Math.random().toString(36).slice(2),
         role: 'assistant',
@@ -54,7 +53,6 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
         timestamp: Date.now(),
       })
 
-      // Clear the pending tool call
       setTimeout(() => setPendingToolCall(null), 1200)
     } finally {
       setLoading(false)
@@ -75,7 +73,6 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
         boxShadow: isDone ? 'none' : '0 0 16px rgba(245,158,11,0.12)',
       }}>
 
-      {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5">
         {isDone
           ? verdict === 'approved'
@@ -99,7 +96,6 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
         </button>
       </div>
 
-      {/* Expandable input preview */}
       {expanded && (
         <div className="px-3 pb-2">
           <pre className="font-mono text-[9px] whitespace-pre-wrap rounded-xl p-2 overflow-x-auto"
@@ -109,7 +105,6 @@ function PermissionGate({ toolCall, agentName }: { toolCall: ToolCallEvent; agen
         </div>
       )}
 
-      {/* Approve / Reject buttons */}
       {!isDone && (
         <div className="flex gap-2 px-3 pb-3">
           <button
@@ -208,6 +203,8 @@ function HistoryView({ agentName, onLoad }: { agentName: AgentName; onLoad: () =
 // ── AgentChatInner ──
 function AgentChatInner({ agentName }: { agentName: AgentName }) {
   const setSelectedAgent = useUiStore(s => s.setSelectedAgent)
+  const qualityTier = useUiStore(s => s.qualityTier)
+  const setQualityTier = useUiStore(s => s.setQualityTier)
   const clearSession = useAgentStore(s => s.clearSession)
   const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat')
   const [input, setInput] = useState('')
@@ -302,7 +299,6 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
         )}
         {isStreaming && <StreamingDots />}
 
-        {/* PermissionGate — shown inline after messages when tool requires approval */}
         {pendingToolCall && !isStreaming && (
           <PermissionGate toolCall={pendingToolCall} agentName={agentName} />
         )}
@@ -313,7 +309,6 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
       {/* Compose — only shown on Chat tab */}
       {activeTab === 'chat' &&
       <div className="shrink-0 p-3" style={{ borderTop: '1px solid var(--t-glass-bdr)', background: 'var(--t-panel)' }}>
-        {/* Locked indicator when pending approval */}
         {pendingToolCall && !isStreaming && (
           <div className="flex items-center gap-1.5 mb-2 px-1">
             <Shield size={10} style={{ color: '#f59e0b' }} />
@@ -338,12 +333,20 @@ function AgentChatInner({ agentName }: { agentName: AgentName }) {
           }}
         />
         <div className="flex items-center justify-between mt-1.5">
+          {/* Quality tier toggle — replaces AUTO placeholder */}
           <button
-            className="text-[10px] font-mono px-2 py-0.5 rounded-lg transition-all"
-            style={{ background: 'var(--t-panel)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx3)', boxShadow: 'var(--t-shadow)' }}
-            title="Model routing: AUTO selects the best model for the task"
-            aria-label="Model routing mode: AUTO"
-          >AUTO ▼</button>
+            onClick={() => setQualityTier(qualityTier === 'standard' ? 'premium' : 'standard')}
+            disabled={isStreaming}
+            title={qualityTier === 'premium'
+              ? 'Premium tier active (GPT-4.1 / Opus 4.8) — click for Standard'
+              : 'Standard tier active — click for Premium (GPT-4.1 / Opus 4.8)'}
+            className="text-[10px] font-mono px-2 py-0.5 rounded-lg transition-all disabled:opacity-40"
+            style={qualityTier === 'premium'
+              ? { background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b', boxShadow: 'var(--t-shadow)' }
+              : { background: 'var(--t-panel)', border: '1px solid var(--t-glass-bdr)', color: 'var(--t-tx2)', boxShadow: 'var(--t-shadow)' }}
+          >
+            {qualityTier === 'premium' ? '✦ PRO' : 'STD'}
+          </button>
           <button onClick={handleSubmit} disabled={!input.trim() || isStreaming || !!pendingToolCall}
             className="font-mono text-xs px-3 py-1 rounded-lg transition-all disabled:opacity-40"
             style={{ background: 'var(--t-p)', color: '#fff', boxShadow: '0 2px 8px var(--t-p-glow)' }}>
