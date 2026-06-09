@@ -399,10 +399,6 @@ export interface DesignTokens {
     body_font: string
     scale?: Record<string, string>
     // Sprint 18N — typography debt fix (982e66e5)
-    // Allow attached design systems (Notion, Stripe, etc) to prescribe a
-    // richer font hierarchy beyond display/body, so e.g. Notion's
-    // Inter + Lora + JetBrains Mono triad carries through to the rendered
-    // HTML. All three optional — existing tokens stay backwards compatible.
     font_serif?: string
     font_sans?: string
     font_mono?: string
@@ -417,10 +413,6 @@ export interface DesignTokens {
     easing?: string
   }
   rationale?: string
-  // Sprint 18Y — runtime dark mode + accent picker
-  // If DESIGNER includes these, they are used directly.
-  // If absent, deriveDarkPalette() and generateAccentAlternates() fill them in
-  // at render time inside renderFullHtml().
   palette_dark?: {
     primary: string
     accent: string
@@ -450,13 +442,13 @@ export interface CloudflareEnv {
   KNOWLEDGE_VECTORIZE: VectorizeIndex
   ATLAS_RAG: VectorizeIndex
   ANTHROPIC_API_KEY: string
+  OPENROUTER_API_KEY?: string   // model-router: OpenRouter + OpenAI-compatible calls
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
   SUPABASE_SERVICE_ROLE_KEY: string
   ASSETS: Fetcher
   WORKER_SELF_REFERENCE?: Fetcher
   // Sprint 121F — Cloudflare management API credentials for Pages deploys.
-  // Set via: wrangler secret put CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
   CLOUDFLARE_API_TOKEN?: string
   CLOUDFLARE_ACCOUNT_ID?: string
 }
