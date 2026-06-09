@@ -4,7 +4,6 @@
  * routing tables. Results are KV-cached for 60 s.
  * Falls back to claude-sonnet-4-5 on any lookup failure.
  */
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types'
 
 export type RoutingProvider = 'anthropic' | 'openrouter' | 'openai'
 
@@ -102,7 +101,6 @@ export async function getRoute(
     }
 
     if (!row?.winning_model) {
-      // Premium miss → try standard
       if (qualityTier === 'premium') return getRoute(db, kv, agent, taskTypeOverride, 'standard')
       return DEFAULT_ROUTE
     }
