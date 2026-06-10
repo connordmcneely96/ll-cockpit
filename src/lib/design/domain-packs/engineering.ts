@@ -112,4 +112,81 @@ export const engineeringPack: DomainBlock[] = [
     schema_json: '{"settings":[{"type":"text","id":"heading","label":"Heading","default":"Technical Specifications"},{"type":"text","id":"model","label":"Model / Subtitle","default":""}],"blocks":[{"type":"spec-row","name":"Spec Row","limit":30,"settings":[{"type":"text","id":"parameter","label":"Parameter"},{"type":"text","id":"value","label":"Value"},{"type":"text","id":"unit","label":"Unit"},{"type":"text","id":"standard","label":"Standard / Ref."}]}]}',
     default_props_json: '{"heading":"Technical Specifications"}',
   },
+  {
+    slug: 'compliance-matrix',
+    name: 'Compliance Matrix',
+    category: 'Engineering',
+    description: 'Requirement-to-standard traceability table — clause references, verification method, status, and evidence.',
+    render_strategy: 'template',
+    template_html: `<section id="compliance-matrix" class="py-16 px-6 bg-background">
+  <div class="max-w-6xl mx-auto">
+    <div class="flex items-baseline justify-between flex-wrap gap-2 mb-1">
+      <h2 class="text-2xl font-display font-bold text-foreground">Standards Compliance Matrix</h2>
+      <span class="text-sm text-muted-foreground font-mono">CV-300 · Conformance Record</span>
+    </div>
+    <p class="text-sm text-muted-foreground mb-6">Requirement-to-standard traceability with verification status.</p>
+    <div class="overflow-x-auto border border-border rounded-lg">
+      <table class="w-full text-sm" style="min-width:760px">
+        <thead>
+          <tr class="border-b-2 border-border text-left bg-card">
+            <th class="p-3 font-medium text-foreground">Requirement</th>
+            <th class="p-3 font-medium text-foreground">Standard / Clause</th>
+            <th class="p-3 font-medium text-foreground">Method</th>
+            <th class="p-3 font-medium text-foreground text-center">Status</th>
+            <th class="p-3 font-medium text-foreground">Evidence</th>
+          </tr>
+        </thead>
+        <tbody class="text-muted-foreground">
+          <tr class="border-b border-border"><td class="p-3">Material — sour service</td><td class="p-3">NACE MR0175 / ISO 15156</td><td class="p-3">Material cert</td><td class="p-3 text-center"><span class="inline-block px-2 py-0.5 rounded text-xs bg-primary text-primary-foreground">Compliant</span></td><td class="p-3 text-foreground">MTR-4471</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Pressure rating verification</td><td class="p-3">API 6A §10.4</td><td class="p-3">Hydrostatic test</td><td class="p-3 text-center"><span class="inline-block px-2 py-0.5 rounded text-xs bg-primary text-primary-foreground">Compliant</span></td><td class="p-3 text-foreground">QTR-1182</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Pressure-temperature ratings</td><td class="p-3">ASME B16.34</td><td class="p-3">Design analysis</td><td class="p-3 text-center"><span class="inline-block px-2 py-0.5 rounded text-xs bg-primary text-primary-foreground">Compliant</span></td><td class="p-3 text-foreground">DA-220</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Seat leakage</td><td class="p-3">API 598 / FCI 70-2 Class VI</td><td class="p-3">Seat test</td><td class="p-3 text-center"><span class="inline-block px-2 py-0.5 rounded text-xs border border-border text-foreground">In progress</span></td><td class="p-3 text-foreground">—</td></tr>
+          <tr><td class="p-3">Quality management system</td><td class="p-3">API Q1 / ISO 9001</td><td class="p-3">Audit</td><td class="p-3 text-center"><span class="inline-block px-2 py-0.5 rounded text-xs bg-primary text-primary-foreground">Compliant</span></td><td class="p-3 text-foreground">Cert 30-1847</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-muted-foreground mt-3">Status reflects current verification state; evidence references controlled QA documents.</p>
+  </div>
+</section>`,
+    schema_json: '{"settings":[{"type":"text","id":"heading","label":"Heading","default":"Standards Compliance Matrix"},{"type":"text","id":"subtitle","label":"Subtitle","default":""}],"blocks":[{"type":"compliance-row","name":"Compliance Row","limit":30,"settings":[{"type":"text","id":"requirement","label":"Requirement"},{"type":"text","id":"standard","label":"Standard / Clause"},{"type":"text","id":"method","label":"Method"},{"type":"text","id":"status","label":"Status"},{"type":"text","id":"evidence","label":"Evidence"}]}]}',
+    default_props_json: '{"heading":"Standards Compliance Matrix"}',
+  },
+  {
+    slug: 'materials-table',
+    name: 'Materials of Construction',
+    category: 'Engineering',
+    description: 'Bill-of-materials table — component, material, governing standard/grade, and service notes.',
+    render_strategy: 'template',
+    template_html: `<section id="materials-table" class="py-16 px-6 bg-background">
+  <div class="max-w-5xl mx-auto">
+    <div class="flex items-baseline justify-between flex-wrap gap-2 mb-4">
+      <h2 class="text-2xl font-display font-bold text-foreground">Materials of Construction</h2>
+      <span class="text-sm text-muted-foreground font-mono">CV-300 · BOM Rev A</span>
+    </div>
+    <div class="border border-border rounded-lg overflow-hidden">
+      <table class="w-full text-sm" style="table-layout:fixed">
+        <thead>
+          <tr class="border-b-2 border-border text-left bg-card">
+            <th class="p-3 font-medium text-foreground" style="width:24%">Component</th>
+            <th class="p-3 font-medium text-foreground" style="width:28%">Material</th>
+            <th class="p-3 font-medium text-foreground" style="width:24%">Standard / Grade</th>
+            <th class="p-3 font-medium text-foreground" style="width:24%">Service Notes</th>
+          </tr>
+        </thead>
+        <tbody class="text-muted-foreground">
+          <tr class="border-b border-border"><td class="p-3">Body / bonnet</td><td class="p-3 text-foreground">Carbon steel, WCB</td><td class="p-3">ASTM A216 WCB</td><td class="p-3">Standard service</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Body (sour service)</td><td class="p-3 text-foreground">Low-carbon CS / 316</td><td class="p-3">ASTM A352 LCC</td><td class="p-3">NACE MR0175 sour service</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Trim / disc</td><td class="p-3 text-foreground">316 / 316L stainless</td><td class="p-3">ASTM A182 F316</td><td class="p-3">Hardfaced seating face</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Seat hardfacing</td><td class="p-3 text-foreground">Stellite 6</td><td class="p-3">AWS A5.21</td><td class="p-3">Erosion / galling resistance</td></tr>
+          <tr class="border-b border-border"><td class="p-3">Spring</td><td class="p-3 text-foreground">Inconel X-750</td><td class="p-3">AMS 5698</td><td class="p-3">Corrosion + fatigue resistance</td></tr>
+          <tr><td class="p-3">Fasteners</td><td class="p-3 text-foreground">B7 stud / 2H nut</td><td class="p-3">ASTM A193 B7 / A194 2H</td><td class="p-3">PTFE coated</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-muted-foreground mt-3">Material selections per service class; sour-service variants conform to NACE MR0175 / ISO 15156.</p>
+  </div>
+</section>`,
+    schema_json: '{"settings":[{"type":"text","id":"heading","label":"Heading","default":"Materials of Construction"},{"type":"text","id":"subtitle","label":"Subtitle","default":""}],"blocks":[{"type":"material-row","name":"Material Row","limit":30,"settings":[{"type":"text","id":"component","label":"Component"},{"type":"text","id":"material","label":"Material"},{"type":"text","id":"standard","label":"Standard / Grade"},{"type":"text","id":"notes","label":"Service Notes"}]}]}',
+    default_props_json: '{"heading":"Materials of Construction"}',
+  },
 ]
