@@ -19,6 +19,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { getBindings } from '@/lib/cloudflare'
 import { seedSectionTypes } from '@/lib/design/section-types-seeder'
 import { seedEngineeringPack } from '@/lib/design/engineering-pack-seeder'
+import { engineeringPack } from '@/lib/design/domain-packs/engineering'
 import type { User } from '@supabase/supabase-js'
 
 const ADMIN_USER_ID = '579acc61-b896-4a0e-bcee-6c369ee5f303'
@@ -82,7 +83,7 @@ export async function GET(req: NextRequest) {
       .prepare(`SELECT COUNT(*) AS n FROM design_section_types WHERE source = 'domain-pack:engineering'`)
       .first<{ n: number }>()
 
-    if ((packCount?.n ?? 0) === 0) {
+    if ((packCount?.n ?? 0) < engineeringPack.length) {
       console.log('[section-types] engineering pack absent — seeding in background')
       try {
         const ctx = getCloudflareContext().ctx
