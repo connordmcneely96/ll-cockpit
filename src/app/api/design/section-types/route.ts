@@ -172,15 +172,17 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
 
-  if (body.action !== 'seed') {
+  if (body.action !== 'seed' && body.action !== 'seed-engineering') {
     return new Response(
-      JSON.stringify({ error: 'Unknown action', allowed: ['seed'] }),
+      JSON.stringify({ error: 'Unknown action', allowed: ['seed', 'seed-engineering'] }),
       { status: 400 },
     )
   }
 
   const env = getBindings()
-  const result = await seedSectionTypes(env)
+  const result = body.action === 'seed-engineering'
+    ? await seedEngineeringPack(env)
+    : await seedSectionTypes(env)
 
   return new Response(JSON.stringify(result, null, 2), {
     headers: { 'Content-Type': 'application/json' },

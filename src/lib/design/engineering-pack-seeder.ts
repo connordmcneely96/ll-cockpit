@@ -13,7 +13,14 @@ export async function seedEngineeringPack(env: CloudflareEnv): Promise<{ seeded:
           schema_json, default_props_json, source, render_strategy,
           template_html, created_at)
        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(slug) DO NOTHING`,
+       ON CONFLICT(slug) DO UPDATE SET
+         name = excluded.name,
+         category = excluded.category,
+         description = excluded.description,
+         schema_json = excluded.schema_json,
+         default_props_json = excluded.default_props_json,
+         render_strategy = excluded.render_strategy,
+         template_html = excluded.template_html`,
     )
       .bind(
         crypto.randomUUID(),
