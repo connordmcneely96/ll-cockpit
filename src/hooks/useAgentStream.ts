@@ -18,7 +18,7 @@ export function useAgentStream(agentName: AgentName) {
     addTokens,
     setChatId,
   } = useAgentStore()
-  const { addGlobalTokens } = useUiStore()
+  const { addGlobalTokens, qualityTier } = useUiStore()
 
   const sendMessage = useCallback(
     async (userMessage: string) => {
@@ -50,6 +50,7 @@ export function useAgentStream(agentName: AgentName) {
             agentName,
             message: userMessage,
             chatId: currentChatId,    // Sprint 17 v0.3.0 — continues server-side thread
+            quality_tier: qualityTier, // Routes to standard or premium D1 routing table
           }),
         })
 
@@ -114,7 +115,7 @@ export function useAgentStream(agentName: AgentName) {
         }
       }
     },
-    [agentName, addMessage, appendToLastMessage, setPendingToolCall, setStreaming, addTokens, setChatId, addGlobalTokens]
+    [agentName, qualityTier, addMessage, appendToLastMessage, setPendingToolCall, setStreaming, addTokens, setChatId, addGlobalTokens]
   )
 
   return { sendMessage }

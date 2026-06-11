@@ -7,6 +7,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { executeOneSubtask } from '@/lib/orchestrator'
+import { openGatesForRun } from '@/lib/permission-gate'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -49,6 +50,9 @@ export async function POST(req: NextRequest) {
   ctx.waitUntil(
     (async () => {
       try {
+        if (!force) {
+          await openGatesForRun(env.DB, user.id, runId)
+        }
         const readyQuery = force
           ? `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' ORDER BY short_id ASC LIMIT 10`
           : `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' AND human_required = 0 ORDER BY short_id ASC LIMIT 10`

@@ -12,6 +12,12 @@ interface UiState {
   workspaces: string[]
   setWorkspace: (ws: string) => void
 
+  // Model routing tier — controls which D1 routing table is used per request.
+  // 'standard' = cost-optimised winners (Nano/V4 Flash/GPT-4.1 Mini/Qwen3)
+  // 'premium'  = quality-dominant winners (GPT-4.1/Gemini 2.5 Flash/Opus 4.8)
+  qualityTier: 'standard' | 'premium'
+  setQualityTier: (tier: 'standard' | 'premium') => void
+
   openCommandPalette: () => void
   closeCommandPalette: () => void
   toggleSidebar: () => void
@@ -27,6 +33,7 @@ export const useUiStore = create<UiState>((set) => ({
   selectedAgent: null,
   currentWorkspace: 'NEXUS PRIME',
   workspaces: ['NEXUS PRIME'],
+  qualityTier: 'standard',
 
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
@@ -39,4 +46,5 @@ export const useUiStore = create<UiState>((set) => ({
     })),
   setSelectedAgent: (name) => set({ selectedAgent: name }),
   setWorkspace: (ws) => set({ currentWorkspace: ws }),
+  setQualityTier: (tier) => set({ qualityTier: tier }),
 }))

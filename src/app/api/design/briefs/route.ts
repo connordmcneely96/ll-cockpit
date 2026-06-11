@@ -26,12 +26,15 @@ import { getBindings } from '@/lib/cloudflare'
 import { persistDecomposition } from '@/lib/hermes'
 import { runAutoWave } from '@/lib/orchestrator'
 import { buildDesignBuildDAG, loadAttachedDesignSystem } from '@/lib/design/pipeline'
+import { generateSectionPlan, persistSectionPlan } from '@/lib/design/section-plans'
 import type { DesignBriefInput } from '@/types'
 import type { User } from '@supabase/supabase-js'
 
 // Sprint 18E — extend the brief input shape with an optional attached system slug
+// Sprint 121A-1 — add plan_mode flag
 interface DesignBriefInputExt extends DesignBriefInput {
   attached_design_system_slug?: string
+  plan_mode?: boolean
 }
 
 // Sprint 18Y-Followup — Canonical allowlist of skill slugs that the rendered
@@ -119,6 +122,66 @@ export async function POST(req: NextRequest) {
   const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
+  }
+
+  // Sprint 121A-1 — Plan Mode branch: generate section plan, persist as draft, return for approval
+  if (body.plan_mode === true) {
+    const attachedSystemPlan = body.attached_design_system_slug
+      ? await loadAttachedDesignSystem(env, body.attached_design_system_slug, user.id)
+      : null
+    if (body.attached_design_system_slug && !attachedSystemPlan) {
+      return new Response(
+        JSON.stringify({
+          error: 'design_system_not_found',
+          slug: body.attached_design_system_slug,
+          message: 'The requested design system was not found or is not accessible.',
+        }),
+        { status: 404 },
+      )
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const briefId = crypto.randomUUID()
+    await env.DB.prepare(
+      `INSERT INTO design_briefs
+       (id, user_id, client_name, business_description, target_audience, mood_tone,
+        style_references, must_have_sections, brand_colors, constraints,
+        status, current_iteration, attached_design_system_slug, skills, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?, ?)`,
+    ).bind(
+      briefId, user.id, body.client_name, body.business_description,
+      body.target_audience, body.mood_tone,
+      body.style_references ? JSON.stringify(body.style_references) : null,
+      body.must_have_sections,
+      body.brand_colors ?? null,
+      body.constraints ?? null,
+      body.attached_design_system_slug ?? null,
+      skillsCheck.value,
+      now, now,
+    ).run()
+
+    const plan = await generateSectionPlan(env, apiKey, body)
+    const planId = await persistSectionPlan(env, {
+      briefId,
+      userId: user.id,
+      sections: plan.sections,
+      totalCost: plan.estimated_total_cost_usd,
+      modelId: plan.model_id,
+    })
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        brief_id: briefId,
+        status: 'draft',
+        plan_mode: true,
+        plan: {
+          id: planId,
+          sections: plan.sections,
+          estimated_total_cost_usd: plan.estimated_total_cost_usd,
+          section_count: plan.sections.length,
+        },
+      }, null, 2),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
   }
 
   // Sprint 18E — load attached design system if requested

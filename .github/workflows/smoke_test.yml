@@ -4,15 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: 'Provider — openrouter+openai run in parallel. anthropic only when re-evaluating Haiku.'
+        description: 'Provider — openrouter_and_openai for standard sweeps, all for premium (needs Anthropic).'
         required: true
         type: choice
         options:
           - openrouter_and_openai
+          - all
           - openrouter
           - openai
           - anthropic
         default: openrouter_and_openai
+      tier:
+        description: 'Routing tier — standard (cost-optimised) or premium (quality-dominant)'
+        required: true
+        type: choice
+        options:
+          - standard
+          - premium
+        default: standard
       agent:
         description: 'Agent to test (leave blank for all active slots)'
         required: false
@@ -44,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: ${{ fromJson(inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
+        provider: ${{ fromJson(inputs.provider == 'all' && '["anthropic","openrouter","openai"]' || inputs.provider == 'openrouter_and_openai' && '["openrouter","openai"]' || format('["{0}"]', inputs.provider)) }}
 
     steps:
       - name: Checkout
@@ -82,13 +91,13 @@ jobs:
           DRY_RUN=false
           ENVEOF
 
-      - name: Run smoke tests — ${{ matrix.provider }}
+      - name: Run smoke tests — ${{ matrix.provider }} [${{ inputs.tier }}]
         working-directory: scripts
         env:
           PYTHONPATH: ${{ github.workspace }}/scripts
           DRY_RUN: false
         run: |
-          ARGS="--provider ${{ matrix.provider }}"
+          ARGS="--provider ${{ matrix.provider }} --tier ${{ inputs.tier }}"
           if [ -n "${{ inputs.agent }}" ]; then
             ARGS="$ARGS --agent ${{ inputs.agent }}"
           fi
@@ -102,6 +111,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-logs-${{ matrix.provider }}-${{ github.run_id }}
+          name: smoke-logs-${{ matrix.provider }}-${{ inputs.tier }}-${{ github.run_id }}
           path: scripts/logs/
           retention-days: 14
