@@ -174,6 +174,36 @@ export async function getRunsByStatus(): Promise<RunsByStatus[]> {
   return rows.results ?? []
 }
 
+export interface HeadlineStats {
+  totalSpend: number
+  activeRuns: number
+  completed: number
+  total: number
+  agents: number
+  costSeries: number[]
+}
+
+export async function getHeadlineStats(): Promise<HeadlineStats> {
+  await requireUser()
+  const env = await getEnv()
+  const [spendRow, activeRow, completedRow, totalRow, agentRow, seriesRows] = await Promise.all([
+    env.DB.prepare(`SELECT COALESCE(SUM(actual_cost_usd),0) v FROM orchestrator_runs`).first<{ v: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) v FROM orchestrator_runs WHERE status IN ('running','planning')`).first<{ v: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) v FROM orchestrator_runs WHERE status='completed'`).first<{ v: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) v FROM orchestrator_runs`).first<{ v: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) v FROM agents WHERE status='active'`).first<{ v: number }>(),
+    env.DB.prepare(`SELECT COALESCE(actual_cost_usd,0) c FROM orchestrator_runs ORDER BY started_at DESC LIMIT 12`).all<{ c: number }>(),
+  ])
+  return {
+    totalSpend: spendRow?.v ?? 0,
+    activeRuns: activeRow?.v ?? 0,
+    completed: completedRow?.v ?? 0,
+    total: totalRow?.v ?? 0,
+    agents: agentRow?.v ?? 0,
+    costSeries: (seriesRows.results ?? []).map(r => r.c).reverse(),
+  }
+}
+
 export async function getBrainLive(): Promise<BrainLive> {
   await requireUser()
   const env = await getEnv()
