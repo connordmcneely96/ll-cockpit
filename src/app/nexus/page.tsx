@@ -1,4 +1,4 @@
-import { getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts, getRunsByStatus, getHeadlineStats, getSpendTimeline } from './data'
+import { getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts, getRunsByStatus, getHeadlineStats, getSpendTimeline } from '@/lib/dashboard-data'
 import UsageStrip from '@/components/nexus/UsageStrip'
 import NeedsAttention from '@/components/nexus/NeedsAttention'
 import ActiveSystems from '@/components/nexus/ActiveSystems'

@@ -1,6 +1,6 @@
 'use client'
 
-import type { AgentRow } from '@/app/nexus/data'
+import type { AgentRow } from '@/lib/dashboard-data'
 
 const BADGE_COLOR: Record<string, string> = {
   DEPLOY: 'var(--d-error)',

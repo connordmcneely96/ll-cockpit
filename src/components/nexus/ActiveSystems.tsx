@@ -1,6 +1,6 @@
 'use client'
 
-import type { ActiveRun, RunsByStatus } from '@/app/nexus/data'
+import type { ActiveRun, RunsByStatus } from '@/lib/dashboard-data'
 import ProgressBar from './viz/ProgressBar'
 import DonutLegend from './viz/DonutLegend'
 

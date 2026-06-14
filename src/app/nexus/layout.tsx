@@ -2,7 +2,7 @@ import TopCommandBar from '@/components/nexus/TopCommandBar'
 import SidebarNav from '@/components/nexus/SidebarNav'
 import SystemBrain from '@/components/nexus/SystemBrain'
 import { mockTenant, mockNavGroups } from '@/components/nexus/mock'
-import { getBrainLive } from './data'
+import { getBrainLive } from '@/lib/dashboard-data'
 
 export default async function NexusLayout({ children }: { children: React.ReactNode }) {
   const brain = await getBrainLive()

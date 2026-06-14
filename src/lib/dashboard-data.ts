@@ -1,12 +1,19 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { createClient } from '@/lib/supabase-server'
 
-// Auth helper — mirrors src/app/api/agents/route.ts
+// Auth: middleware.ts is the gate — it redirects unauthenticated requests to
+// /login before this code runs. These dashboard queries are global (not
+// user-scoped), so we only need a best-effort user read and must NEVER throw:
+// throwing inside an RSC render crashes the whole route to the error boundary
+// ("Something went wrong"). That is the bug this replaces.
 async function requireUser() {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  if (error || !user) throw new Error('Unauthorized')
-  return user
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    return user ?? null
+  } catch {
+    return null
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

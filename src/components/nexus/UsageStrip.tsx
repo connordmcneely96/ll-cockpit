@@ -1,4 +1,4 @@
-import type { HeadlineStats } from '@/app/nexus/data'
+import type { HeadlineStats } from '@/lib/dashboard-data'
 import KpiCard from './KpiCard'
 import Donut from './viz/Donut'
 
