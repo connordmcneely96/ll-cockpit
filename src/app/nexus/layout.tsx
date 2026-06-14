@@ -7,7 +7,7 @@ export default function NexusLayout({ children }: { children: React.ReactNode })
   return (
     <div
       className="flex flex-col"
-      style={{ height: '100vh', background: 'var(--t-body)', overflow: 'hidden' }}
+      style={{ height: '100vh', overflow: 'hidden' }}
     >
       <TopCommandBar tenant={mockTenant} />
       <div className="flex flex-1 overflow-hidden">

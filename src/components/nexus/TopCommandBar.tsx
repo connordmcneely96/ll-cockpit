@@ -34,7 +34,7 @@ export default function TopCommandBar({ tenant }: Props) {
             borderRadius: 'var(--d-radius-sm)',
             border: '1px solid var(--d-warning)',
             color: 'var(--d-warning)',
-            background: 'rgba(245,158,11,0.08)',
+            background: 'color-mix(in srgb, var(--d-warning) 8%, transparent)',
           }}
         >
           {tenant.env}
