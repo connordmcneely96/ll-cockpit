@@ -1,4 +1,4 @@
-import type { ArtifactRow } from '@/app/nexus/data'
+import type { ArtifactRow } from '@/lib/dashboard-data'
 
 const VERIF_COLOR: Record<string, string> = {
   'Verified': 'var(--d-success)',

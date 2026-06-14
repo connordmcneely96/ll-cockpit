@@ -1,4 +1,4 @@
-import type { BrainLive } from '@/app/nexus/data'
+import type { BrainLive } from '@/lib/dashboard-data'
 
 interface Props { brain: BrainLive }
 

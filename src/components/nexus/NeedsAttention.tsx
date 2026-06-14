@@ -1,4 +1,4 @@
-import type { AttentionItem } from '@/app/nexus/data'
+import type { AttentionItem } from '@/lib/dashboard-data'
 
 const STATUS_COLOR: Record<string, string> = {
   failed: 'var(--d-error)',
