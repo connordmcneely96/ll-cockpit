@@ -1,3 +1,5 @@
+'use client'
+
 import Sparkline from './viz/Sparkline'
 import Delta from './viz/Delta'
 

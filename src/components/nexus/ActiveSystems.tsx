@@ -1,3 +1,5 @@
+'use client'
+
 import type { ActiveRun, RunsByStatus } from '@/app/nexus/data'
 import ProgressBar from './viz/ProgressBar'
 import DonutLegend from './viz/DonutLegend'
