@@ -22,13 +22,13 @@ export default function UsageStrip({ stats }: Props) {
       <KpiCard
         label="Active Runs"
         value={String(stats.activeRuns)}
-        series={[]}
+        series={stats.activeSeries}
         accentBar={false}
       />
       <KpiCard
         label="Success Rate"
         value={`${successPct}%`}
-        series={[]}
+        series={stats.successSeries}
         accentBar={false}
       />
       <div
