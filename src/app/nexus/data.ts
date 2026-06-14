@@ -181,6 +181,8 @@ export interface HeadlineStats {
   total: number
   agents: number
   costSeries: number[]
+  activeSeries: number[]
+  successSeries: number[]
 }
 
 export async function getHeadlineStats(): Promise<HeadlineStats> {
@@ -192,16 +194,30 @@ export async function getHeadlineStats(): Promise<HeadlineStats> {
     env.DB.prepare(`SELECT COUNT(*) v FROM orchestrator_runs WHERE status='completed'`).first<{ v: number }>(),
     env.DB.prepare(`SELECT COUNT(*) v FROM orchestrator_runs`).first<{ v: number }>(),
     env.DB.prepare(`SELECT COUNT(*) v FROM agents WHERE status='active'`).first<{ v: number }>(),
-    env.DB.prepare(`SELECT COALESCE(actual_cost_usd,0) c FROM orchestrator_runs ORDER BY started_at DESC LIMIT 12`).all<{ c: number }>(),
+    env.DB.prepare(`SELECT COALESCE(actual_cost_usd,0) c, status FROM orchestrator_runs ORDER BY started_at DESC LIMIT 12`).all<{ c: number; status: string }>(),
   ])
+  const series = (seriesRows.results ?? []).reverse()
   return {
     totalSpend: spendRow?.v ?? 0,
     activeRuns: activeRow?.v ?? 0,
     completed: completedRow?.v ?? 0,
     total: totalRow?.v ?? 0,
     agents: agentRow?.v ?? 0,
-    costSeries: (seriesRows.results ?? []).map(r => r.c).reverse(),
+    costSeries: series.map(r => r.c),
+    activeSeries: series.map(r => (['running', 'planning'].includes(r.status) ? 1 : 0)),
+    successSeries: series.map(r => (r.status === 'completed' ? 1 : 0)),
   }
+}
+
+export async function getSpendTimeline(): Promise<number[]> {
+  await requireUser()
+  const env = await getEnv()
+  const rows = await env.DB.prepare(
+    `SELECT COALESCE(actual_cost_usd,0) c FROM orchestrator_runs
+     WHERE started_at IS NOT NULL ORDER BY started_at ASC`
+  ).all<{ c: number }>()
+  let acc = 0
+  return (rows.results ?? []).map(r => (acc += r.c))
 }
 
 export async function getBrainLive(): Promise<BrainLive> {

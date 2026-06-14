@@ -1,48 +1,65 @@
-import { getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts, getRunsByStatus, getHeadlineStats } from './data'
+import { getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts, getRunsByStatus, getHeadlineStats, getSpendTimeline } from './data'
 import UsageStrip from '@/components/nexus/UsageStrip'
 import NeedsAttention from '@/components/nexus/NeedsAttention'
 import ActiveSystems from '@/components/nexus/ActiveSystems'
 import AgentFleet from '@/components/nexus/AgentFleet'
 import RecentArtifacts from '@/components/nexus/RecentArtifacts'
 import FeatureCard from '@/components/nexus/FeatureCard'
+import AreaChart from '@/components/nexus/viz/AreaChart'
 
 export default async function NexusPage() {
-  const [stats, attention, activeSystems, runsByStatus, agents, artifacts] = await Promise.all([
+  const [stats, attention, activeSystems, runsByStatus, agents, artifacts, spendTimeline] = await Promise.all([
     getHeadlineStats(),
     getNeedsAttention(),
     getActiveSystems(),
     getRunsByStatus(),
     getAgentFleet(),
     getRecentArtifacts(),
+    getSpendTimeline(),
   ])
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-end gap-4 flex-wrap">
-        <div className="flex flex-col gap-1 flex-1 min-w-0">
-          <h1
-            className="text-3xl font-bold"
+    <div className="flex flex-col gap-4">
+      {/* Compact hero row */}
+      <div className="flex items-center gap-4" style={{ minHeight: 64 }}>
+        <div className="flex-1 min-w-0">
+          <span
+            className="text-base font-semibold"
             style={{ color: 'var(--t-tx1)', fontFamily: 'var(--font-condensed), sans-serif' }}
           >
-            Good morning, Connor. NEXUS PRIME is ready.
-          </h1>
-          <p className="text-sm" style={{ color: 'var(--t-tx2)' }}>
-            What are we building, running, or deploying today?
-          </p>
+            Good morning, Connor — NEXUS PRIME is live.
+          </span>
+          <span className="ml-3 text-xs" style={{ color: 'var(--t-tx3)' }}>
+            What are we building today?
+          </span>
         </div>
-        <div style={{ width: 220, flexShrink: 0 }}>
+        <div style={{ width: 200, flexShrink: 0 }}>
           <FeatureCard
             title="Launch a Build"
-            subtitle="Trigger BUILDER → SENTINEL → deploy pipeline"
+            subtitle="BUILDER → SENTINEL → deploy"
             cta="Start"
             href="/orchestrator"
           />
         </div>
       </div>
 
+      {/* KPI strip */}
       <UsageStrip stats={stats} />
-      <NeedsAttention items={attention} />
-      <ActiveSystems runs={activeSystems} runsByStatus={runsByStatus} />
+
+      {/* Hero area chart */}
+      <div className="glass-card" style={{ borderRadius: 'var(--d-radius-lg)', padding: '1rem 1.25rem' }}>
+        <div className="text-xs font-semibold uppercase mb-3" style={{ color: 'var(--t-tx3)', letterSpacing: '0.08em' }}>
+          Spend over time
+        </div>
+        <AreaChart data={spendTimeline} format={n => `$${n.toFixed(2)}`} />
+      </div>
+
+      {/* Densified 2-col row: Needs Attention + Active Systems */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+        <NeedsAttention items={attention} />
+        <ActiveSystems runs={activeSystems} runsByStatus={runsByStatus} />
+      </div>
+
       <AgentFleet agents={agents} />
       <RecentArtifacts artifacts={artifacts} />
     </div>
