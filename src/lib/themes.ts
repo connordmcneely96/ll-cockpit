@@ -193,6 +193,24 @@ export const THEMES: ThemeConfig[] = [
       '--t-blur': '26px',
     },
   },
+  {
+    id: 'violet',
+    name: 'Violet',
+    description: 'Deep space · electric violet',
+    category: 'dark',
+    preview: { body: '#0a0912', panel: 'rgba(18,16,30,0.92)', primary: '#8b5cf6', secondary: '#22d3ee', text: '#ede9fe', g1: 'rgba(139,92,246,0.13)', g2: 'rgba(34,211,238,0.06)' },
+    vars: {
+      '--t-body': '#0a0912',
+      '--t-g1': 'rgba(139,92,246,0.13)', '--t-g2': 'rgba(34,211,238,0.06)',
+      '--t-p': '#8b5cf6', '--t-p-dim': '#6d28d9', '--t-p-bright': '#a78bfa',
+      '--t-p-glow': 'rgba(139,92,246,0.30)', '--t-p-glass': 'rgba(139,92,246,0.10)',
+      '--t-s': '#22d3ee', '--t-gold': '#f59e0b',
+      '--t-tx1': '#ede9fe', '--t-tx2': '#9b8bc4', '--t-tx3': '#5b4d7a',
+      '--t-bdr': 'rgba(139,92,246,0.12)', '--t-bdr-s': 'rgba(139,92,246,0.24)',
+      '--t-sb-bg': '#150b2e', '--t-sb-tx': '#c4b5fd',
+      '--t-blur': '24px',
+    },
+  },
 ]
 
 export const DEFAULT_THEME_ID = 'teal'
