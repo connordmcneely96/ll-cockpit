@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { TenantData } from './mock'
+import ThemeSwitcher from './ThemeSwitcher'
 
 interface Props {
   tenant: TenantData
@@ -76,6 +77,7 @@ export default function TopCommandBar({ tenant }: Props) {
           Deploy {tenant.deployStatus}
         </span>
         <span style={{ color: 'var(--t-tx2)' }}>Spend {tenant.monthlySpend}</span>
+        <ThemeSwitcher />
         <span
           className="flex items-center justify-center text-xs font-semibold rounded-full"
           style={{
