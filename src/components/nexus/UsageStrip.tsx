@@ -1,23 +1,24 @@
 import type { UsageToday } from '@/app/nexus/data'
+import KpiCard from './KpiCard'
+import Donut from './viz/Donut'
 
 interface Props { usage: UsageToday }
 
 export default function UsageStrip({ usage }: Props) {
+  const quotaPct = usage.tokens > 0 ? Math.min(100, Math.round(usage.tokens / 1000)) : 0
+
   return (
-    <div
-      className="glass-card flex items-center gap-6 px-4 py-3"
-      style={{ flexShrink: 0 }}
-    >
-      <span className="text-xs font-semibold uppercase" style={{ color: 'var(--t-tx3)', letterSpacing: '0.08em' }}>Today</span>
-      <span className="text-xs" style={{ color: 'var(--t-tx2)' }}>
-        <span style={{ color: 'var(--t-tx1)', fontWeight: 600 }}>{usage.tokens.toLocaleString()}</span> tokens
-      </span>
-      <span className="text-xs" style={{ color: 'var(--t-tx2)' }}>
-        <span style={{ color: 'var(--t-tx1)', fontWeight: 600 }}>${usage.cost.toFixed(4)}</span> cost
-      </span>
-      <span className="text-xs" style={{ color: 'var(--t-tx2)' }}>
-        <span style={{ color: 'var(--t-tx1)', fontWeight: 600 }}>{usage.providers}</span> provider{usage.providers !== 1 ? 's' : ''}
-      </span>
+    <div className="flex items-stretch gap-3">
+      <KpiCard label="Tokens Today" value={usage.tokens.toLocaleString()} series={[]} />
+      <KpiCard label="Cost Today" value={`$${usage.cost.toFixed(4)}`} series={[]} />
+      <KpiCard label="Providers" value={String(usage.providers)} series={[]} accentBar={false} />
+      <div
+        className="glass-card flex flex-col items-center justify-center gap-1 px-4"
+        style={{ borderRadius: 'var(--d-radius-lg)', flexShrink: 0 }}
+      >
+        <Donut value={quotaPct} size={72} stroke={9} centerLabel={`${quotaPct}%`} />
+        <span className="text-xs" style={{ color: 'var(--t-tx3)' }}>Quota</span>
+      </div>
     </div>
   )
 }

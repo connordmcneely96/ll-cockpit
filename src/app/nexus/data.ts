@@ -160,6 +160,20 @@ export async function getAutomations(): Promise<ScheduleRow[]> {
   return (rows.results ?? []).map(r => ({ ...r, enabled: r.enabled === 1 }))
 }
 
+export interface RunsByStatus {
+  status: string
+  n: number
+}
+
+export async function getRunsByStatus(): Promise<RunsByStatus[]> {
+  await requireUser()
+  const env = await getEnv()
+  const rows = await env.DB.prepare(
+    `SELECT status, COUNT(*) AS n FROM orchestrator_runs GROUP BY status ORDER BY n DESC`
+  ).all<RunsByStatus>()
+  return rows.results ?? []
+}
+
 export async function getBrainLive(): Promise<BrainLive> {
   await requireUser()
   const env = await getEnv()

@@ -1,4 +1,4 @@
-import { getUsageToday, getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts } from './data'
+import { getUsageToday, getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts, getRunsByStatus } from './data'
 import UsageStrip from '@/components/nexus/UsageStrip'
 import NeedsAttention from '@/components/nexus/NeedsAttention'
 import ActiveSystems from '@/components/nexus/ActiveSystems'
@@ -6,10 +6,11 @@ import AgentFleet from '@/components/nexus/AgentFleet'
 import RecentArtifacts from '@/components/nexus/RecentArtifacts'
 
 export default async function NexusPage() {
-  const [usage, attention, activeSystems, agents, artifacts] = await Promise.all([
+  const [usage, attention, activeSystems, runsByStatus, agents, artifacts] = await Promise.all([
     getUsageToday(),
     getNeedsAttention(),
     getActiveSystems(),
+    getRunsByStatus(),
     getAgentFleet(),
     getRecentArtifacts(),
   ])
@@ -30,7 +31,7 @@ export default async function NexusPage() {
 
       <UsageStrip usage={usage} />
       <NeedsAttention items={attention} />
-      <ActiveSystems runs={activeSystems} />
+      <ActiveSystems runs={activeSystems} runsByStatus={runsByStatus} />
       <AgentFleet agents={agents} />
       <RecentArtifacts artifacts={artifacts} />
     </div>
