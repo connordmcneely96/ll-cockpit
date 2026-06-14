@@ -1,3 +1,7 @@
+'use client'
+
+import { useId } from 'react'
+
 interface Props {
   data: number[]
   width?: number
@@ -6,6 +10,8 @@ interface Props {
 }
 
 export default function Sparkline({ data, width = 120, height = 48, color = 'var(--t-p)' }: Props) {
+  const gradId = useId()
+
   if (!data || data.length < 2) {
     return (
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
@@ -29,8 +35,6 @@ export default function Sparkline({ data, width = 120, height = 48, color = 'var
   const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
   const areaPath =
     `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${height - pad} L${pts[0].x.toFixed(1)},${height - pad} Z`
-
-  const gradId = `sg-${Math.random().toString(36).slice(2, 7)}`
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">

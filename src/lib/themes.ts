@@ -237,5 +237,5 @@ export const THEMES: ThemeConfig[] = [
   },
 ]
 
-export const DEFAULT_THEME_ID = 'teal'
+export const DEFAULT_THEME_ID = 'obsidian'
 export const getTheme = (id: string) => THEMES.find(t => t.id === id) ?? THEMES[0]
