@@ -16,7 +16,7 @@ import type { DesignBriefRow, DesignIterationRow, OrchestratorRunRow } from '@/t
 import type { User } from '@supabase/supabase-js'
 // Sprint 18Y-Followup — reuse the canonical validator and allowlist so
 // PATCH and POST share the same skills contract.
-import { validateSkills } from '../route'
+import { validateSkills } from '@/lib/design/skills'
 
 async function getUserFromRequest(req: NextRequest): Promise<User | null> {
   const authHeader = req.headers.get('authorization')
