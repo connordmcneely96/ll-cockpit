@@ -93,12 +93,4 @@ export const mockNavGroups: NavGroup[] = [
   },
 ]
 
-export const mockBrain: BrainSection[] = [
-  { id: 'tenant', label: 'Active Tenant', value: 'ConnorPattern · LL Cockpit' },
-  { id: 'agent', label: 'Active Agent', value: 'NEXUS (Orchestrator)', status: 'success' },
-  { id: 'run', label: 'Active Run', value: 'run_8f3a · Sprint 180A', status: 'info' },
-  { id: 'db', label: 'D1 Database', value: 'Online', status: 'success' },
-  { id: 'kv', label: 'KV Store', value: 'Online', status: 'success' },
-  { id: 'queue', label: 'Queue', value: '2 pending', status: 'warning' },
-  { id: 'security', label: 'Security', value: 'Auth OK · No alerts', status: 'success' },
-]
+// mockBrain removed in 180B — SystemBrain now reads live D1 via getBrainLive()

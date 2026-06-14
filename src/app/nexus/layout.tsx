@@ -1,9 +1,11 @@
 import TopCommandBar from '@/components/nexus/TopCommandBar'
 import SidebarNav from '@/components/nexus/SidebarNav'
 import SystemBrain from '@/components/nexus/SystemBrain'
-import { mockTenant, mockNavGroups, mockBrain } from '@/components/nexus/mock'
+import { mockTenant, mockNavGroups } from '@/components/nexus/mock'
+import { getBrainLive } from './data'
 
-export default function NexusLayout({ children }: { children: React.ReactNode }) {
+export default async function NexusLayout({ children }: { children: React.ReactNode }) {
+  const brain = await getBrainLive()
   return (
     <div
       className="flex flex-col"
@@ -15,7 +17,7 @@ export default function NexusLayout({ children }: { children: React.ReactNode })
         <main className="flex-1 overflow-y-auto p-6">
           {children}
         </main>
-        <SystemBrain sections={mockBrain} />
+        <SystemBrain brain={brain} />
       </div>
     </div>
   )
