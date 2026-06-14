@@ -21,7 +21,7 @@ export default function TopCommandBar({ tenant }: Props) {
   return (
     <header
       className="glass-panel flex items-center gap-3 px-4"
-      style={{ height: 52, borderRight: 'none', borderBottom: '1px solid var(--t-glass-bdr)' }}
+      style={{ height: 52, borderRight: 'none', borderBottom: '1px solid var(--t-glass-bdr)', position: 'relative', zIndex: 50 }}
     >
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-xs shrink-0" aria-label="breadcrumb">
