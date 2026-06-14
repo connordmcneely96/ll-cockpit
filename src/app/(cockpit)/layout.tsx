@@ -5,6 +5,12 @@ import { CommandPalette } from '@/components/layout/CommandPalette'
 import { mockTenant, mockNavGroups } from '@/components/nexus/mock'
 import { getBrainLive } from '@/lib/dashboard-data'
 
+// These routes render live D1 data and must render at request time, not during
+// the build (where no D1 binding exists). Without this, next build tries to
+// statically prerender cockpit pages and the layout's getBrainLive() query
+// fails with "no such table: orchestrator_runs", aborting the build.
+export const dynamic = 'force-dynamic'
+
 export default async function CockpitLayout({ children }: { children: React.ReactNode }) {
   const brain = await getBrainLive()
   return (
