@@ -1,4 +1,5 @@
 import { getNeedsAttention, getActiveSystems, getAgentFleet, getRecentArtifacts, getRunsByStatus, getHeadlineStats, getSpendTimeline } from '@/lib/dashboard-data'
+import HeroCoreLazy from '@/components/nexus/HeroCoreLazy'
 import UsageStrip from '@/components/nexus/UsageStrip'
 import NeedsAttention from '@/components/nexus/NeedsAttention'
 import ActiveSystems from '@/components/nexus/ActiveSystems'
@@ -20,6 +21,14 @@ export default async function CockpitHome() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Animated hero band — full-bleed across the top */}
+      <div
+        className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 mb-2 overflow-hidden"
+        style={{ height: 'clamp(300px, 42vh, 460px)' }}
+      >
+        <HeroCoreLazy />
+      </div>
+
       {/* Compact hero row */}
       <div className="flex items-center gap-4" style={{ minHeight: 64 }}>
         <div className="flex-1 min-w-0">

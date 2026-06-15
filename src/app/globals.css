@@ -323,3 +323,14 @@ body.ia-resizing {
 @keyframes cosmic-sheen{0%,100%{background-position:120% 0}50%{background-position:-20% 0}}
 @keyframes cosmic-spin{to{--cosmic-a:360deg}}
 @keyframes cosmic-float{to{transform:translateY(-660px) translateX(var(--dx,0));opacity:0}}
+
+/* ============ HERO (CockpitHome) ============ */
+.hero-holo{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;background:radial-gradient(60% 60% at 50% 46%, rgba(80,170,255,.06), transparent 70%)}
+.hero-scan{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:screen;background:repeating-linear-gradient(0deg, rgba(120,200,255,.05) 0, rgba(120,200,255,.05) 1px, transparent 1px, transparent 3px)}
+.hero-vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 95% at 50% 48%, transparent 46%, rgba(0,0,0,.55) 100%)}
+.hero-copy{position:absolute;left:0;right:0;bottom:clamp(18px,5vh,40px);text-align:center;pointer-events:none;padding:0 20px}
+.hero-eyebrow{font-family:var(--font-mono,'JetBrains Mono'),monospace;font-size:11px;letter-spacing:.36em;text-transform:uppercase;color:#7cd0ff;opacity:.9}
+.hero-title{font-family:var(--font-condensed,'Barlow Condensed'),sans-serif;font-weight:700;font-size:clamp(32px,5vw,56px);letter-spacing:.09em;text-transform:uppercase;line-height:1;margin:10px 0 0;background:linear-gradient(180deg,#dff1ff,#7cd0ff 50%,#d4a017);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 26px rgba(92,200,255,.3))}
+.hero-sub{font-size:clamp(13px,1.5vw,16px);color:var(--t-tx2);margin:10px 0 0}
+@media (prefers-reduced-motion:no-preference){ .hero-scan{animation:hero-scandrift 8s linear infinite} }
+@keyframes hero-scandrift{from{background-position:0 0}to{background-position:0 3px}}
