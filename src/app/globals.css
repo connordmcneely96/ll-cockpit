@@ -252,3 +252,74 @@ body.ia-resizing {
   /* Disable body color transition */
   body { transition: none !important; }
 }
+
+/* ============ COSMIC BACKGROUND (agent chat) ============ */
+@property --cosmic-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+:root{
+  --cosmic-aurora-1:#5b4bd6;
+  --cosmic-aurora-2:#0f8f74;
+  --cosmic-beam:196 210 255;
+}
+.cosmic-bg{position:absolute;inset:0;overflow:hidden;pointer-events:none;
+  background:radial-gradient(150% 130% at 50% -10%, #0c0e18 0%, #06070e 48%, #030308 100%);}
+.cosmic-aur{position:absolute;border-radius:50%;filter:blur(72px);mix-blend-mode:screen}
+.cosmic-aur.v{width:560px;height:420px;left:6%;top:-14%;background:radial-gradient(circle,var(--cosmic-aurora-1),transparent 62%);opacity:.5}
+.cosmic-aur.t{width:520px;height:460px;right:2%;top:4%;background:radial-gradient(circle,var(--cosmic-aurora-2),transparent 62%);opacity:.4}
+.cosmic-aur.g{width:620px;height:360px;left:50%;top:28%;margin-left:-310px;background:radial-gradient(circle,var(--cosmic-accent,#f5c842),transparent 60%);opacity:.26}
+.cosmic-beam-wide{position:absolute;top:-6%;left:50%;width:880px;height:86%;transform:translateX(-50%);
+  clip-path:polygon(47% 0,53% 0,90% 100%,10% 100%);
+  background:linear-gradient(to bottom,rgb(var(--cosmic-beam)/.22),rgb(var(--cosmic-beam)/.04) 55%,transparent 76%);filter:blur(40px)}
+.cosmic-beam-core{position:absolute;top:-2%;left:50%;width:300px;height:72%;transform:translateX(-50%);
+  clip-path:polygon(46% 0,54% 0,74% 100%,26% 100%);
+  background:linear-gradient(to bottom,rgba(255,255,255,.62),rgba(255,255,255,.10) 50%,transparent 74%);filter:blur(6px)}
+.cosmic-beam-hot{position:absolute;top:-72px;left:50%;width:260px;height:260px;transform:translateX(-50%);
+  background:radial-gradient(circle,rgba(255,255,255,.8),rgba(255,255,255,.12) 30%,transparent 62%);filter:blur(8px)}
+.cosmic-ray{position:absolute;bottom:-22%;width:62%;height:90%;filter:blur(30px);
+  background:linear-gradient(to top,rgb(var(--cosmic-beam)/.07),transparent 62%)}
+.cosmic-ray.l{left:-14%;transform:rotate(20deg)}
+.cosmic-ray.r{right:-14%;transform:rotate(-20deg)}
+.cosmic-stars{position:absolute;inset:-6% 0;will-change:transform}
+.cosmic-stars i{position:absolute;border-radius:50%;background:#fff;display:block}
+.cosmic-motes{position:absolute;inset:0;overflow:hidden}
+.cosmic-motes i{position:absolute;border-radius:50%;background:rgba(255,240,200,.7);filter:blur(.5px);bottom:-12px}
+.cosmic-grain{position:absolute;inset:0;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+.cosmic-vig{position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 35%,transparent 55%,rgba(0,0,0,.55) 100%)}
+.cosmic-bg.dimmed .cosmic-beam-wide,.cosmic-bg.dimmed .cosmic-beam-core,.cosmic-bg.dimmed .cosmic-beam-hot{opacity:.4}
+.cosmic-bg.dimmed .cosmic-aur{opacity:.26}
+.cosmic-wm{font-family:var(--font-condensed,'Barlow Condensed'),sans-serif;font-weight:700;font-size:64px;
+  letter-spacing:.10em;text-transform:uppercase;line-height:1;margin:0;
+  background:linear-gradient(100deg,rgba(255,255,255,.06) 35%,rgba(255,255,255,.28) 50%,rgba(255,255,255,.06) 65%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.cosmic-tg{font-family:var(--font-mono,'JetBrains Mono'),monospace;font-size:11px;letter-spacing:.32em;
+  text-transform:uppercase;color:var(--t-tx3);margin:14px 0 0}
+.cosmic-invite{font-size:15px;color:var(--t-tx2);margin:18px 0 0;max-width:360px;line-height:1.55}
+.cosmic-input{position:relative;border:1px solid transparent;
+  background:linear-gradient(color-mix(in srgb,var(--t-base) 62%,transparent),color-mix(in srgb,var(--t-base) 62%,transparent)) padding-box;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.cosmic-input::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;z-index:0;pointer-events:none;
+  background:conic-gradient(from var(--cosmic-a),color-mix(in srgb,var(--cosmic-accent,#f5c842) 55%,transparent),transparent 28%,rgba(120,150,255,.45) 58%,transparent 86%,color-mix(in srgb,var(--cosmic-accent,#f5c842) 55%,transparent));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}
+.cosmic-input > *{position:relative;z-index:1}
+@media (prefers-reduced-motion:no-preference){
+  .cosmic-aur.v{animation:cosmic-d1 26s ease-in-out infinite}
+  .cosmic-aur.t{animation:cosmic-d2 32s ease-in-out infinite}
+  .cosmic-aur.g{animation:cosmic-d3 22s ease-in-out infinite}
+  .cosmic-beam-core{animation:cosmic-shimmer 8s ease-in-out infinite}
+  .cosmic-beam-hot{animation:cosmic-pulse 8s ease-in-out infinite}
+  .cosmic-stars{animation:cosmic-rise 100s linear infinite}
+  .cosmic-stars i.tw{animation:cosmic-tw 4.6s ease-in-out infinite}
+  .cosmic-wm{animation:cosmic-sheen 8s ease-in-out infinite}
+  .cosmic-input::before{animation:cosmic-spin 16s linear infinite}
+}
+@keyframes cosmic-d1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,28px) scale(1.12)}}
+@keyframes cosmic-d2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-46px,22px) scale(1.1)}}
+@keyframes cosmic-d3{0%,100%{transform:translateX(0) scale(1)}50%{transform:translateX(30px) scale(1.08)}}
+@keyframes cosmic-shimmer{0%,100%{opacity:.85;transform:translateX(-50%) scaleX(1)}50%{opacity:1;transform:translateX(-50%) scaleX(1.06)}}
+@keyframes cosmic-pulse{0%,100%{opacity:.8}50%{opacity:1}}
+@keyframes cosmic-rise{from{transform:translateY(0)}to{transform:translateY(-6%)}}
+@keyframes cosmic-tw{0%,100%{opacity:.2}50%{opacity:.8}}
+@keyframes cosmic-sheen{0%,100%{background-position:120% 0}50%{background-position:-20% 0}}
+@keyframes cosmic-spin{to{--cosmic-a:360deg}}
+@keyframes cosmic-float{to{transform:translateY(-660px) translateX(var(--dx,0));opacity:0}}
