@@ -23,6 +23,7 @@ import type {
 } from '@/types'
 import { getAgent } from './agents'
 import { cascadeReady, refreshRunAggregates } from './hermes'
+import { promoteArtifactsForRun } from './artifacts'
 import { route } from './llm/router'
 import { executeAssembler, finalizeIterationIfReady } from './design/pipeline'
 
@@ -238,6 +239,20 @@ export async function executeOneSubtask(
 
   await cascadeReady(db, subtask.pipeline_run_id)
   await refreshRunAggregates(db, subtask.pipeline_run_id)
+
+  // Promote deliverables to artifact_registry once the run completes (best-effort,
+  // idempotent). Never throw into the execution hot path.
+  try {
+    const runRow = await db
+      .prepare(`SELECT status FROM orchestrator_runs WHERE id = ?`)
+      .bind(subtask.pipeline_run_id)
+      .first<{ status: string }>()
+    if (runRow?.status === 'completed') {
+      await promoteArtifactsForRun(env, subtask.pipeline_run_id)
+    }
+  } catch (err) {
+    console.error(`artifact promotion failed for run ${subtask.pipeline_run_id}:`, err)
+  }
 
   return {
     subtaskId,
