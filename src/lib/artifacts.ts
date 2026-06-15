@@ -62,7 +62,10 @@ async function sha256Hex(text: string): Promise<string> {
 
 function parseVerdict(output: string | null): { score: number | null; pass: number | null } {
   if (!output) return { score: null, pass: null }
-  let s = output.trim()
+  const raw = output
+
+  // 1) Preferred: structured JSON { score, pass } (possibly fenced or embedded).
+  let s = raw.trim()
   const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
   if (fenced) {
     s = fenced[1].trim()
@@ -75,19 +78,23 @@ function parseVerdict(output: string | null): { score: number | null; pass: numb
     const j = JSON.parse(s) as { score?: number; pass?: boolean }
     const score = typeof j.score === 'number' ? j.score : null
     const pass =
-      typeof j.pass === 'boolean'
-        ? j.pass
-          ? 1
-          : 0
-        : score != null
-          ? score >= 80
-            ? 1
-            : 0
-          : null
-    return { score, pass }
+      typeof j.pass === 'boolean' ? (j.pass ? 1 : 0) : score != null ? (score >= 80 ? 1 : 0) : null
+    if (score != null || pass != null) return { score, pass }
   } catch {
-    return { score: null, pass: null }
+    /* fall through to prose extraction */
   }
+
+  // 2) Fallback: pull a "NN/100" (or "score: NN") from prose; derive pass from the
+  //    score (>=80), with an explicit FAIL/HOLD/REWORK keyword forcing 0.
+  let score: number | null = null
+  const m = raw.match(/\b(\d{1,3})\s*\/\s*100\b/) ?? raw.match(/\bscore[:\s]+(\d{1,3})\b/i)
+  if (m) {
+    const n = Number.parseInt(m[1], 10)
+    if (Number.isFinite(n) && n >= 0 && n <= 100) score = n
+  }
+  let pass: number | null = score != null ? (score >= 80 ? 1 : 0) : null
+  if (/\b(FAILED|HOLD|REWORK|REJECTED)\b/i.test(raw)) pass = 0
+  return { score, pass }
 }
 
 function contentType(fmt: string): string {
