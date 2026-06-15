@@ -37,25 +37,26 @@ export interface SubtaskExecutionResult {
   modelId?: string
 }
 
-// Output-token ceilings per agent. Long-form / deliverable agents (atlas, dispatch,
-// anchor, scout, sentinel, herald) are at 8192 — dense engineering deliverables and
-// multi-section QA reviews exceed 4096 and were truncating mid-document (run 1ca83300:
-// st_3 FMEA section cut off → SENTINEL fail → DISPATCH hold). 8192 is Sonnet's standard
-// max output without beta headers (the Anthropic provider sets none).
+// Output-token ceilings per agent. max_tokens is a CEILING, not a target — agents
+// emit only what they need (ATLAS produced a complete FMEA section in 5,566 tokens),
+// so a high ceiling costs nothing for shorter outputs and only lets large deliverables
+// finish. claude-sonnet-4-5 and claude-haiku-4-5 both support up to 64,000 output
+// tokens, so 8192 was far too low — dense FMEA tables / multi-section QA truncated
+// mid-document (runs 1ca83300, 7a532c83). Long-form / deliverable agents are at 32000.
 const AGENT_MAX_TOKENS: Record<string, number> = {
   composer: 8192,
   forge: 8192,
-  herald: 8192,
+  herald: 32000,
   critic: 4096,
   hermes: 4096,
-  sentinel: 8192,
-  dispatch: 8192,
+  sentinel: 32000,
+  dispatch: 32000,
   builder: 8192,
   designer: 2048,
   intake: 2048,
-  scout: 8192,
-  atlas: 8192,
-  anchor: 8192,
+  scout: 32000,
+  atlas: 32000,
+  anchor: 32000,
   reel: 4096,
 }
 const DEFAULT_MAX_TOKENS = 2048
