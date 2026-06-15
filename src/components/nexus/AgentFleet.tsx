@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import type { AgentRow } from '@/lib/dashboard-data'
 
 const BADGE_COLOR: Record<string, string> = {
@@ -27,8 +28,8 @@ export default function AgentFleet({ agents }: Props) {
       ) : (
         <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
           {agents.map(a => (
+            <Link key={a.id} href={`/agent/${a.id}`} className="block" style={{ textDecoration: 'none' }}>
             <div
-              key={a.id}
               className="glass-card flex flex-col gap-2 p-3"
               style={{
                 borderRadius: 'var(--d-radius-lg)',
@@ -79,6 +80,7 @@ export default function AgentFleet({ agents }: Props) {
                 <span style={{ color: 'var(--t-tx3)', fontSize: '0.68rem' }}>{a.runtime}</span>
               </div>
             </div>
+            </Link>
           ))}
         </div>
       )}
