@@ -10,7 +10,15 @@
 
 import type { CloudflareEnv } from '@/types'
 
+// Agents whose output is QA verdict, not a deliverable. Their parsed verdict
+// sets sentinel_pass/quality_score on the run's real artifacts.
 const QA_AGENTS = new Set(['sentinel', 'critic'])
+// Intermediate-only agents in the design pipeline: DESIGNER emits token JSON,
+// COMPOSER emits section fragments. The deliverable is always ASSEMBLER's
+// stitched page. Never promote these as standalone artifacts.
+const INTERMEDIATE_AGENTS = new Set(['designer', 'composer'])
+// Union: anything that is never a standalone deliverable.
+const NON_DELIVERABLE_AGENTS = new Set([...QA_AGENTS, ...INTERMEDIATE_AGENTS])
 
 const ARTIFACT_TYPE_BY_AGENT: Record<string, string> = {
   atlas: 'engineering',
@@ -128,7 +136,7 @@ export async function promoteArtifactsForRun(env: CloudflareEnv, runId: string):
   // short_ids depended upon by NON-QA subtasks = interior nodes of the non-QA subgraph.
   const dependedUponByNonQA = new Set<string>()
   for (const s of subs) {
-    if (QA_AGENTS.has(s.agent_name)) continue
+    if (NON_DELIVERABLE_AGENTS.has(s.agent_name)) continue
     const deps: string[] = s.depends_on ? JSON.parse(s.depends_on) : []
     for (const d of deps) dependedUponByNonQA.add(d)
   }
@@ -138,7 +146,7 @@ export async function promoteArtifactsForRun(env: CloudflareEnv, runId: string):
       s.status === 'done' &&
       !!s.output &&
       s.output.trim().length > 0 &&
-      !QA_AGENTS.has(s.agent_name) &&
+      !NON_DELIVERABLE_AGENTS.has(s.agent_name) &&
       !dependedUponByNonQA.has(s.short_id),
   )
   if (deliverables.length === 0) return 0
