@@ -33,6 +33,27 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; list?: boolean }) {
   const [copied, setCopied] = useState(false)
+  const [preview, setPreview] = useState(false)
+  const [content, setContent] = useState<string | null>(null)
+  const [loadingContent, setLoadingContent] = useState(false)
+  const [contentErr, setContentErr] = useState<string | null>(null)
+  const fmt = artifact.format ?? 'md'
+  const contentUrl = `/api/library/artifacts/${artifact.id}/content`
+
+  const openPreview = () => {
+    setPreview(true)
+    if (content !== null || loadingContent) return
+    setLoadingContent(true)
+    setContentErr(null)
+    fetch(contentUrl)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((t) => setContent(t))
+      .catch((e) => setContentErr(String(e?.message ?? e)))
+      .finally(() => setLoadingContent(false))
+  }
+  const openTab = () => window.open(contentUrl, '_blank', 'noopener,noreferrer')
+  const download = () => window.open(`${contentUrl}?download=1`, '_blank', 'noopener,noreferrer')
+
   const validated = artifact.sentinel_pass === 1
   const status = artifact.status ?? 'active'
   const r2key = artifact.r2_bucket && artifact.storage_ref
@@ -80,18 +101,49 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
 
       {/* Actions */}
       <div className="flex items-center gap-1.5">
-        {[
-          { label: 'Open', title: 'Open artifact (R2 fetch — phase 2)' },
-          { label: 'Preview', title: 'Preview artifact (R2 fetch — phase 2)' },
-          { label: 'Key', title: 'Copy storage key', onClick: copyKey },
-          { label: 'Details', title: 'View lineage & metadata (phase 2)' },
-        ].map(({ label, title, onClick }) => (
-          <button key={label} onClick={onClick} title={title}
-            className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">
-            {label}
-          </button>
-        ))}
+        <button onClick={openTab} title="Open the deliverable in a new tab"
+          className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Open</button>
+        <button onClick={openPreview} title="Preview the deliverable here"
+          className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Preview</button>
+        <button onClick={download} title="Download the deliverable"
+          className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Download</button>
+        <button onClick={copyKey} title="Copy storage key"
+          className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">{copied ? '✓' : 'Key'}</button>
       </div>
+
+      {preview && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={() => setPreview(false)}
+        >
+          <div
+            className="bg-base-2 border border-white/[0.12] rounded-xl w-full max-w-4xl flex flex-col overflow-hidden"
+            style={{ height: '82vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-white/[0.08] shrink-0">
+              <p className="font-mono text-xs font-semibold text-text1 truncate">{artifact.artifact_name ?? 'Artifact'}</p>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button onClick={openTab} className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30">New tab</button>
+                <button onClick={download} className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30">Download</button>
+                <button onClick={() => setPreview(false)} className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-text2 font-mono text-[9px] rounded hover:text-text1">✕ Close</button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto bg-base-1">
+              {loadingContent ? (
+                <p className="font-mono text-[10px] text-text3 p-6">Loading deliverable…</p>
+              ) : contentErr ? (
+                <p className="font-mono text-[10px] text-red p-6">Failed to load: {contentErr}</p>
+              ) : content === null ? null : fmt === 'html' ? (
+                <iframe title="artifact" sandbox="allow-scripts" srcDoc={content} className="w-full h-full border-0 bg-white" />
+              ) : (
+                <pre className="font-mono text-[11px] text-text2 p-4 whitespace-pre-wrap break-words">{content}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

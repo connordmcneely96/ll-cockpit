@@ -22,7 +22,16 @@ export default function RecentArtifacts({ artifacts }: Props) {
         <div className="flex flex-col gap-1">
           {artifacts.map(a => (
             <div key={a.id} className="glass-card flex items-center gap-3 px-3 py-2">
-              <span className="text-xs flex-1 truncate" style={{ color: 'var(--t-tx1)' }}>{a.artifact_name}</span>
+              <a
+                href={`/api/library/artifacts/${a.id}/content`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs flex-1 truncate hover:underline"
+                style={{ color: 'var(--t-tx1)' }}
+                title="Open the deliverable"
+              >
+                {a.artifact_name}
+              </a>
               <span className="text-xs shrink-0" style={{ color: 'var(--t-tx3)' }}>{a.artifact_type}</span>
               <span className="text-xs shrink-0" style={{ color: 'var(--t-tx3)' }}>{a.producing_agent}</span>
               <span
