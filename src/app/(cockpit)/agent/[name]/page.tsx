@@ -1,23 +1,17 @@
-'use client'
+import { Suspense } from 'react'
+import { notFound } from 'next/navigation'
+import { getAgent } from '@/lib/agents'
+import { AgentChat } from './AgentChat'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useUiStore } from '@/stores/uiStore'
-
-export default function AgentPage({ params }: { params: Promise<{ name: string }> }) {
-  const router = useRouter()
-  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent)
-
-  useEffect(() => {
-    params.then(({ name }) => {
-      setSelectedAgent(name)
-      router.replace('/')
-    })
-  }, [params, setSelectedAgent, router])
-
+export default async function AgentPage({ params }: { params: Promise<{ name: string }> }) {
+  const { name } = await params
+  const agent = getAgent(name)
+  if (!agent) notFound()
   return (
-    <div className="flex items-center justify-center h-full">
-      <p className="text-text3 font-mono text-xs">Loading agent…</p>
-    </div>
+    <Suspense fallback={<div className="flex items-center justify-center h-full"><p className="font-mono text-xs" style={{ color: 'var(--t-tx3)' }}>Loading agent…</p></div>}>
+      <div className="h-full" style={{ marginTop: '-1.5rem', marginLeft: '-1.5rem', marginRight: '-1.5rem', marginBottom: '-1.5rem' }}>
+        <AgentChat agent={agent} />
+      </div>
+    </Suspense>
   )
 }
