@@ -7,7 +7,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 import { createClient } from '@/lib/supabase-server'
 import { getBindings } from '@/lib/cloudflare'
 import { decomposeTask, persistDecomposition, HermesError } from '@/lib/hermes'
-import { openGatesForRun } from '@/lib/permission-gate'
+import { enqueueReadySubtasks } from '@/workers/subtask-consumer'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -76,41 +76,8 @@ export async function POST(req: NextRequest) {
   })
 
   if (autoExecute) {
-    const origin = new URL(req.url).origin
-    const cookieHeader = req.headers.get('cookie') ?? ''
     const { ctx } = getCloudflareContext()
-
-    ctx.waitUntil(
-      (async () => {
-        try {
-          if (!forceHitl) {
-            await openGatesForRun(env.DB, user.id, runId)
-          }
-          const readyQuery = forceHitl
-            ? `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' ORDER BY short_id ASC LIMIT 10`
-            : `SELECT id FROM agent_subtasks WHERE pipeline_run_id = ? AND user_id = ? AND status = 'ready' AND human_required = 0 ORDER BY short_id ASC LIMIT 10`
-          const ready = await env.DB.prepare(readyQuery)
-            .bind(runId, user.id)
-            .all<{ id: string }>()
-          const ids = (ready.results ?? []).map((r) => r.id)
-          if (ids.length === 0) return
-          await Promise.all(
-            ids.map((id) =>
-              fetch(`${origin}/api/orchestrator/internal/process-subtask`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Cookie: cookieHeader,
-                },
-                body: JSON.stringify({ subtaskId: id, runId, force: forceHitl }),
-              }).catch(() => {}),
-            ),
-          )
-        } catch {
-          /* best-effort */
-        }
-      })(),
-    )
+    ctx.waitUntil(enqueueReadySubtasks(env, runId, user.id, forceHitl))
   }
 
   return new Response(
