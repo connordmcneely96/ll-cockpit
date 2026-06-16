@@ -438,6 +438,7 @@ export interface CloudflareEnv {
   KV: KVNamespace
   R2: R2Bucket
   KNOWLEDGE_QUEUE: Queue
+  SUBTASK_QUEUE: Queue<SubtaskMessage>
   AI: Ai
   KNOWLEDGE_VECTORIZE: VectorizeIndex
   ATLAS_RAG: VectorizeIndex
@@ -460,4 +461,11 @@ export interface CommandItem {
   icon?: string
   action: () => void
   category: 'nav' | 'agent' | 'tool' | 'system'
+}
+
+export interface SubtaskMessage {
+  subtaskId: string
+  runId: string
+  userId: string
+  force: boolean
 }

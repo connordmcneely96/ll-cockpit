@@ -21,6 +21,19 @@ bucket_name = "ll-cockpit-r2"
 queue = "knowledge-embed-queue"
 binding = "KNOWLEDGE_QUEUE"
 
+[[queues.producers]]
+queue = "subtask-queue"
+binding = "SUBTASK_QUEUE"
+
+[[queues.consumers]]
+queue = "subtask-queue"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 3
+
+[limits]
+cpu_ms = 300000
+
 [ai]
 binding = "AI"
 

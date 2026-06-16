@@ -2,7 +2,8 @@
 import { default as handler } from './.open-next/worker.js'
 import { scheduled as oracleScheduled } from './src/workers/oracle-cron'
 import { runAgentHeartbeat } from './src/workers/agent-heartbeat'
-import type { CloudflareEnv } from '@/types'
+import { processSubtaskBatch } from './src/workers/subtask-consumer'
+import type { CloudflareEnv, SubtaskMessage } from '@/types'
 
 export default {
   fetch: handler.fetch,
@@ -16,5 +17,9 @@ export default {
     // 0 13 * * *  and  0 * * * *  — ORACLE pipeline
     // oracle-cron uses the older ScheduledEvent type annotation; cast to satisfy its signature
     await oracleScheduled(controller as unknown as ScheduledEvent, env, ctx)
+  },
+
+  async queue(batch: MessageBatch<unknown>, env: CloudflareEnv, _ctx: ExecutionContext) {
+    await processSubtaskBatch(batch as MessageBatch<SubtaskMessage>, env)
   },
 } satisfies ExportedHandler<CloudflareEnv>
