@@ -65,7 +65,7 @@ export async function decomposeTask(
       taskType: 'decompose',
       systemPrompt: hermes.systemPrompt,
       userMessage,
-      maxTokens: 2048,
+      maxTokens:  8192,
       userId,
       env,
       apiKey,
