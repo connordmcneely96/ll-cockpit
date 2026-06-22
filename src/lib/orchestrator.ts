@@ -12,6 +12,9 @@
  *                   design_iterations.page_html because finalize() was only
  *                   triggered by the hub's GET /api/design/briefs/[id] route,
  *                   which the design Worker's /detail polling never calls.
+ * Sprint 46       — tool-enabled agents run through the tool-execution loop
+ *                   (runToolLoop) instead of the single-shot router. Gated by
+ *                   getAgentTools(); agents not in the allowlist are UNCHANGED.
  */
 
 import type {
@@ -26,6 +29,7 @@ import { cascadeReady, refreshRunAggregates } from './hermes'
 import { promoteArtifactsForRun } from './artifacts'
 import { route } from './llm/router'
 import { executeAssembler, finalizeIterationIfReady } from './design/pipeline'
+import { runToolLoop, getAgentTools } from './tool-loop'
 
 export interface SubtaskExecutionResult {
   subtaskId: string
@@ -202,26 +206,58 @@ export async function executeOneSubtask(
       ? subtask.task_type
       : 'default'
 
-    try {
-      const result: LLMCompletionResult = await route({
-        agentName: subtask.agent_name,
-        taskType,
-        systemPrompt: agent.systemPrompt,
-        userMessage,
-        maxTokens,
-        pipelineRunId: subtask.pipeline_run_id,
-        subtaskId,
-        userId,
-        env,
-        apiKey,
-      })
-      output = result.text
-      inputTokens = result.inputTokens
-      outputTokens = result.outputTokens
-      costUsd = result.costUsd
-      modelId = result.modelId
-    } catch (err) {
-      failedReason = err instanceof Error ? err.message : String(err)
+    // Sprint 46 — tool-enabled agents run through the tool-execution loop
+    // (tool_use -> dispatch -> tool_result -> continue). Agents NOT in the tool
+    // allowlist (getAgentTools returns []) take the UNCHANGED single-shot router
+    // path in the else below. NOTE: the loop path currently bypasses the model
+    // router's policy + cost-logging (costUsd = 0); router integration is a
+    // tracked delta (knowledge node a94e3731).
+    const agentTools = getAgentTools(subtask.agent_name)
+    if (agentTools.length > 0) {
+      try {
+        const loop = await runToolLoop({
+          db,
+          apiKey,
+          userId,
+          userMessage,
+          systemPrompt: agent.systemPrompt,
+          maxTokens,
+          allowedTools: agentTools,
+        })
+        if (loop.ok) {
+          output = loop.finalText
+          inputTokens = loop.inputTokens
+          outputTokens = loop.outputTokens
+          costUsd = 0
+          modelId = `tool-loop:${loop.iterations}i:${loop.toolCalls.length}tc`
+        } else {
+          failedReason = loop.error ?? 'tool loop failed'
+        }
+      } catch (err) {
+        failedReason = err instanceof Error ? err.message : String(err)
+      }
+    } else {
+      try {
+        const result: LLMCompletionResult = await route({
+          agentName: subtask.agent_name,
+          taskType,
+          systemPrompt: agent.systemPrompt,
+          userMessage,
+          maxTokens,
+          pipelineRunId: subtask.pipeline_run_id,
+          subtaskId,
+          userId,
+          env,
+          apiKey,
+        })
+        output = result.text
+        inputTokens = result.inputTokens
+        outputTokens = result.outputTokens
+        costUsd = result.costUsd
+        modelId = result.modelId
+      } catch (err) {
+        failedReason = err instanceof Error ? err.message : String(err)
+      }
     }
   }
 
