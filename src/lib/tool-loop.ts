@@ -241,3 +241,17 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     error: `tool loop exceeded ${maxIterations} iterations without completing`,
   }
 }
+
+// -- Per-agent tool enablement -----------------------------------------------
+// Maps a (lowercase) agent_name to the tool_keys it may use. Agents absent here
+// (or with an empty list) take the unchanged single-shot router path in
+// executeOneSubtask. Start conservative: ANCHOR (revenue) gets the read-only
+// pipeline status tool. Expanding this map is the additive follow-up.
+const AGENT_TOOLS: Record<string, string[]> = {
+  anchor: ['get_pipeline_status'],
+}
+
+/** Returns the tool_keys an agent may use (empty array = no tools / router path). */
+export function getAgentTools(agentName: string): string[] {
+  return AGENT_TOOLS[agentName] ?? []
+}
