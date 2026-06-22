@@ -115,7 +115,14 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
       if (!query) return JSON.stringify({ error: 'query is required' })
       const raw = typeof input.topK === 'number' ? input.topK : 5
       const topK = Math.max(1, Math.min(Math.floor(raw), 10))
-      const chunks = await retrieve({ AI: env.AI, ATLAS_RAG: env.ATLAS_RAG }, query, { topK, useRewriter: true })
+      // retrieve()'s local VecIndex types returnMetadata looser (string|boolean) than the
+      // official VectorizeIndex; the real binding is runtime-compatible. Cast bypasses the
+      // too-loose upstream type without modifying the shared atlas/retrieve.ts.
+      const chunks = await retrieve(
+        { AI: env.AI, ATLAS_RAG: env.ATLAS_RAG } as unknown as Parameters<typeof retrieve>[0],
+        query,
+        { topK, useRewriter: true },
+      )
       return JSON.stringify(chunks.map((c) => ({ doc: c.doc, section: c.section, page: c.page, score: Number(c.score.toFixed(4)), text: c.text ? c.text.slice(0, 800) : null })))
     },
   },
