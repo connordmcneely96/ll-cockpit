@@ -15,6 +15,9 @@
  * matching permission-gate.ts, it is NOT imported.
  */
 
+import type { CloudflareEnv } from '@/types'
+import { retrieve } from './atlas/retrieve'
+
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
 const DEFAULT_MODEL = 'claude-sonnet-4-5'
@@ -54,7 +57,7 @@ interface AnthropicResponse {
 }
 
 export interface ToolLoopArgs {
-  db: D1Database
+  env: CloudflareEnv
   apiKey: string
   userId: string
   userMessage: string
@@ -86,13 +89,36 @@ export interface ToolLoopResult {
 
 type ToolHandler = (
   input: Record<string, unknown>,
-  ctx: { db: D1Database; userId: string },
+  ctx: { env: CloudflareEnv; userId: string },
 ) => Promise<string>
 
 interface SafeTool { def: AnthropicToolDef; handler: ToolHandler }
 
 // -- Executable allowlist. Only these tools can actually run. ----------------
 const SAFE_TOOLS: Record<string, SafeTool> = {
+  query_knowledge: {
+    def: {
+      name: 'query_knowledge',
+      description:
+        'Search the ATLAS engineering knowledge base (RAG over standards, FMEA, calc references). Returns the most relevant chunks with source doc/section/page. Use for engineering/standards questions.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'The question or topic to search for.' },
+          topK: { type: 'number', description: 'Max chunks to return (1-10, default 5).' },
+        },
+        required: ['query'],
+      },
+    },
+    handler: async (input, { env }) => {
+      const query = typeof input.query === 'string' ? input.query.trim() : ''
+      if (!query) return JSON.stringify({ error: 'query is required' })
+      const raw = typeof input.topK === 'number' ? input.topK : 5
+      const topK = Math.max(1, Math.min(Math.floor(raw), 10))
+      const chunks = await retrieve({ AI: env.AI, ATLAS_RAG: env.ATLAS_RAG }, query, { topK, useRewriter: true })
+      return JSON.stringify(chunks.map((c) => ({ doc: c.doc, section: c.section, page: c.page, score: Number(c.score.toFixed(4)), text: c.text ? c.text.slice(0, 800) : null })))
+    },
+  },
   get_pipeline_status: {
     def: {
       name: 'get_pipeline_status',
@@ -100,17 +126,17 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
         'Read-only snapshot of the revenue pipeline for the current user: counts of leads, pipeline runs, and orchestrator runs grouped by status, plus total estimated lead value in USD. Takes no arguments.',
       input_schema: { type: 'object', properties: {}, required: [] },
     },
-    handler: async (_input, { db, userId }) => {
-      const leads = await db
+    handler: async (_input, { env, userId }) => {
+      const leads = await env.DB
         .prepare('SELECT status, COUNT(*) AS n FROM leads WHERE user_id = ? GROUP BY status')
         .bind(userId).all()
-      const pipelines = await db
+      const pipelines = await env.DB
         .prepare('SELECT status, COUNT(*) AS n FROM pipeline_runs WHERE user_id = ? GROUP BY status')
         .bind(userId).all()
-      const runs = await db
+      const runs = await env.DB
         .prepare('SELECT status, COUNT(*) AS n FROM orchestrator_runs WHERE user_id = ? GROUP BY status')
         .bind(userId).all()
-      const value = await db
+      const value = await env.DB
         .prepare('SELECT COALESCE(SUM(estimated_value_usd), 0) AS total FROM leads WHERE user_id = ?')
         .bind(userId).first<{ total: number }>()
       return JSON.stringify({
@@ -126,7 +152,7 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
 async function dispatchTool(
   name: string,
   input: Record<string, unknown>,
-  ctx: { db: D1Database; userId: string },
+  ctx: { env: CloudflareEnv; userId: string },
 ): Promise<{ ok: boolean; content: string }> {
   const tool = SAFE_TOOLS[name]
   if (!tool) {
@@ -212,7 +238,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       const resultBlocks: AnthropicToolResultBlock[] = []
       for (const tu of toolUses) {
         const { ok, content } = await dispatchTool(tu.name, tu.input ?? {}, {
-          db: args.db,
+          env: args.env,
           userId: args.userId,
         })
         toolCalls.push({ tool: tu.name, input: tu.input ?? {}, ok, resultPreview: content.slice(0, 200) })
@@ -249,6 +275,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
 // pipeline status tool. Expanding this map is the additive follow-up.
 const AGENT_TOOLS: Record<string, string[]> = {
   anchor: ['get_pipeline_status'],
+  atlas: ['query_knowledge'],
 }
 
 /** Returns the tool_keys an agent may use (empty array = no tools / router path). */
