@@ -216,7 +216,7 @@ export async function executeOneSubtask(
     if (agentTools.length > 0) {
       try {
         const loop = await runToolLoop({
-          db,
+          env,
           apiKey,
           userId,
           userMessage,

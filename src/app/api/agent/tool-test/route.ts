@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   if (!apiKey) return json({ ok: false, error: 'missing_anthropic_key' }, 500)
 
   const result = await runToolLoop({
-    db: env.DB,
+    env,
     apiKey,
     userId: user.id,
     userMessage: message,
