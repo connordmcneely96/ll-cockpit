@@ -312,7 +312,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
 const AGENT_TOOLS: Record<string, string[]> = {
   anchor: ['get_pipeline_status'],
   atlas: ['query_knowledge'],
-  modeler: ['execute_cad_code'],
+  modeler: ['execute_cad_code', 'query_knowledge'],
 }
 
 /** Returns the tool_keys an agent may use (empty array = no tools / router path). */
