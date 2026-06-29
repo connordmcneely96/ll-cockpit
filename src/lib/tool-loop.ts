@@ -17,6 +17,7 @@
 
 import type { CloudflareEnv } from '@/types'
 import { retrieve } from './atlas/retrieve'
+import { runCadScript, meterCadExec } from './exec/cad-exec'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -124,6 +125,34 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
         { topK, useRewriter: true },
       )
       return JSON.stringify(chunks.map((c) => ({ doc: c.doc, section: c.section, page: c.page, score: Number(c.score.toFixed(4)), text: c.text ? c.text.slice(0, 800) : null })))
+    },
+  },
+  execute_cad_code: {
+    def: {
+      name: 'execute_cad_code',
+      description:
+        'Run a build123d Python script in an isolated CAD sandbox. The script MUST write its final solid to /work/out/ as a binary GLB (export_gltf(part, "/work/out/part.glb", binary=True)). Returns exit_code, stderr, artifacts_produced (list of file names), stdout, and status. If exit_code != 0 or artifacts_produced is empty, read stderr, fix the script, and call this tool again.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          script: { type: 'string', description: 'Complete build123d Python script. Must create /work/out and export a binary GLB there.' },
+        },
+        required: ['script'],
+      },
+    },
+    handler: async (input, { env, userId }) => {
+      const script = typeof input.script === 'string' ? input.script : ''
+      if (!script.trim()) return JSON.stringify({ error: 'script is required' })
+      const executionId = crypto.randomUUID()
+      const result = await runCadScript(env, { script, tenantId: userId, executionId, timeoutMs: 60000 })
+      try { await meterCadExec(env, { tenantId: userId, executionId, result }) } catch {}
+      return JSON.stringify({
+        exit_code: result.exit_code,
+        status: result.status,
+        artifacts_produced: result.artifacts.map((a) => a.name),
+        stdout: (result.stdout ?? '').slice(0, 1000),
+        stderr: (result.stderr ?? '').slice(0, 2000),
+      })
     },
   },
   get_pipeline_status: {
@@ -283,6 +312,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
 const AGENT_TOOLS: Record<string, string[]> = {
   anchor: ['get_pipeline_status'],
   atlas: ['query_knowledge'],
+  modeler: ['execute_cad_code'],
 }
 
 /** Returns the tool_keys an agent may use (empty array = no tools / router path). */

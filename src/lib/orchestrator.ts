@@ -62,6 +62,7 @@ const AGENT_MAX_TOKENS: Record<string, number> = {
   atlas: 32000,
   anchor: 32000,
   reel: 4096,
+  modeler: 8192,
 }
 const DEFAULT_MAX_TOKENS = 2048
 
