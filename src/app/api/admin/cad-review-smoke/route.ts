@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return json({ ok: false, error: 'unauthorized' }, 401)
 
-    let body: { spec?: string }
+    let body: { spec?: string; metrics?: unknown }
     try {
       body = await req.json()
     } catch {
@@ -39,6 +39,25 @@ export async function POST(req: Request) {
     const env = getBindings()
     const apiKey = env.ANTHROPIC_API_KEY
     if (!apiKey) return json({ ok: false, error: 'missing_anthropic_key' }, 500)
+
+    // Reviewer-only (teeth-test) mode: when canned metrics are supplied, skip the
+    // modeler entirely and feed the CAD-REVIEWER the (spec, metrics) directly so
+    // a deterministic mismatch can be asserted to return pass:false.
+    if (body.metrics !== null && typeof body.metrics === 'object') {
+      const reviewerAgent = getAgent('reviewer')
+      if (!reviewerAgent) return json({ ok: false, error: 'agent_config_missing' }, 500)
+      const reviewer = await runToolLoop({
+        env,
+        apiKey,
+        userId: user.id,
+        userMessage: `SPEC:\n${body.spec}\n\nMEASURED GEOMETRY_METRICS (JSON):\n${JSON.stringify(body.metrics)}`,
+        systemPrompt: reviewerAgent.systemPrompt,
+        maxTokens: 2048,
+        maxIterations: 1,
+        allowedTools: [],
+      })
+      return json({ ok: true, mode: 'reviewer-only', reviewer: { finalText: reviewer.finalText } }, 200)
+    }
 
     const modelerAgent = getAgent('modeler')
     const reviewerAgent = getAgent('reviewer')
