@@ -63,6 +63,7 @@ const AGENT_MAX_TOKENS: Record<string, number> = {
   anchor: 32000,
   reel: 4096,
   modeler: 8192,
+  reviewer: 2048,
 }
 const DEFAULT_MAX_TOKENS = 2048
 
