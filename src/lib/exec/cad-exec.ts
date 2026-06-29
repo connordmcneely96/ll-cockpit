@@ -24,7 +24,7 @@ export async function runCadScript(
   args: { script: string; tenantId: string; executionId: string; timeoutMs?: number },
 ): Promise<CadExecResult> {
   const { script, tenantId, executionId, timeoutMs } = args
-  const res = await fetch(`${env.CAD_EXEC_URL}/run`, {
+  const res = await env.NEXUS_EXEC.fetch('https://nexus-exec/run', {
     method: 'POST',
     headers: {
       'x-exec-secret': env.EXEC_SECRET,
