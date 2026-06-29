@@ -146,12 +146,22 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
       const executionId = crypto.randomUUID()
       const result = await runCadScript(env, { script, tenantId: userId, executionId, timeoutMs: 60000 })
       try { await meterCadExec(env, { tenantId: userId, executionId, result }) } catch {}
+      // Parse deterministic OpenCascade-measured metrics emitted by the script as a
+      // single 'GEOMETRY_METRICS: {...}' line. Parse from the full (untruncated)
+      // stdout so a large log can't clip the metrics line. null if absent/invalid.
+      let geometry_metrics: unknown = null
+      const stdout = result.stdout ?? ''
+      const m = stdout.match(/^GEOMETRY_METRICS:\s*(\{.*\})\s*$/m)
+      if (m) {
+        try { geometry_metrics = JSON.parse(m[1]) } catch { geometry_metrics = null }
+      }
       return JSON.stringify({
         exit_code: result.exit_code,
         status: result.status,
         artifacts_produced: result.artifacts.map((a) => a.name),
-        stdout: (result.stdout ?? '').slice(0, 1000),
+        stdout: stdout.slice(0, 1000),
         stderr: (result.stderr ?? '').slice(0, 2000),
+        geometry_metrics,
       })
     },
   },

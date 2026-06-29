@@ -18,6 +18,7 @@ export type AgentName =
   | 'critic'
   | 'assembler'
   | 'modeler'
+  | 'reviewer'
 
 export interface AgentPermissions {
   can_deploy: boolean
