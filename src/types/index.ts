@@ -452,6 +452,9 @@ export interface CloudflareEnv {
   // Sprint 121F — Cloudflare management API credentials for Pages deploys.
   CLOUDFLARE_API_TOKEN?: string
   CLOUDFLARE_ACCOUNT_ID?: string
+  // Slice 1.5 — nexus-exec container runner
+  CAD_EXEC_URL: string
+  EXEC_SECRET: string
 }
 
 export interface CommandItem {

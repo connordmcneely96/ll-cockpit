@@ -31,6 +31,9 @@ max_batch_size = 1
 max_batch_timeout = 0
 max_retries = 3
 
+[vars]
+CAD_EXEC_URL = "https://nexus-exec.connorpattern.workers.dev"
+
 [limits]
 cpu_ms = 300000
 
