@@ -66,6 +66,11 @@ const AGENT_MAX_TOKENS: Record<string, number> = {
   modeler: 8192,
   reviewer: 2048,
 }
+// Per-agent tool-loop iteration budget. Agents absent here fall back to
+// runToolLoop's DEFAULT_MAX_ITERATIONS (5). The modeler needs more headroom
+// for query_knowledge + execute_cad_code + self-heal retries (cycle-2 rebuilds
+// failed at 5).
+const AGENT_MAX_ITERATIONS: Record<string, number> = { modeler: 10 }
 const DEFAULT_MAX_TOKENS = 2048
 
 const DEFAULT_MAX_PARALLEL = 4
@@ -225,6 +230,7 @@ export async function executeOneSubtask(
           userMessage,
           systemPrompt: agent.systemPrompt,
           maxTokens,
+          maxIterations: AGENT_MAX_ITERATIONS[subtask.agent_name],
           allowedTools: agentTools,
         })
         if (loop.ok) {
