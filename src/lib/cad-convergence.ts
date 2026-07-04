@@ -141,7 +141,7 @@ export async function advanceConvergence(
   const modelerShort = `st_m${nextCycle}`
   const reviewerShort = `st_r${nextCycle}`
 
-  const feedbackTask = `ORIGINAL SPEC:\n${row.spec}\n\nYour previous attempt was REJECTED by an independent geometry reviewer. Findings:\n${verdict.discrepancies.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nRevise your build123d and rebuild to the ORIGINAL spec dimensions, re-export, re-report metrics.`
+  const feedbackTask = `ORIGINAL SPEC:\n${row.spec}\n\nYour previous attempt was REJECTED by an independent geometry reviewer. Findings:\n${verdict.discrepancies.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nThis is a direct correction, not a research task. Apply the findings above and rebuild — do NOT call query_knowledge; no standards lookup is needed to correct a geometry or dimensional discrepancy. Revise your build123d, rebuild to the ORIGINAL spec dimensions, re-export, and re-report metrics.`
 
   await db.prepare(
     `INSERT INTO agent_subtasks
