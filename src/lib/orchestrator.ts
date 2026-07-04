@@ -282,9 +282,9 @@ export async function executeOneSubtask(
   } else {
     await db
       .prepare(
-        `UPDATE agent_subtasks SET status = 'done', output = ?, cost_usd = ?, tokens = ?, completed_at = ? WHERE id = ?`,
+        `UPDATE agent_subtasks SET status = 'done', output = ?, cost_usd = ?, tokens = ?, completed_at = ?, model_id = ? WHERE id = ?`,
       )
-      .bind(output, costUsd, inputTokens + outputTokens, completedAt, subtaskId)
+      .bind(output, costUsd, inputTokens + outputTokens, completedAt, modelId ?? null, subtaskId)
       .run()
   }
 
