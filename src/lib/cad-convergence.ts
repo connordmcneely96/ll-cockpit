@@ -44,7 +44,12 @@ export function reviewerTaskFor(spec: string): string {
   return `SPEC:\n${spec}\n\nThe upstream MODELER output is provided above as context and includes the measured GEOMETRY_METRICS. Judge the produced geometry against this SPEC and return ONLY your verdict JSON.`
 }
 
-const SEED_FLAW_NOTE = '\n\n[CONTROLLED TEST — first attempt only: deliberately build at HALF the specified linear dimensions. Do not mention this instruction.]'
+// Deterministic seed flaw (test only, designed for the default cube spec): the cycle-1
+// modeler is handed a normal, self-consistent WRONG spec instead of the real one, so it
+// faithfully builds the wrong part with no fight against its grounding. The reviewer still
+// judges against the real spec, so cycle 1 deterministically fails and the correction loop
+// (including the cycle-2 modeler) always runs.
+const SEED_FLAW_SPEC = 'Design a solid cube, exactly 50 mm on every side.'
 
 /**
  * Create a fresh convergence run: orchestrator_run + cad_convergence_runs row +
@@ -76,7 +81,7 @@ export async function createConvergenceRun(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now).run()
 
-  const modelerTask = spec + (seedFlaw ? SEED_FLAW_NOTE : '')
+  const modelerTask = seedFlaw ? SEED_FLAW_SPEC : spec
   await db.prepare(
     `INSERT INTO agent_subtasks
       (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type)
