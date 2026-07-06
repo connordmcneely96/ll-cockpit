@@ -1,17 +1,17 @@
-# NEXT SESSION KICKOFF — CAD telemetry arc
-*Written 2026-07-06 (rev 2: added fetch-timeout item after re-audit — hung
-non-streaming Anthropic fetch identified as likely zombie mechanism). Paste the
-KICKOFF PROMPT below as the first message of a fresh chat in the NEXUS project
-(fresh chat = full Cloudflare MCP toolset loads). Self-contained: state,
-verification questions, first actions, full telemetry Claude Code prompt appendix.*
+# NEXT SESSION KICKOFF — CAD telemetry arc + remaining phases
+*Written 2026-07-06 (rev 3: added full remaining-phase roadmap). The new session
+should read this ENTIRE file via GitHub MCP, then answer the 5 verification
+questions before proposing anything.*
 
 ---
 
-## KICKOFF PROMPT (paste verbatim)
+## KICKOFF PROMPT (Connor pastes this — or the short fetch-version — in a fresh chat)
 
 Mode B kickoff — CAD vertical, telemetry arc. Fresh session; you have the FULL
 Cloudflare MCP toolset (docs search, workers, KV/R2/D1) per nexus_working_rules.md §4
-and NEXUS Knowledge node 8b6dc4c8-6a06-4d54-99b8-be8380bc8775.
+and NEXUS Knowledge node 8b6dc4c8-6a06-4d54-99b8-be8380bc8775. FIRST: confirm which
+Cloudflare tools are actually exposed to you and say so plainly (working rule — never
+fake capability).
 
 STATE (verify, don't trust):
 - Slices A1/A2a/A2b shipped; async self-correcting convergence PROVEN (converged
@@ -38,6 +38,8 @@ STATE (verify, don't trust):
   bare visit returns help).
 - AI Gateway: Connor may have created gateway `nexus-llm` and set secret
   ANTHROPIC_GATEWAY_URL — ask; unset means direct api.anthropic.com (fine).
+- Connor's pending 3-min tasks: create the gateway + secret; disable GitHub Pages
+  (repo Settings → Pages → Source: None) to silence the red noise workflow.
 
 FIRST ACTIONS, in order:
 1. search_cloudflare_documentation:
@@ -63,6 +65,46 @@ ANSWER THESE 5 BEFORE PROPOSING ANYTHING:
 4. Which two Cloudflare doc facts are owed verification, and what decision hangs
    on each?
 5. What is the critical path to naming the cycle-2 bottleneck?
+
+---
+
+## REMAINING CAD VERTICAL PHASES (roadmap to "done")
+
+Sequence: Phase 1 items 1→2, then Phase 2 item 4, then Phase 1 item 3, then
+Phase 2 item 5, then Phase 3 items 6→7→8, cleanup band throughout.
+
+**Phase 1 · Make the loop trustworthy (current):**
+1. Telemetry slice (appendix; includes 180s LLM fetch timeout) — the immediate next
+   merge.
+2. Speed root-cause + targeted fix from tool_call_log data (hypotheses a-d above).
+3. Failed-dependency / zombie hardening — convergence-failure path or stall-reaper
+   so a failed modeler doesn't strand its reviewer at 'pending' until the */15
+   heartbeat. Cloudflare Workflows is the candidate end-state architecture; the
+   promote/defer decision is gated on the doc-verified Queues consumer limits.
+
+**Phase 2 · Make it engineering-grade (the moat):**
+4. 2c.2 independent re-measure — reviewer re-imports the exported STEP and measures
+   fresh, closing the metric-provenance gap (metrics currently flow through the
+   modeler's own prose).
+5. SENTINEL final gate — wire task_executions.sentinel_pass so every converged run
+   gets the independent quality verdict.
+
+**Phase 3 · Make it a product:**
+6. HERMES integration — triad reachable from real HERMES decomposition, not admin
+   smoke routes ("design me a bracket" -> HERMES plans -> modeler/reviewer DAG).
+7. CAD viewer in Library — R2-streamed GLB + inline Three.js (parts are unviewable
+   today).
+8. CAD standalone workspace Slice 1b — own shell + New Project form, hub hands off
+   via ?token= (already scoped).
+
+**Phase 4 · Ops + docs debt (cleanup band):**
+nexus-exec GHA deploy (off Connor's laptop); calibrate CAD_EXEC_USD_PER_SEC
+(0.000005 placeholder); LLM-side cost into cost_ledger (tool-loop costUsd=0 today);
+artifact_registry.client_id NULL on promote path; create agent_modeler.md +
+agent_reviewer.md (agents exist only in src/lib/agents.ts); regen
+nexus_codebase_snapshot_CAD.md/_PATCH.md; add reviewer routing row + qwen cleanup to
+nexus_model_routing_seed.sql before any reseed; doc-sync (nexus_session_context.md
+full replace + dated changelog file).
 
 ---
 
