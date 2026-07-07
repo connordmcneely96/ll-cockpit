@@ -42,6 +42,8 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
   const contentUrl = `/api/library/artifacts/${artifact.id}/content`
 
   const openPreview = () => {
+    // STEP has no preview surface — download-only.
+    if (fmt === 'step') return
     setPreview(true)
     // GLB is binary — ModelViewer fetches/renders it itself; skip the text fetch.
     if (fmt === 'glb') return
@@ -106,8 +108,10 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
       <div className="flex items-center gap-1.5">
         <button onClick={openTab} title="Open the deliverable in a new tab"
           className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Open</button>
-        <button onClick={openPreview} title="Preview the deliverable here"
-          className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Preview</button>
+        {fmt !== 'step' && (
+          <button onClick={openPreview} title="Preview the deliverable here"
+            className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Preview</button>
+        )}
         <button onClick={download} title="Download the deliverable"
           className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Download</button>
         <button onClick={copyKey} title="Copy storage key"
