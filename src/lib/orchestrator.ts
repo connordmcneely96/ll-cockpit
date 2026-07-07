@@ -232,6 +232,7 @@ export async function executeOneSubtask(
           maxTokens,
           maxIterations: AGENT_MAX_ITERATIONS[subtask.agent_name],
           allowedTools: agentTools,
+          logContext: { subtaskId: subtask.id, pipelineRunId: subtask.pipeline_run_id, agentName: subtask.agent_name },
         })
         if (loop.ok) {
           output = loop.finalText

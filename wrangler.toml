@@ -61,3 +61,7 @@ crons = [
   "0 * * * *",    # every hour — fetch only (keeps queue populated)
   "*/15 * * * *", # every 15 min — agent heartbeat (reaper + drain + stall check)
 ]
+
+# Workers Logs — needed to trace tool-loop telemetry / zombie invocations.
+[observability]
+enabled = true
