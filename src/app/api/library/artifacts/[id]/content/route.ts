@@ -25,7 +25,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const fmt = row.format ?? 'md'
     // md served as text/plain so it renders inline in a tab instead of downloading.
     const ctype =
-      fmt === 'html' ? 'text/html; charset=utf-8'
+      fmt === 'glb' ? 'model/gltf-binary'
+      : fmt === 'step' ? 'application/step'
+      : fmt === 'html' ? 'text/html; charset=utf-8'
       : fmt === 'json' ? 'application/json; charset=utf-8'
       : 'text/plain; charset=utf-8'
 
@@ -38,7 +40,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
 
     if (new URL(req.url).searchParams.get('download') === '1') {
-      const ext = fmt === 'html' ? 'html' : fmt === 'json' ? 'json' : 'md'
+      const ext = fmt === 'glb' ? 'glb' : fmt === 'step' ? 'step' : fmt === 'html' ? 'html' : fmt === 'json' ? 'json' : 'md'
       const safe = (row.artifact_name || 'artifact').replace(/[^a-z0-9._-]+/gi, '_')
       headers['Content-Disposition'] = `attachment; filename="${safe}.${ext}"`
     }
