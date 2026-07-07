@@ -1,66 +1,93 @@
-# NEXT SESSION KICKOFF — CAD viewer slice (roadmap resequenced)
-*Written 2026-07-07 (rev 4: post container-starvation fix). The new session should
-read this ENTIRE file via GitHub MCP, then answer the 5 verification questions
-before proposing anything. Full session record:
-`docs/nexus_changelog_2026-07-07_container-starvation.md`.*
+# NEXT SESSION KICKOFF — HERMES → CAD triad integration
+*Written 2026-07-07 (rev 5: post viewer-slice + step-guard session). The new session
+should read this ENTIRE file via GitHub MCP, then answer the 5 verification
+questions before proposing anything. Full session records:
+`nexus_changelog_2026-07-07_cad-viewer.md` (project folder) and PRs #185/#186.*
 
 ---
 
 ## KICKOFF PROMPT (Connor pastes in a fresh chat)
 
-Mode B kickoff — CAD vertical, viewer slice. Fresh session; you have the FULL
-Cloudflare MCP toolset per nexus_working_rules.md §4. FIRST: confirm which
-Cloudflare tools are actually exposed and say so plainly (never fake capability).
-THEN fetch and read docs/next_session_kickoff.md (this file, rev 4) from
+Mode B kickoff — CAD vertical, HERMES integration slice. Fresh session; you have
+the Cloudflare MCP toolset per nexus_working_rules.md §4 (note: Vectorize tools
+were NOT exposed in the 2026-07-07 session — re-confirm what's actually exposed,
+never fake capability). FIRST: confirm exposed Cloudflare tools plainly. THEN
+fetch and read docs/next_session_kickoff.md (this file, rev 5) from
 connordmcneely96/ll-cockpit main via GitHub MCP, answer its 5 verification
 questions from live D1/GitHub state, and wait for greenlight.
 
 STATE (verify, don't trust):
-- Cycle-2 latency SOLVED. Root cause: nexus-exec created a new sandbox per request
-  (random UUID) under max_instances:1 — every call starved ~140s on the single
-  container slot then 500'd "Container is starting". Fixed in nexus-exec PR #1
-  (stable 'cad-exec' sandbox + per-run /work wipe), deployed. Post-fix run
-  654e2536: converged cycle 2, 0 failed calls, cycle-2 build 10.4s warm, 49.1s
-  total instrumented (was ~618s cycle-2 alone).
-- Telemetry live (ll-cockpit PR #184, merged+deployed): tool_call_log rows per
-  LLM iteration ('_llm') and per tool call; 180s AbortController on Anthropic
-  fetches; optional AI Gateway routing (gateway nexus-llm ACTIVE via
-  ANTHROPIC_GATEWAY_URL secret ending in /anthropic; Authenticated Gateway OFF);
-  Workers Logs enabled.
-- Workflows promotion DEMOTED: full runs now use ~5% of the 15-min Queues consumer
-  wall budget (was ~69% for cycle-2 alone). Revisit when part complexity/DAG depth
-  demands. Remaining zombie surface: runCadScript's NEXUS_EXEC.fetch is still
-  unbounded (debt).
-- Roadmap RESEQUENCED — viewer first. The pipeline manufactures and stores real
-  models (R2: part.glb + part.step per run, artifact_registry rows); nobody can
-  see them. Shortest path to product-feel + demo material.
+- CAD VIEWER SHIPPED + BROWSER-VERIFIED. PR #185 (squash-merged): content route
+  serves glb → model/gltf-binary and step → application/step with correct
+  download extensions; new src/components/library/ModelViewer.tsx (default
+  export, Three.js GLTFLoader + OrbitControls from three/examples/jsm — bundles
+  cleanly through next build → OpenNext → Workers, NO CDN fallback needed);
+  ArtifactCard mounts ModelViewer for glb (glb branch FIRST in the modal
+  ternary — required, content stays null for glb). Connor confirmed live
+  orbit rendering on ll-cockpit.connorpattern.workers.dev.
+- STEP DOWNLOAD-ONLY GUARD LANDED. Commit 50ac58a via PR #186: openPreview()
+  returns immediately for fmt==='step' (before setPreview), and the Preview
+  button doesn't render for step. Closes viewer debt item 3.
+- PR #186 QUIRK (don't be confused by it): Claude Code committed 50ac58a onto
+  the already-squash-merged #185 branch from a STALE local clone (never fetched
+  after Connor's merge). Pushing to a merged PR's branch lands nothing; the fix
+  was a second PR (#186) from the same branch. Its diff showed 144 additions /
+  4 commits because squash-merge divergence makes GitHub's three-dot diff
+  re-show everything — git resolved the already-applied changes as no-ops and
+  only the 8 guard lines changed content. Main verified clean by read-back.
+- NEW PROCESS RULE (from that incident): every Claude Code prompt begins with
+  `git fetch origin` + confirm the base branch is current with remote BEFORE
+  creating any branch. Stale-clone stacking is a named hazard now.
+- Branch hygiene: lane-a/cad-viewer-slice DELETED (verified 404 on 2026-07-07).
+- Deploy gate for the step guard: confirm #186's merge-commit "Deploy to
+  Cloudflare" Actions run went green and a live part.step row shows NO Preview
+  button (Open/Download/Key only) — Connor confirmed repo state good; live
+  check may already be done, ask rather than assume.
 
-NEXT SLICE — CAD viewer in Library (was Phase 3 item 7, now item 1):
-R2-streamed GLB + inline Three.js viewer. Rough shape (architect before
-prompting): (a) auth-gated artifact-stream route serving GLB bytes from R2 by
-artifact_registry id (correct Content-Type: model/gltf-binary); (b) viewer
-component (Three.js GLTFLoader + OrbitControls or <model-viewer>) rendering that
-URL; (c) Library surface listing cad-model artifacts with the viewer inline.
-Verify live Library code + artifact_registry schema BEFORE writing the prompt.
+DEBT (current):
+- ModelViewer: material.dispose() doesn't free textures (zero impact — build123d
+  parts untextured; becomes a GPU leak if textured models land).
+- ModelViewer: unmount-during-load leaks the parsed gltf.scene (disposed guard
+  early-returns without disposing). One-off per occurrence.
+- runCadScript's NEXUS_EXEC.fetch still unbounded (zombie surface). CARRIED.
+- seed.ts / nexus_model_routing_seed.sql qwen reseed hazard. CARRIED.
+- Split-brain model registry (live router claude-sonnet-4-5 vs Thompson rows
+  claude-sonnet-4-6 / claude-opus-4-7). CARRIED.
 
-SEQUENCE AFTER VIEWER: HERMES integration (real request → triad) → 2c.2
-independent re-measure → SENTINEL final gate → standalone workspace 1b.
-Cleanup band unchanged (see changelog debt list).
+NEXT SLICE — HERMES integration: real request → CAD triad. This is a READ-FIRST
+session; do NOT architect from memory or docs. Before writing any prompt, read
+live (GitHub MCP refs/heads/main + live D1):
+  (a) the HERMES Queues consumer path — how subtask-queue messages are consumed,
+      the 15-min wall budget, heartbeat cron;
+  (b) DAG subtask creation — how a request becomes subtasks, executeOneSubtask,
+      runToolLoop wiring (Sprint 46 state: wired for ANCHOR — what about the
+      CAD triad agents?);
+  (c) live ai_routing_policy rows for CAD task_types INCLUDING the `reviewer`
+      row that exists ONLY in live D1 (nexus_model_routing_seed.sql lags and
+      carries the qwen hazard — never trust it);
+  (d) MODELER / CAD-REVIEWER wiring in live src/lib/agents.ts (these agents
+      exist only in live code — no agent_*.md docs for them; real doc gap).
+Then architect the request→triad flow, state trade-offs, get Connor's
+greenlight, and only then author the prompt (≤4 commits, hot files claimed,
+3 audit passes, fetch-first rule included).
+
+SEQUENCE AFTER HERMES: 2c.2 independent re-measure → SENTINEL final gate →
+standalone workspace 1b. Cleanup band unchanged.
 
 ANSWER THESE 5 BEFORE PROPOSING ANYTHING:
-1. What was the cycle-2 root cause, the exact 2-line fix, and the before/after
-   numbers from tool_call_log?
-2. Which two awaits in the tool-loop path were unbounded, which one is now fixed
-   and how, and which remains as debt?
-3. Why was Workflows promotion demoted, and what number backs it?
-4. Where do CAD artifacts live right now (table + example storage_ref pattern),
-   and what two file formats does each converged run produce?
-5. What is the next slice and its three components?
+1. Where does the .step download-only guard live, and what are its two parts?
+   Verify against live main, not this doc.
+2. Why did PR #186 show 144 additions / 4 commits for an 8-line change, and
+   what process rule came out of that incident?
+3. What two ModelViewer debt items remain open, and why is their impact
+   near-zero today but real later?
+4. Which routing row exists ONLY in live D1 and not in the seed file, and why
+   must the seed file never be trusted for routing state?
+5. What four live surfaces must be read before architecting the HERMES→triad
+   slice, and which two CAD agents have no agent_*.md docs?
 
 FIRST ACTIONS, in order:
-1. Read live artifact_registry schema (D1) + one recent cad-model row; read the
-   live Library page code (GitHub MCP) to find the mount point.
-2. Confirm Three.js availability strategy for the Next.js/OpenNext worker bundle
-   (dependency vs CDN vs <model-viewer>) — pick one, state trade-offs, get
-   Connor's greenlight.
-3. Author the viewer slice prompt (≤4 commits, hot files claimed, 3 audit passes).
+1. Answer the 5 questions from live state (D1 reads + GitHub MCP reads).
+2. Read surfaces (a)–(d) above. Report findings + doc-lag deltas.
+3. Propose the request→triad architecture. Wait for greenlight.
+4. Author the slice prompt (fetch-first step included, 3 audit passes).
