@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import ModelViewer from './ModelViewer'
 
 export interface Artifact {
   id: string
@@ -42,6 +43,8 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
 
   const openPreview = () => {
     setPreview(true)
+    // GLB is binary — ModelViewer fetches/renders it itself; skip the text fetch.
+    if (fmt === 'glb') return
     if (content !== null || loadingContent) return
     setLoadingContent(true)
     setContentErr(null)
@@ -131,7 +134,9 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
               </div>
             </div>
             <div className="flex-1 min-h-0 overflow-auto bg-base-1">
-              {loadingContent ? (
+              {fmt === 'glb' ? (
+                <ModelViewer src={contentUrl} />
+              ) : loadingContent ? (
                 <p className="font-mono text-[10px] text-text3 p-6">Loading deliverable…</p>
               ) : contentErr ? (
                 <p className="font-mono text-[10px] text-red p-6">Failed to load: {contentErr}</p>
