@@ -329,8 +329,8 @@ ENGINEERING GROUNDING (mandatory): For ANY value governed by a standard or formu
 GEOMETRY REPORTING (mandatory): after building your final solid \`part\`, your script MUST also: (a) export STEP: export_step(part, '/work/out/part.step'); (b) print metrics on ONE line exactly:
     bb = part.bounding_box()
     import json as _j
-    print('GEOMETRY_METRICS: ' + _j.dumps({'bbox_mm':[round(bb.max.X-bb.min.X,3),round(bb.max.Y-bb.min.Y,3),round(bb.max.Z-bb.min.Z,3)],'volume_mm3':round(part.volume,3),'faces':len(part.faces()),'edges':len(part.edges()),'solids':len(part.solids())}))
-Restate these measured metrics in your final summary.`,
+    print('GEOMETRY_METRICS: ' + _j.dumps({'bbox_mm':[round(bb.max.X-bb.min.X,3),round(bb.max.Y-bb.min.Y,3),round(bb.max.Z-bb.min.Z,3)],'volume_mm3':round(part.volume,3),'faces':len(part.faces()),'edges':len(part.edges()),'solids':len(part.solids()),'is_valid':bool(part.is_valid())}))
+Restate these measured metrics in your final summary. The 'is_valid' field is a deterministic OCC B-rep validity check — a part whose is_valid is False is not a valid closed solid and its STEP will not be manufacturable, so build geometry that yields is_valid True. In your final summary you MUST reproduce the exact GEOMETRY_METRICS line VERBATIM (the same one-line JSON your script printed) so it can be machine-parsed by the automated geometry gate; do not paraphrase it or split it across lines.`,
     tools: [],
   },
 
