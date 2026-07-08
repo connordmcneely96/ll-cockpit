@@ -95,7 +95,7 @@ export interface ToolLoopResult {
 
 type ToolHandler = (
   input: Record<string, unknown>,
-  ctx: { env: CloudflareEnv; userId: string },
+  ctx: { env: CloudflareEnv; userId: string; logContext?: ToolLoopArgs['logContext'] },
 ) => Promise<string>
 
 interface SafeTool { def: AnthropicToolDef; handler: ToolHandler }
@@ -145,12 +145,12 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
         required: ['script'],
       },
     },
-    handler: async (input, { env, userId }) => {
+    handler: async (input, { env, userId, logContext }) => {
       const script = typeof input.script === 'string' ? input.script : ''
       if (!script.trim()) return JSON.stringify({ error: 'script is required' })
       const executionId = crypto.randomUUID()
       const result = await runCadScript(env, { script, tenantId: userId, executionId, timeoutMs: 60000 })
-      try { await meterCadExec(env, { tenantId: userId, executionId, result }) } catch {}
+      try { await meterCadExec(env, { tenantId: userId, executionId, result, pipelineRunId: logContext?.pipelineRunId, subtaskId: logContext?.subtaskId }) } catch {}
       // Parse deterministic OpenCascade-measured metrics emitted by the script as a
       // single 'GEOMETRY_METRICS: {...}' line. Parse from the full (untruncated)
       // stdout so a large log can't clip the metrics line. null if absent/invalid.
@@ -203,7 +203,7 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
 async function dispatchTool(
   name: string,
   input: Record<string, unknown>,
-  ctx: { env: CloudflareEnv; userId: string },
+  ctx: { env: CloudflareEnv; userId: string; logContext?: ToolLoopArgs['logContext'] },
 ): Promise<{ ok: boolean; content: string }> {
   const tool = SAFE_TOOLS[name]
   if (!tool) {
@@ -358,6 +358,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
         const { ok, content } = await dispatchTool(tu.name, tu.input ?? {}, {
           env: args.env,
           userId: args.userId,
+          logContext: args.logContext,
         })
         toolCalls.push({ tool: tu.name, input: tu.input ?? {}, ok, resultPreview: content.slice(0, 200) })
         await logToolCall(args.env, args.logContext, args.userId, tu.name, ok, Date.now() - tt0, JSON.stringify(tu.input ?? {}), content)

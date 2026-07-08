@@ -126,6 +126,11 @@ export async function advanceConvergence(
   if (verdict.pass) {
     await db.prepare(`UPDATE cad_convergence_runs SET status = 'converged', updated_at = ? WHERE run_id = ?`)
       .bind(now, runId).run()
+    // Stamp the run's CAD binary artifacts as SENTINEL-passed on converge.
+    await db.prepare(
+      `UPDATE artifact_registry SET sentinel_pass = 1
+        WHERE pipeline_run_id = ? AND artifact_type = 'cad-model'`,
+    ).bind(runId).run()
     return
   }
 
