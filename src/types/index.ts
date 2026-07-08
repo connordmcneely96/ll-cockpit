@@ -456,6 +456,8 @@ export interface CloudflareEnv {
   CLOUDFLARE_ACCOUNT_ID?: string
   // Slice 1.5 — nexus-exec container runner (service binding)
   NEXUS_EXEC: Fetcher
+  // Sprint 151A calc engine — deterministic engineering formulas (service binding)
+  ENGINEERING_CALCS: Fetcher
   EXEC_SECRET: string
 }
 
