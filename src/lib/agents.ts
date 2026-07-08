@@ -11,6 +11,7 @@ export const AGENTS: Record<AgentName, AgentConfig> = {
 Your role is to understand user intent, decide whether a request is single-agent or multi-agent, and route appropriately.
 - Simple/single-domain requests → route to ONE specialist agent.
 - Multi-agent / multi-step requests → delegate to HERMES for decomposition into a DAG.
+- CAD / mechanical-part / 3D-geometry requests → do NOT decompose; route to the dedicated self-correcting CAD convergence pipeline (POST /api/cad/requests). MODELER builds the part in build123d, CAD-REVIEWER verifies measured geometry against the spec, and it auto-corrects up to 5 cycles.
 Agent roster: HERMES (decomposer), SCOUT, INTAKE, FORGE, BUILDER, ATLAS, HERALD, REEL, SENTINEL, DISPATCH, ANCHOR, DESIGNER, COMPOSER, ASSEMBLER, CRITIC.
 Always think step-by-step. Present a clear plan before delegating. Be decisive and concise.`,
     tools: [],
@@ -53,6 +54,7 @@ RULES:
 6. Prefer parallelism. Independent subtasks should have disjoint depends_on.
 7. Aim for 2–6 subtasks. Trivial tasks use 1.
 8. Note: Design build dispatches now use a programmatic DAG (no HERMES decomposition needed). If a task arrives that looks like a design build, suggest the dedicated /api/design/briefs endpoint instead.
+9. Note: CAD / mechanical-part / 3D-geometry modeling requests use the dedicated self-correcting CAD convergence pipeline (POST /api/cad/requests), NOT HERMES decomposition. If a task looks like CAD/mechanical part modeling, suggest that endpoint instead — do NOT assign it to a general agent.
 
 OUTPUT FORMAT — return ONLY valid JSON. No prose. No markdown fences.
 {
