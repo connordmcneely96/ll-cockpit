@@ -27,7 +27,7 @@ import type {
 import { getAgent } from './agents'
 import { cascadeReady, refreshRunAggregates } from './hermes'
 import { promoteArtifactsForRun } from './artifacts'
-import { advanceConvergence } from './cad-convergence'
+import { advanceConvergence, runGateA } from './cad-convergence'
 import { route } from './llm/router'
 import { executeAssembler, finalizeIterationIfReady } from './design/pipeline'
 import { runToolLoop, getAgentTools } from './tool-loop'
@@ -292,6 +292,11 @@ export async function executeOneSubtask(
   if (!failedReason && subtask.agent_name === 'reviewer') {
     try { await advanceConvergence(env, userId, subtask.pipeline_run_id, output) }
     catch (err) { console.error(`convergence advance failed for run ${subtask.pipeline_run_id}:`, err) }
+  }
+
+  if (!failedReason && subtask.agent_name === 'modeler') {
+    try { await runGateA(env, userId, subtask.pipeline_run_id, output) }
+    catch (err) { console.error(`Gate A failed for run ${subtask.pipeline_run_id}:`, err) }
   }
 
   await cascadeReady(db, subtask.pipeline_run_id)

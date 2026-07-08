@@ -160,3 +160,57 @@ export async function advanceConvergence(
   await db.prepare(`UPDATE cad_convergence_runs SET cycle = ?, updated_at = ? WHERE run_id = ?`)
     .bind(nextCycle, now, runId).run()
 }
+
+export interface GateAResult { pass: boolean; failures: string[] }
+
+// Deterministic geometry gate. Parses the LAST GEOMETRY_METRICS JSON line from
+// the modeler's output. FAIL-CLOSED: missing/unparseable metrics => fail.
+export function evaluateGateA(modelerOutput: string): GateAResult {
+  const failures: string[] = []
+  const matches = [...(modelerOutput ?? '').matchAll(/GEOMETRY_METRICS:\s*(\{.*\})/g)]
+  if (matches.length === 0) return { pass: false, failures: ['GEOMETRY_METRICS line not found in modeler output (fail-closed)'] }
+  let m: Record<string, unknown>
+  try { m = JSON.parse(matches[matches.length - 1][1]) } catch { return { pass: false, failures: ['GEOMETRY_METRICS JSON unparseable (fail-closed)'] } }
+  const solids = Number(m.solids)
+  const volume = Number(m.volume_mm3)
+  if (!(solids >= 1)) failures.push(`solid_count ${String(m.solids)} is not >= 1`)
+  if (!(volume > 0)) failures.push(`volume_mm3 ${String(m.volume_mm3)} is not > 0`)
+  if (m.is_valid !== true) failures.push('is_valid is not true — invalid B-rep; STEP would not be manufacturable')
+  return { pass: failures.length === 0, failures }
+}
+
+// Called from executeOneSubtask when a MODELER subtask completes, BEFORE the
+// reviewer runs. On PASS: no-op (reviewer proceeds as Gate B). On FAIL: delete
+// this cycle's unrun pending reviewer (keeps run-completion accounting sound —
+// COUNT(*)-based), then either spawn the next modeler+reviewer pair with the
+// Gate A failure fed back, or mark the convergence run exhausted at the cap.
+// No-op for non-convergence runs or runs no longer 'running'.
+export async function runGateA(env: CloudflareEnv, userId: string, runId: string, modelerOutput: string): Promise<void> {
+  const db = env.DB
+  const row = await db.prepare(`SELECT run_id, spec, max_cycles, cycle, status FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
+    .bind(runId, userId).first<{ run_id: string; spec: string; max_cycles: number; cycle: number; status: string }>()
+  if (!row || row.status !== 'running') return
+  const result = evaluateGateA(modelerOutput)
+  if (result.pass) return
+  const now = Math.floor(Date.now() / 1000)
+  // Remove this cycle's unrun reviewer so it never judges bad geometry and does
+  // not hang COUNT(*) completion. Guarded to the current cycle + pending only.
+  await db.prepare(`DELETE FROM agent_subtasks WHERE pipeline_run_id = ? AND short_id = ? AND agent_name = 'reviewer' AND status = 'pending'`)
+    .bind(runId, `st_r${row.cycle}`).run()
+  if (row.cycle >= row.max_cycles) {
+    await db.prepare(`UPDATE cad_convergence_runs SET status = 'exhausted', updated_at = ? WHERE run_id = ?`).bind(now, runId).run()
+    return
+  }
+  const nextCycle = row.cycle + 1
+  const modelerId = crypto.randomUUID()
+  const reviewerId = crypto.randomUUID()
+  const modelerShort = `st_m${nextCycle}`
+  const reviewerShort = `st_r${nextCycle}`
+  const feedbackTask = `ORIGINAL SPEC:\n${row.spec}\n\nYour previous attempt FAILED automated geometry validation (Gate A) before review. Failures:\n${result.failures.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n\nThese are deterministic geometry errors — the produced part is not a valid manufacturable solid. Rebuild your build123d so part.is_valid() is True, the part is a single closed solid with positive volume, and re-export GLB + STEP. Re-emit the exact GEOMETRY_METRICS line (including is_valid) verbatim in your final summary. Do NOT call query_knowledge — this is a geometry construction fix, not a standards lookup.`
+  await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(modelerId, runId, userId, modelerShort, 'modeler', `CAD model (cycle ${nextCycle})`, feedbackTask, null, 'ready', 0, 0, now, 'default').run()
+  await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
+  await db.prepare(`UPDATE orchestrator_runs SET subtask_count = subtask_count + 2 WHERE id = ?`).bind(runId).run()
+  await db.prepare(`UPDATE cad_convergence_runs SET cycle = ?, updated_at = ? WHERE run_id = ?`).bind(nextCycle, now, runId).run()
+}
