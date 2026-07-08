@@ -46,9 +46,10 @@ export async function runCadScript(
 
 export async function meterCadExec(
   env: CloudflareEnv,
-  args: { tenantId: string; executionId: string; result: CadExecResult },
+  args: { tenantId: string; executionId: string; result: CadExecResult;
+          pipelineRunId?: string; subtaskId?: string },
 ): Promise<{ costRowId: string; artifactIds: string[] }> {
-  const { tenantId, executionId, result } = args
+  const { tenantId, executionId, result, pipelineRunId, subtaskId } = args
   const now = Math.floor(Date.now() / 1000)
   const costRowId = crypto.randomUUID()
   const costUsd = ((result.duration_ms ?? 0) / 1000) * CAD_EXEC_USD_PER_SEC
@@ -87,8 +88,8 @@ export async function meterCadExec(
       `INSERT OR IGNORE INTO artifact_registry
          (id, execution_id, producing_agent, artifact_type, artifact_name,
           storage_type, storage_ref, r2_bucket, format, content_hash, size_bytes,
-          client_id, status, created_at)
-       VALUES (?, ?, 'cad-exec', 'cad-model', ?, 'r2', ?, 'll-cockpit-r2', ?, ?, ?, ?, 'active', ?)`,
+          client_id, pipeline_run_id, subtask_id, status, created_at)
+       VALUES (?, ?, 'cad-exec', 'cad-model', ?, 'r2', ?, 'll-cockpit-r2', ?, ?, ?, ?, ?, ?, 'active', ?)`,
     )
       .bind(
         artifactId,
@@ -99,6 +100,8 @@ export async function meterCadExec(
         hash,
         artifact.size_bytes ?? bytes.length,
         tenantId,
+        pipelineRunId ?? null,
+        subtaskId ?? null,
         now,
       )
       .run()
