@@ -167,7 +167,7 @@ export interface GateAResult { pass: boolean; failures: string[] }
 // the modeler's output. FAIL-CLOSED: missing/unparseable metrics => fail.
 export function evaluateGateA(modelerOutput: string): GateAResult {
   const failures: string[] = []
-  const matches = [...(modelerOutput ?? '').matchAll(/GEOMETRY_METRICS:\s*(\{.*\})/g)]
+  const matches = [...(modelerOutput ?? '').matchAll(/GEOMETRY_METRICS:[^{]*(\{.*\})/g)]
   if (matches.length === 0) return { pass: false, failures: ['GEOMETRY_METRICS line not found in modeler output (fail-closed)'] }
   let m: Record<string, unknown>
   try { m = JSON.parse(matches[matches.length - 1][1]) } catch { return { pass: false, failures: ['GEOMETRY_METRICS JSON unparseable (fail-closed)'] } }
