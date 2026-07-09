@@ -126,6 +126,7 @@ export async function meterCadExec(
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
 
     const ext = artifact.name.split('.').pop() ?? 'bin'
+    const artifactType = ['svg', 'dxf', 'pdf'].includes(ext.toLowerCase()) ? 'cad-drawing' : 'cad-model'
     const key = `cad/${tenantId}/${executionId}/${artifact.name}`
 
     try {
@@ -142,11 +143,12 @@ export async function meterCadExec(
          (id, execution_id, producing_agent, artifact_type, artifact_name,
           storage_type, storage_ref, r2_bucket, format, content_hash, size_bytes,
           client_id, pipeline_run_id, subtask_id, status, created_at)
-       VALUES (?, ?, 'cad-exec', 'cad-model', ?, 'r2', ?, 'll-cockpit-r2', ?, ?, ?, ?, ?, ?, 'active', ?)`,
+       VALUES (?, ?, 'cad-exec', ?, ?, 'r2', ?, 'll-cockpit-r2', ?, ?, ?, ?, ?, ?, 'active', ?)`,
     )
       .bind(
         artifactId,
         executionId,
+        artifactType,
         artifact.name,
         key,
         ext,
@@ -179,6 +181,9 @@ function cadContentType(ext: string): string {
     case 'step':
     case 'stp': return 'application/step'
     case 'stl': return 'model/stl'
+    case 'svg': return 'image/svg+xml'
+    case 'dxf': return 'image/vnd.dxf'
+    case 'pdf': return 'application/pdf'
     default: return 'application/octet-stream'
   }
 }
