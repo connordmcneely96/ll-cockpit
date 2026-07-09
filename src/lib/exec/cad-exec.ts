@@ -19,11 +19,64 @@ export interface CadExecResult {
   duration_ms: number | null
 }
 
+// Appended (never prepended, so user-script traceback line numbers are preserved)
+// after every CAD script. Emits an orthographic drawing set from the top-level
+// `part` solid using build123d 0.11.1's project_to_viewport + ExportSVG/ExportDXF
+// (ezdxf bundled). Best-effort: a drawing failure only prints DRAWINGS_SKIPPED /
+// DRAWING_VIEW_SKIPPED and never regresses the 3D deliverable. Its stdout lines
+// (DRAWINGS_EMITTED: / DRAWING_VIEW_SKIPPED / DRAWINGS_SKIPPED) deliberately do NOT
+// match the GEOMETRY_METRICS regex.
+export const CAD_DRAWING_HELPER = `
+
+# ==== APPENDED DETERMINISTIC DRAWING HELPER (authored; do not rely on the model for the projection API) ====
+import json as _json
+def emit_drawings(_p, out_dir="/work/out"):
+    """Best-effort orthographic drawing set. NEVER raises: a drawing failure must not regress the 3D deliverable."""
+    try:
+        from build123d import ExportSVG, ExportDXF, LineType
+    except Exception as _e:
+        print("DRAWINGS_SKIPPED:", _e); return
+    bb = _p.bounding_box()
+    cx = (bb.min.X + bb.max.X) / 2.0; cy = (bb.min.Y + bb.max.Y) / 2.0; cz = (bb.min.Z + bb.max.Z) / 2.0
+    diag = ((bb.max.X-bb.min.X)**2 + (bb.max.Y-bb.min.Y)**2 + (bb.max.Z-bb.min.Z)**2) ** 0.5
+    d = max(diag, 1.0) * 5.0
+    views = {
+        "front": ((cx, cy - d, cz), (0, 0, 1)),
+        "top":   ((cx, cy, cz + d), (0, 1, 0)),
+        "right": ((cx + d, cy, cz), (0, 0, 1)),
+        "iso":   ((cx + d, cy - d, cz + d), (0, 0, 1)),
+    }
+    emitted = []
+    for name, (origin, up) in views.items():
+        try:
+            visible, hidden = _p.project_to_viewport(origin, viewport_up=up, look_at=(cx, cy, cz))
+            svg = ExportSVG()
+            svg.add_layer("visible", line_weight=0.5)
+            svg.add_layer("hidden", line_weight=0.25, line_type=LineType.DASHED)
+            svg.add_shape(visible, layer="visible")
+            if hidden: svg.add_shape(hidden, layer="hidden")
+            svg.write(f"{out_dir}/part_{name}.svg")
+            dxf = ExportDXF()
+            dxf.add_layer("visible")
+            dxf.add_shape(visible, layer="visible")
+            dxf.write(f"{out_dir}/part_{name}.dxf")
+            emitted.append(name)
+        except Exception as _ve:
+            print(f"DRAWING_VIEW_SKIPPED {name}:", _ve)
+    print("DRAWINGS_EMITTED:", _json.dumps({"views": emitted}))
+
+try:
+    emit_drawings(part)
+except Exception as _e:
+    print("DRAWINGS_SKIPPED:", _e)
+`
+
 export async function runCadScript(
   env: CloudflareEnv,
   args: { script: string; tenantId: string; executionId: string; timeoutMs?: number },
 ): Promise<CadExecResult> {
   const { script, tenantId, executionId, timeoutMs } = args
+  const fullScript = script + '\n' + CAD_DRAWING_HELPER
   const res = await env.NEXUS_EXEC.fetch('https://nexus-exec/run', {
     method: 'POST',
     headers: {
@@ -31,7 +84,7 @@ export async function runCadScript(
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      script,
+      script: fullScript,
       tenant_id: tenantId,
       execution_id: executionId,
       timeout_ms: timeoutMs,
@@ -73,6 +126,7 @@ export async function meterCadExec(
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
 
     const ext = artifact.name.split('.').pop() ?? 'bin'
+    const artifactType = ['svg', 'dxf', 'pdf'].includes(ext.toLowerCase()) ? 'cad-drawing' : 'cad-model'
     const key = `cad/${tenantId}/${executionId}/${artifact.name}`
 
     try {
@@ -89,11 +143,12 @@ export async function meterCadExec(
          (id, execution_id, producing_agent, artifact_type, artifact_name,
           storage_type, storage_ref, r2_bucket, format, content_hash, size_bytes,
           client_id, pipeline_run_id, subtask_id, status, created_at)
-       VALUES (?, ?, 'cad-exec', 'cad-model', ?, 'r2', ?, 'll-cockpit-r2', ?, ?, ?, ?, ?, ?, 'active', ?)`,
+       VALUES (?, ?, 'cad-exec', ?, ?, 'r2', ?, 'll-cockpit-r2', ?, ?, ?, ?, ?, ?, 'active', ?)`,
     )
       .bind(
         artifactId,
         executionId,
+        artifactType,
         artifact.name,
         key,
         ext,
@@ -126,6 +181,9 @@ function cadContentType(ext: string): string {
     case 'step':
     case 'stp': return 'application/step'
     case 'stl': return 'model/stl'
+    case 'svg': return 'image/svg+xml'
+    case 'dxf': return 'image/vnd.dxf'
+    case 'pdf': return 'application/pdf'
     default: return 'application/octet-stream'
   }
 }
