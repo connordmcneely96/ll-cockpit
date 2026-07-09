@@ -160,13 +160,40 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
   engineering_calc: {
     def: {
       name: 'engineering_calc',
-      description:
-        'Deterministic, oracle-tested mechanical-engineering calculations (Roark/Shigley/ASME/AGMA/API 610). Returns the computed number(s) plus pass/fail and formula references. Use this for ANY standard-governed value (stress, deflection, critical speed, bearing L10 life, vessel/plate/bolt MAWP, column buckling, spring, gear, material suggestion) instead of doing the arithmetic yourself.',
+      description: `Deterministic, oracle-tested mechanical-engineering calculations (Roark/Shigley/ASME/AGMA/API 610). Returns the computed value(s) plus pass/fail and formula references — use it for ANY standard-governed value instead of doing the arithmetic yourself.
+
+UNITS & NAMING (critical): ALL inputs are US CUSTOMARY IMPERIAL — inches (in), pounds-force (lbf), pound-inches (lb-in), psi, horsepower (HP), RPM. Field names are camelCase EXACTLY as listed below. Sending metric values or snake_case field names returns a 400. 'calc' is one of the keys below; 'params' is that calc's input object.
+
+DESIGN-LEVEL (MODELER can populate from a spec — PREFER THESE):
+- shafts.analyze {power(HP), speed(RPM), overhang(in), bearingSpan(in), material, applicationFactor?=1.5, head?(ft), impellerDiameter?(in), impellerWidth?(in), specificGravity?=1.0, casingType?='single_volute'|'double_volute'|'diffuser'|'concentric'} -> runs generate+deflection+critical-speed+stress+API610. USE THIS FOR SHAFTS.
+- shafts.generate {same inputs as analyze} -> diameter,length,torque,radialLoad,bendingMoment
+- calculations.torque {power(HP), speed(RPM)} -> torque(lb-in)
+- bearings.life {Fr(lbf), Fa?=0(lbf), C(dynamic rating lbf), speed(RPM), bearingType='ball'|'roller', X?=1, Y?=0, a1?=1.0, C0?(static lbf), X0?=0.6, Y0?=0.5, requiredLifeHours?(hr)}
+- columns.buckling {material, A(in^2), I(in^4), L(in), K?=1.0, appliedLoad?(lbf), requiredSF?=2.0}
+- springs.helical_compression {d(wire dia in), D(mean coil dia in), Na(active coils), Nt(total coils), G(psi), F(lbf), correctionType?='bergstrasser'|'wahl', allowableShearStress?(psi), requiredSF?=1.2}
+- materials.suggest {minYieldPsi(psi), environment?='standard'|'corrosive'|'high-temp'}
+- materials.list (no params)
+
+ANALYSIS-LEVEL (require PRE-DERIVED inputs; only call if you already have the derived loads/section properties — for shafts, get them from shafts.generate first):
+- shafts.stress {diameter(in), torque(lb-in), bendingMoment(lb-in), axialLoad?=0(lbf), material}
+- shafts.deflection {diameter(in), length(in), load(lbf), position(in), material, supportType='simply-supported'|'fixed-fixed'|'cantilevered', includeSelfWeight?=false}
+- shafts.critical_speed {diameter(in), length(in), material, supportType='simply-supported'|'fixed-fixed', overhangMass?(lb), overhangDistance?(in), operatingSpeed?(RPM)}
+- vessels.bowl_mawp {Sm(psi), E_weld(0-1), t_nom(in), CA(in), WA(in), Ri_nom(in), Ro(in), P_d(psi)}
+- plates.annular_mawp {a(in), b(in), t_eff(in), nu(0-0.5), Sm(psi), P_d(psi), condition='caseA_outer_clamped_inner_free'|'caseB_both_clamped'}
+- plates.flat_cover_mawp {a(in), b(in), r_g(in), t_eff(in), nu(0-0.5), Sm_D1(psi), Su(psi), Sy(psi), P_d(psi), N_b_adapter(int), A_b_adapter(in^2), S_bolt_adapter(psi), W_cap_outer(lbf), K_w1_outer}
+- bolts.joint_mawp {N_b(int), A_b(in^2), S_bolt(psi), A_p(in^2), G(in), m, y(psi), b_g(in), P_d(psi), Sy_bolt?(psi)}
+- bolts.vdi2230 {At(in^2), Sp(psi), d(in), kb(lbf/in), km(lbf/in), P(lbf), preloadFraction?=0.75, K?=0.20, requiredSF?=1.5}
+- nozzles.combined_mawp {orientation='End'|'Top'|'Side', Fx,Fy,Fz(lbf), Mx,My,Mz(lb-in), OD(in), bore(in), t_eff(in), ro(in), ri(in), A(in^2), I(in^4), J(in^4), Sm(psi), sigma_API(psi), E_weld(0-1), P_d(psi)}
+- junctions.wrc107 {bore(in), Ri(in), t_s(in), P_d(psi), Sm(psi), M_bending(lb-in), M_torsion(lb-in), Ro_s(in), I_s(in^4), J_s(in^4)}
+- system.annex_f {suction:{Fx,Fy,Fz(lbf),Mx,My,Mz(lb-in),coord:{x,y,z}}, discharge:{...same...}, condition_a_factor?}
+- gears.spur_agma {Wt(lbf), Ko, Kv, Ks, Pd, F(in), Km, KB, J, St(psi), YN, KT, KR, Cp, dw1(in), Cf, I, Sc(psi), ZN, CH, requiredSF?=1.0, requiredSH?=1.0}
+
+If a needed input is not derivable from the spec, do NOT fabricate it — state the gap. On a 400 the engine returns which field failed; read it and correct the call.`,
       input_schema: {
         type: 'object',
         properties: {
-          calc: { type: 'string', description: 'Which calculation, e.g. shafts.stress, bearings.life, vessels.bowl_mawp — see allowed list.' },
-          params: { type: 'object', description: "Input parameters for that calc (see the engine contract; all numeric inputs in the engine's stated units)." },
+          calc: { type: 'string', enum: Object.keys(CALC_ROUTES), description: 'Which calculation to run — one of the allowed route keys (see the contract in this tool description).' },
+          params: { type: 'object', description: 'Input object for that calc — camelCase field names, US customary imperial units, exactly as listed for the chosen calc in the tool description.' },
         },
         required: ['calc'],
       },
@@ -175,20 +202,21 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
       const calc = typeof input.calc === 'string' ? input.calc : ''
       const route = CALC_ROUTES[calc]
       if (!route) return JSON.stringify({ error: `unknown calc '${calc}'`, allowed: Object.keys(CALC_ROUTES) })
-      try {
-        const body = JSON.stringify(input.params ?? {})
-        const res = await env.ENGINEERING_CALCS.fetch(
-          new Request('https://engineering-calcs' + route.path, {
-            method: route.method,
-            headers: { 'content-type': 'application/json' },
-            body: route.method === 'POST' ? body : undefined,
-          }),
-        )
-        if (!res.ok) return JSON.stringify({ error: `calc engine ${res.status}`, detail: (await res.text()).slice(0, 500) })
-        return await res.text()
-      } catch (err) {
-        return JSON.stringify({ error: String(err) })
-      }
+      const body = JSON.stringify(input.params ?? {})
+      const res = await env.ENGINEERING_CALCS.fetch(
+        new Request('https://engineering-calcs' + route.path, {
+          method: route.method,
+          headers: { 'content-type': 'application/json' },
+          body: route.method === 'POST' ? body : undefined,
+        }),
+      )
+      // A non-2xx (e.g. a 400 with the failing field) is a FAILED tool call. Throw
+      // rather than return: dispatchTool records a thrown handler as ok=0 in
+      // tool_call_log (the loop's only ok=0 signal), and still surfaces this
+      // message to the model as the tool_result (is_error:true) so MODELER reads
+      // the engine's field error and self-corrects. No new logging path invented.
+      if (!res.ok) throw new Error(JSON.stringify({ error: `calc engine ${res.status}`, detail: (await res.text()).slice(0, 500) }))
+      return await res.text()
     },
   },
   execute_cad_code: {
