@@ -35,6 +35,10 @@ max_retries = 3
 binding = "NEXUS_EXEC"
 service = "nexus-exec"
 
+[[services]]
+binding = "ENGINEERING_CALCS"
+service = "engineering-calcs"
+
 [limits]
 cpu_ms = 300000
 

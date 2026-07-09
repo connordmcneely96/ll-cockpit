@@ -100,6 +100,31 @@ type ToolHandler = (
 
 interface SafeTool { def: AnthropicToolDef; handler: ToolHandler }
 
+// Fixed allowlist of engineering_calc routes. The LLM picks a `calc` key; it can
+// NEVER reach an arbitrary path on the calc engine — only these exact endpoints.
+const CALC_ROUTES: Record<string, { path: string; method: 'GET' | 'POST' }> = {
+  'shafts.stress': { path: '/api/shafts/stress', method: 'POST' },
+  'shafts.deflection': { path: '/api/shafts/deflection', method: 'POST' },
+  'shafts.critical_speed': { path: '/api/shafts/critical-speed', method: 'POST' },
+  'shafts.generate': { path: '/api/shafts/generate', method: 'POST' },
+  'shafts.analyze': { path: '/api/shafts/analyze', method: 'POST' },
+  'calculations.torque': { path: '/api/calculations/torque', method: 'POST' },
+  'vessels.bowl_mawp': { path: '/api/vessels/bowl-mawp', method: 'POST' },
+  'plates.annular_mawp': { path: '/api/plates/annular-mawp', method: 'POST' },
+  'plates.flat_cover_mawp': { path: '/api/plates/flat-cover-mawp', method: 'POST' },
+  'bolts.joint_mawp': { path: '/api/bolts/joint-mawp', method: 'POST' },
+  'bolts.vdi2230': { path: '/api/bolts/vdi2230', method: 'POST' },
+  'nozzles.combined_mawp': { path: '/api/nozzles/combined-mawp', method: 'POST' },
+  'junctions.wrc107': { path: '/api/junctions/wrc107', method: 'POST' },
+  'system.annex_f': { path: '/api/system/annex-f', method: 'POST' },
+  'bearings.life': { path: '/api/bearings/life', method: 'POST' },
+  'columns.buckling': { path: '/api/columns/buckling', method: 'POST' },
+  'springs.helical_compression': { path: '/api/springs/helical-compression', method: 'POST' },
+  'gears.spur_agma': { path: '/api/gears/spur-agma', method: 'POST' },
+  'materials.suggest': { path: '/api/materials/suggest', method: 'POST' },
+  'materials.list': { path: '/api/materials', method: 'GET' },
+}
+
 // -- Executable allowlist. Only these tools can actually run. ----------------
 const SAFE_TOOLS: Record<string, SafeTool> = {
   query_knowledge: {
@@ -130,6 +155,40 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
         { topK, useRewriter: true },
       )
       return JSON.stringify(chunks.map((c) => ({ doc: c.doc, section: c.section, page: c.page, score: Number(c.score.toFixed(4)), text: c.text ? c.text.slice(0, 800) : null })))
+    },
+  },
+  engineering_calc: {
+    def: {
+      name: 'engineering_calc',
+      description:
+        'Deterministic, oracle-tested mechanical-engineering calculations (Roark/Shigley/ASME/AGMA/API 610). Returns the computed number(s) plus pass/fail and formula references. Use this for ANY standard-governed value (stress, deflection, critical speed, bearing L10 life, vessel/plate/bolt MAWP, column buckling, spring, gear, material suggestion) instead of doing the arithmetic yourself.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          calc: { type: 'string', description: 'Which calculation, e.g. shafts.stress, bearings.life, vessels.bowl_mawp — see allowed list.' },
+          params: { type: 'object', description: "Input parameters for that calc (see the engine contract; all numeric inputs in the engine's stated units)." },
+        },
+        required: ['calc'],
+      },
+    },
+    handler: async (input, { env }) => {
+      const calc = typeof input.calc === 'string' ? input.calc : ''
+      const route = CALC_ROUTES[calc]
+      if (!route) return JSON.stringify({ error: `unknown calc '${calc}'`, allowed: Object.keys(CALC_ROUTES) })
+      try {
+        const body = JSON.stringify(input.params ?? {})
+        const res = await env.ENGINEERING_CALCS.fetch(
+          new Request('https://engineering-calcs' + route.path, {
+            method: route.method,
+            headers: { 'content-type': 'application/json' },
+            body: route.method === 'POST' ? body : undefined,
+          }),
+        )
+        if (!res.ok) return JSON.stringify({ error: `calc engine ${res.status}`, detail: (await res.text()).slice(0, 500) })
+        return await res.text()
+      } catch (err) {
+        return JSON.stringify({ error: String(err) })
+      }
     },
   },
   execute_cad_code: {
@@ -396,7 +455,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
 const AGENT_TOOLS: Record<string, string[]> = {
   anchor: ['get_pipeline_status'],
   atlas: ['query_knowledge'],
-  modeler: ['execute_cad_code', 'query_knowledge'],
+  modeler: ['execute_cad_code', 'query_knowledge', 'engineering_calc'],
 }
 
 /** Returns the tool_keys an agent may use (empty array = no tools / router path). */
