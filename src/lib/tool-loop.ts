@@ -202,20 +202,21 @@ If a needed input is not derivable from the spec, do NOT fabricate it — state 
       const calc = typeof input.calc === 'string' ? input.calc : ''
       const route = CALC_ROUTES[calc]
       if (!route) return JSON.stringify({ error: `unknown calc '${calc}'`, allowed: Object.keys(CALC_ROUTES) })
-      try {
-        const body = JSON.stringify(input.params ?? {})
-        const res = await env.ENGINEERING_CALCS.fetch(
-          new Request('https://engineering-calcs' + route.path, {
-            method: route.method,
-            headers: { 'content-type': 'application/json' },
-            body: route.method === 'POST' ? body : undefined,
-          }),
-        )
-        if (!res.ok) return JSON.stringify({ error: `calc engine ${res.status}`, detail: (await res.text()).slice(0, 500) })
-        return await res.text()
-      } catch (err) {
-        return JSON.stringify({ error: String(err) })
-      }
+      const body = JSON.stringify(input.params ?? {})
+      const res = await env.ENGINEERING_CALCS.fetch(
+        new Request('https://engineering-calcs' + route.path, {
+          method: route.method,
+          headers: { 'content-type': 'application/json' },
+          body: route.method === 'POST' ? body : undefined,
+        }),
+      )
+      // A non-2xx (e.g. a 400 with the failing field) is a FAILED tool call. Throw
+      // rather than return: dispatchTool records a thrown handler as ok=0 in
+      // tool_call_log (the loop's only ok=0 signal), and still surfaces this
+      // message to the model as the tool_result (is_error:true) so MODELER reads
+      // the engine's field error and self-corrects. No new logging path invented.
+      if (!res.ok) throw new Error(JSON.stringify({ error: `calc engine ${res.status}`, detail: (await res.text()).slice(0, 500) }))
+      return await res.text()
     },
   },
   execute_cad_code: {
