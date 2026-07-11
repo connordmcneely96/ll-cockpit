@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import ModelViewer from './ModelViewer'
+import DrawingsPanel from './DrawingsPanel'
 
 export interface Artifact {
   id: string
@@ -139,7 +140,12 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
             </div>
             <div className="flex-1 min-h-0 overflow-auto bg-base-1">
               {fmt === 'glb' ? (
-                <ModelViewer src={contentUrl} />
+                <div className="flex flex-col">
+                  <div className="h-[55vh] shrink-0">
+                    <ModelViewer src={contentUrl} />
+                  </div>
+                  {artifact.storage_ref && <DrawingsPanel glbStorageRef={artifact.storage_ref} />}
+                </div>
               ) : loadingContent ? (
                 <p className="font-mono text-[10px] text-text3 p-6">Loading deliverable…</p>
               ) : contentErr ? (
