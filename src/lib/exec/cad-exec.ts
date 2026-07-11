@@ -45,9 +45,10 @@ import FreeCAD, Part, TechDraw
 import glob as _g, os as _os, json as _json
 _dirs = [
     "/usr/share/freecad/Mod/TechDraw/Templates",
-    "/usr/share/freecad-daily/Mod/TechDraw/Templates",
+    "/usr/share/freecad/data/Mod/TechDraw/Templates",
     "/usr/lib/freecad/Mod/TechDraw/Templates",
     "/usr/lib/freecad-python3/Mod/TechDraw/Templates",
+    "/usr/share/freecad-daily/Mod/TechDraw/Templates",
 ]
 _cands = []
 for _d in _dirs:
@@ -60,6 +61,8 @@ def _pick(cands):
                 return c
     return cands[0] if cands else None
 _tmpl = _pick(_cands)
+print("TECHDRAW_TEMPLATES_FOUND: " + _json.dumps(_cands[:10]))
+print("TECHDRAW_TEMPLATE_USED: " + str(_tmpl))
 if not _tmpl:
     raise RuntimeError("no TechDraw template found in " + str(_dirs))
 doc = FreeCAD.newDocument("d")
