@@ -70,6 +70,28 @@ export default function LibraryPage() {
     })
   }, [artifacts, validation, search])
 
+  // cad-drawing siblings share the same cad/<tenant>/<exec>/ directory prefix as
+  // the run's part.glb. Group them by directory so a cad-model card can render
+  // its own drawings — no extra fetch, no run-scoped API.
+  const drawingsFor = useMemo(() => {
+    const byDir = new Map<string, Artifact[]>()
+    for (const a of artifacts) {
+      if (a.artifact_type !== 'cad-drawing' || !a.storage_ref) continue
+      const i = a.storage_ref.lastIndexOf('/')
+      if (i < 0) continue
+      const dir = a.storage_ref.slice(0, i + 1)
+      const arr = byDir.get(dir) ?? []
+      arr.push(a)
+      byDir.set(dir, arr)
+    }
+    return (a: Artifact): Artifact[] => {
+      if (a.artifact_type !== 'cad-model' || a.format !== 'glb' || !a.storage_ref) return []
+      const i = a.storage_ref.lastIndexOf('/')
+      if (i < 0) return []
+      return byDir.get(a.storage_ref.slice(0, i + 1)) ?? []
+    }
+  }, [artifacts])
+
   return (
     <div className="h-full flex flex-col overflow-auto">
       <div className="px-4 py-3 border-b border-white/[0.06] shrink-0">
@@ -112,11 +134,11 @@ export default function LibraryPage() {
           </div>
         ) : view === 'grid' ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
-            {shown.map((a) => <ArtifactCard key={a.id} artifact={a} />)}
+            {shown.map((a) => <ArtifactCard key={a.id} artifact={a} drawings={drawingsFor(a)} />)}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {shown.map((a) => <ArtifactCard key={a.id} artifact={a} list />)}
+            {shown.map((a) => <ArtifactCard key={a.id} artifact={a} list drawings={drawingsFor(a)} />)}
           </div>
         )}
       </div>

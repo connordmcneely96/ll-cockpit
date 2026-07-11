@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import ModelViewer from './ModelViewer'
+import DrawingsPanel from './DrawingsPanel'
 
 export interface Artifact {
   id: string
@@ -32,7 +33,7 @@ const STATUS_COLOR: Record<string, string> = {
   archived: 'text-text3 border-white/[0.06] bg-base-4',
 }
 
-export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; list?: boolean }) {
+export function ArtifactCard({ artifact, list = false, drawings }: { artifact: Artifact; list?: boolean; drawings?: Artifact[] }) {
   const [copied, setCopied] = useState(false)
   const [preview, setPreview] = useState(false)
   const [content, setContent] = useState<string | null>(null)
@@ -139,7 +140,12 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
             </div>
             <div className="flex-1 min-h-0 overflow-auto bg-base-1">
               {fmt === 'glb' ? (
-                <ModelViewer src={contentUrl} />
+                <div className="flex flex-col">
+                  <div className="h-[55vh] shrink-0">
+                    <ModelViewer src={contentUrl} />
+                  </div>
+                  <DrawingsPanel drawings={drawings ?? []} />
+                </div>
               ) : loadingContent ? (
                 <p className="font-mono text-[10px] text-text3 p-6">Loading deliverable…</p>
               ) : contentErr ? (
