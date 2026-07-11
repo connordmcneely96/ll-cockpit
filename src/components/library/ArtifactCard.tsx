@@ -33,7 +33,7 @@ const STATUS_COLOR: Record<string, string> = {
   archived: 'text-text3 border-white/[0.06] bg-base-4',
 }
 
-export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; list?: boolean }) {
+export function ArtifactCard({ artifact, list = false, drawings }: { artifact: Artifact; list?: boolean; drawings?: Artifact[] }) {
   const [copied, setCopied] = useState(false)
   const [preview, setPreview] = useState(false)
   const [content, setContent] = useState<string | null>(null)
@@ -144,7 +144,7 @@ export function ArtifactCard({ artifact, list = false }: { artifact: Artifact; l
                   <div className="h-[55vh] shrink-0">
                     <ModelViewer src={contentUrl} />
                   </div>
-                  {artifact.storage_ref && <DrawingsPanel glbStorageRef={artifact.storage_ref} />}
+                  <DrawingsPanel drawings={drawings ?? []} />
                 </div>
               ) : loadingContent ? (
                 <p className="font-mono text-[10px] text-text3 p-6">Loading deliverable…</p>
