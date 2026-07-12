@@ -203,6 +203,9 @@ def _edge_is_circle(_e):
 _view_bbox = {}
 _view_ann = {}
 _view_scale = {}
+# A shaft's FRONT and TOP are both elongated profiles; only the FIRST elongated
+# view to run claims the per-step dimensions so each step is dimensioned once.
+_stepped_done = False
 for name, direction in _views.items():
     try:
         view = doc.addObject("TechDraw::DrawViewPart", "V_" + name)
@@ -278,7 +281,16 @@ for name, direction in _views.items():
                 _vcount = 0
                 _fw = _view_bbox.get("front", (0, 0, 0, 0, None, 0))[4]
                 _tw = _view_bbox.get("top", (0, 0, 0, 0, None, 0))[4]
-                # HORIZONTAL (width) ownership: front always; top/right only if non-redundant.
+                # STRATEGY: an elongated (profile) view — like the FRONT/TOP of a shaft —
+                # must dimension EACH STEP, not just one overall length + diameter. Aspect
+                # = long span / short span; >= 3 selects the stepped strategy, else the
+                # extents strategy (blocks) is kept exactly as before.
+                _minside = min(_w, _h)
+                _aspect = (_vspan / _minside) if _minside > 1e-6 else 999.0
+                _strategy = "stepped" if _aspect >= 3.0 else "extents"
+                print("DIM_STRATEGY " + name + ": " + _strategy + " aspect=" + ("%.2f" % _aspect))
+                # OVERALL LENGTH (DistanceX) — shared by BOTH strategies, same cross-view
+                # ownership: front always; top/right only if non-redundant.
                 _emit_h = False
                 if name == "front":
                     _emit_h = (_w > 1e-6)
@@ -294,55 +306,118 @@ for name, direction in _views.items():
                     else:
                         _emit_h = (_w > 1e-6)
                 if _emit_h:
-                    _yline = _maxy + _cur_off + _cur_off * _hcount
-                    _anns.append(_hdim(_minx, _maxx, _maxy, _yline, _w))
-                    _vd.append(name + ":DistanceX")
-                    _hcount += 1
-                    _aymax = max(_aymax, _yline + _cur_gap)
-                    _aymin = min(_aymin, _yline - _cur_gap - _cur_fs)
-                    _midh = (_minx + _maxx) / 2.0
-                    _thw = len("%.2f" % _w) * _cur_fs * 0.35
-                    _axmin = min(_axmin, _midh - _thw)
-                    _axmax = max(_axmax, _midh + _thw)
-                # VERTICAL (height) ownership: FRONT ONLY (top/right never re-dimension it).
-                if name == "front":
-                    if _h > 1e-6:
-                        _xline = _minx - _cur_off - _cur_off * _vcount
-                        _anns.append(_vdim(_miny, _maxy, _minx, _xline, _h))
-                        _vd.append(name + ":DistanceY")
-                        _vcount += 1
-                        _axmin = min(_axmin, _xline - _cur_gap - _cur_fs)
+                    try:
+                        _yline = _maxy + _cur_off + _cur_off * _hcount
+                        _anns.append(_hdim(_minx, _maxx, _maxy, _yline, _w))
+                        _vd.append(name + ":DistanceX")
+                        _hcount += 1
+                        _aymax = max(_aymax, _yline + _cur_gap)
+                        _aymin = min(_aymin, _yline - _cur_gap - _cur_fs)
+                        _midh = (_minx + _maxx) / 2.0
+                        _thw = len("%.2f" % _w) * _cur_fs * 0.35
+                        _axmin = min(_axmin, _midh - _thw)
+                        _axmax = max(_axmax, _midh + _thw)
+                    except Exception as _he:
+                        print("DIM_SKIPPED " + name + " DistanceX " + str(_he))
+                if _strategy == "stepped":
+                    # PER-STEP dimension for each step face — an edge PERPENDICULAR to the
+                    # long axis (same coordinate along the long axis, nonzero span across
+                    # it). Deduped by rounded position + rounded span, CAP 6, stacked with
+                    # +_cur_off each. Owned by the first elongated view so steps are
+                    # dimensioned exactly once across the sheet.
+                    if _stepped_done:
+                        print("DIM_REDUNDANT_SKIPPED " + name + " stepped")
+                    else:
+                        try:
+                            _horiz = (_w >= _h)
+                            _faces = []
+                            _seen = set()
+                            for _ed in _edges:
+                                _pp = _ed["pts"]
+                                if not _pp:
+                                    continue
+                                (_fx0, _fy0), (_fx1, _fy1) = _pp
+                                if _horiz:
+                                    if abs(_fx0 - _fx1) < 1e-6 and abs(_fy1 - _fy0) > 1e-6:
+                                        _pos = _fx0
+                                        _lo = min(_fy0, _fy1); _hi = max(_fy0, _fy1)
+                                    else:
+                                        continue
+                                else:
+                                    if abs(_fy0 - _fy1) < 1e-6 and abs(_fx1 - _fx0) > 1e-6:
+                                        _pos = _fy0
+                                        _lo = min(_fx0, _fx1); _hi = max(_fx0, _fx1)
+                                    else:
+                                        continue
+                                _span = _hi - _lo
+                                _key = (round(_pos, 3), round(_span, 3))
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _faces.append((_pos, _lo, _hi, _span))
+                            _faces = _faces[:6]
+                            _si = 0
+                            for _fpos, _flo, _fhi, _fspan in _faces:
+                                try:
+                                    if _horiz:
+                                        _sxline = _minx - _cur_off - _cur_off * _si
+                                        _anns.append(_vdim(_flo, _fhi, _minx, _sxline, _fspan))
+                                        _axmin = min(_axmin, _sxline - _cur_gap - _cur_fs)
+                                    else:
+                                        _syline = _maxy + _cur_off + _cur_off * _si
+                                        _anns.append(_hdim(_flo, _fhi, _maxy, _syline, _fspan))
+                                        _aymax = max(_aymax, _syline + _cur_gap)
+                                    _vd.append(name + ":StepDistance")
+                                    _si += 1
+                                except Exception as _fe:
+                                    print("DIM_SKIPPED " + name + " step " + str(_fe))
+                            if _si > 0:
+                                _stepped_done = True
+                            print("DIM_STEPS " + name + ": " + str(_si))
+                        except Exception as _se:
+                            print("DIM_SKIPPED " + name + " stepped " + str(_se))
                 else:
-                    if _h > 1e-6:
-                        print("DIM_REDUNDANT_SKIPPED " + name + " vertical")
-                # DIAMETER callouts: TOP view only, capped at 2.
-                if name == "top":
-                    _ndia = 0
-                    for _ed in _edges:
-                        if _ed["circle"] and _ndia < 2:
+                    # VERTICAL (height) ownership: FRONT ONLY (top/right never re-dimension it).
+                    if name == "front":
+                        if _h > 1e-6:
                             try:
-                                _rad = float(_ed["e"].Curve.Radius)
-                                _cc = _ed["e"].Curve.Center
-                                _anns.append(_dia_callout(float(_cc.x), float(_cc.y), _rad, 2.0 * _rad, _miny))
-                                _vd.append("top:Diameter")
-                                _ndia += 1
-                                # Cover the callout extent (same scaled geometry as _dia_callout).
-                                _ax30 = 0.8660254037844387
-                                _ay30 = 0.5
-                                _sx = float(_cc.x) + _rad * _ax30
-                                _sy = float(_cc.y) - _rad * _ay30
-                                _lead = _rad * 0.6 + _cur_off
-                                _elbx = _sx + _ax30 * _lead
-                                _elby = _sy - _ay30 * _lead
-                                if _elby > _miny - _cur_gap:
-                                    _elby = _miny - _cur_gap
-                                _shx = _elbx + _cur_off
-                                _dtxt = "Ø" + ("%.2f" % (2.0 * _rad))
-                                _axmax = max(_axmax, _shx + _cur_gap + len(_dtxt) * _cur_fs * 0.6, _elbx, _sx)
-                                _axmin = min(_axmin, _elbx, _sx)
-                                _aymin = min(_aymin, _elby - _cur_fs)
-                            except Exception as _de:
-                                print("DIM_SKIPPED top Diameter " + str(_de))
+                                _xline = _minx - _cur_off - _cur_off * _vcount
+                                _anns.append(_vdim(_miny, _maxy, _minx, _xline, _h))
+                                _vd.append(name + ":DistanceY")
+                                _vcount += 1
+                                _axmin = min(_axmin, _xline - _cur_gap - _cur_fs)
+                            except Exception as _ve3:
+                                print("DIM_SKIPPED " + name + " DistanceY " + str(_ve3))
+                    else:
+                        if _h > 1e-6:
+                            print("DIM_REDUNDANT_SKIPPED " + name + " vertical")
+                    # DIAMETER callouts: TOP view only, capped at 2.
+                    if name == "top":
+                        _ndia = 0
+                        for _ed in _edges:
+                            if _ed["circle"] and _ndia < 2:
+                                try:
+                                    _rad = float(_ed["e"].Curve.Radius)
+                                    _cc = _ed["e"].Curve.Center
+                                    _anns.append(_dia_callout(float(_cc.x), float(_cc.y), _rad, 2.0 * _rad, _miny))
+                                    _vd.append("top:Diameter")
+                                    _ndia += 1
+                                    # Cover the callout extent (same scaled geometry as _dia_callout).
+                                    _ax30 = 0.8660254037844387
+                                    _ay30 = 0.5
+                                    _sx = float(_cc.x) + _rad * _ax30
+                                    _sy = float(_cc.y) - _rad * _ay30
+                                    _lead = _rad * 0.6 + _cur_off
+                                    _elbx = _sx + _ax30 * _lead
+                                    _elby = _sy - _ay30 * _lead
+                                    if _elby > _miny - _cur_gap:
+                                        _elby = _miny - _cur_gap
+                                    _shx = _elbx + _cur_off
+                                    _dtxt = "Ø" + ("%.2f" % (2.0 * _rad))
+                                    _axmax = max(_axmax, _shx + _cur_gap + len(_dtxt) * _cur_fs * 0.6, _elbx, _sx)
+                                    _axmin = min(_axmin, _elbx, _sx)
+                                    _aymin = min(_aymin, _elby - _cur_fs)
+                                except Exception as _de:
+                                    print("DIM_SKIPPED top Diameter " + str(_de))
         print("DIM_COMPUTED " + name + ": " + _json.dumps(_vd))
         # WRITE dimensions INTO part_<view>.svg. REGRESSION GUARD: only keep the
         # annotated body if it is strictly larger AND contains <text and <polygon;
