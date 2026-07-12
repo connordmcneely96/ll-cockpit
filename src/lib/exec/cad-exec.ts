@@ -92,12 +92,23 @@ _dimensions_emitted = []
 def _fmt(v):
     return "%.3f" % v
 
+# Annotation scale — set PER VIEW from that view's own content span (_vspan) just
+# before its annotations are generated, so a 33mm end view and a 593mm side view
+# both get proportionate dim lines/text/arrows instead of absolute-mm offsets that
+# are nonsensical at one scale or the other. Safe defaults here in case a helper is
+# ever called before the per-view block runs.
+_cur_off = 10.0        # dimension-line offset from the outline
+_cur_gap = 1.5         # extension gap / overshoot
+_cur_fs = 3.5          # annotation font size
+_cur_arrowlen = 2.0    # arrowhead length
+_cur_aw = 0.8          # arrowhead half-width
+
 # ASME Y14.5-style annotation, drawn OUTSIDE the view outline. NOTE: TechDraw view
-# SVG has +y DOWN, so "below the part" = LARGER y. _arrow: filled 2mm head, tip at
-# (tipx,tipy) pointing along the unit (dirx,diry).
+# SVG has +y DOWN, so "below the part" = LARGER y. _arrow: filled head sized from
+# _cur_arrowlen/_cur_aw, tip at (tipx,tipy) pointing along the unit (dirx,diry).
 def _arrow(tipx, tipy, dirx, diry):
-    alen = 2.0
-    aw = 0.8
+    alen = _cur_arrowlen
+    aw = _cur_aw
     bx = tipx - dirx * alen
     by = tipy - diry * alen
     px = -diry
@@ -105,54 +116,54 @@ def _arrow(tipx, tipy, dirx, diry):
     return '<polygon points="' + _fmt(tipx) + ',' + _fmt(tipy) + ' ' + _fmt(bx + px * aw) + ',' + _fmt(by + py * aw) + ' ' + _fmt(bx - px * aw) + ',' + _fmt(by - py * aw) + '" fill="black"/>'
 
 # Horizontal dimension of the extent [x0,x1] taken at the object bottom yobj, with
-# the dimension line placed BELOW at yline (yline > yobj). 1.5mm extension gap +
-# 1.5mm overshoot; arrowheads point outward; value centered 1.2mm above the line.
+# the dimension line placed BELOW at yline (yline > yobj). Extension gap/overshoot =
+# _cur_gap; value centered _cur_gap above the line; font = _cur_fs.
 def _hdim(x0, x1, yobj, yline, val):
     out = ['<g>']
-    out.append('<line x1="' + _fmt(x0) + '" y1="' + _fmt(yobj + 1.5) + '" x2="' + _fmt(x0) + '" y2="' + _fmt(yline + 1.5) + '" stroke="black" stroke-width="0.25"/>')
-    out.append('<line x1="' + _fmt(x1) + '" y1="' + _fmt(yobj + 1.5) + '" x2="' + _fmt(x1) + '" y2="' + _fmt(yline + 1.5) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(x0) + '" y1="' + _fmt(yobj + _cur_gap) + '" x2="' + _fmt(x0) + '" y2="' + _fmt(yline + _cur_gap) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(x1) + '" y1="' + _fmt(yobj + _cur_gap) + '" x2="' + _fmt(x1) + '" y2="' + _fmt(yline + _cur_gap) + '" stroke="black" stroke-width="0.25"/>')
     out.append('<line x1="' + _fmt(x0) + '" y1="' + _fmt(yline) + '" x2="' + _fmt(x1) + '" y2="' + _fmt(yline) + '" stroke="black" stroke-width="0.25"/>')
     out.append(_arrow(x0, yline, -1.0, 0.0))
     out.append(_arrow(x1, yline, 1.0, 0.0))
-    out.append('<text x="' + _fmt((x0 + x1) / 2.0) + '" y="' + _fmt(yline - 1.2) + '" font-family="sans-serif" font-size="3.5" text-anchor="middle" fill="black">' + ("%.2f" % val) + '</text>')
+    out.append('<text x="' + _fmt((x0 + x1) / 2.0) + '" y="' + _fmt(yline - _cur_gap) + '" font-family="sans-serif" font-size="' + _fmt(_cur_fs) + '" text-anchor="middle" fill="black">' + ("%.2f" % val) + '</text>')
     out.append('</g>')
     return "".join(out)
 
 # Vertical dimension of the extent [y0,y1] taken at the object left xobj, with the
 # dimension line placed LEFT at xline (xline < xobj). Value rotated -90 left of it.
 def _vdim(y0, y1, xobj, xline, val):
-    _tx = xline - 1.2
+    _tx = xline - _cur_gap
     _ty = (y0 + y1) / 2.0
     out = ['<g>']
-    out.append('<line x1="' + _fmt(xobj - 1.5) + '" y1="' + _fmt(y0) + '" x2="' + _fmt(xline - 1.5) + '" y2="' + _fmt(y0) + '" stroke="black" stroke-width="0.25"/>')
-    out.append('<line x1="' + _fmt(xobj - 1.5) + '" y1="' + _fmt(y1) + '" x2="' + _fmt(xline - 1.5) + '" y2="' + _fmt(y1) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(xobj - _cur_gap) + '" y1="' + _fmt(y0) + '" x2="' + _fmt(xline - _cur_gap) + '" y2="' + _fmt(y0) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(xobj - _cur_gap) + '" y1="' + _fmt(y1) + '" x2="' + _fmt(xline - _cur_gap) + '" y2="' + _fmt(y1) + '" stroke="black" stroke-width="0.25"/>')
     out.append('<line x1="' + _fmt(xline) + '" y1="' + _fmt(y0) + '" x2="' + _fmt(xline) + '" y2="' + _fmt(y1) + '" stroke="black" stroke-width="0.25"/>')
     out.append(_arrow(xline, y0, 0.0, -1.0))
     out.append(_arrow(xline, y1, 0.0, 1.0))
-    out.append('<text x="' + _fmt(_tx) + '" y="' + _fmt(_ty) + '" font-family="sans-serif" font-size="3.5" text-anchor="middle" fill="black" transform="rotate(-90 ' + _fmt(_tx) + ' ' + _fmt(_ty) + ')">' + ("%.2f" % val) + '</text>')
+    out.append('<text x="' + _fmt(_tx) + '" y="' + _fmt(_ty) + '" font-family="sans-serif" font-size="' + _fmt(_cur_fs) + '" text-anchor="middle" fill="black" transform="rotate(-90 ' + _fmt(_tx) + ' ' + _fmt(_ty) + ')">' + ("%.2f" % val) + '</text>')
     out.append('</g>')
     return "".join(out)
 
 # Diameter callout: leader (with an arrowhead) from the circle EDGE at 30deg up out
-# past the bbox top, a ~6mm horizontal shoulder, then the Ø value — kept above the
-# bbox so it can never cross the below-placed width dimension.
+# past the bbox top, a _cur_off horizontal shoulder, then the Ø value — kept above
+# the bbox so it can never cross the below-placed width dimension.
 def _dia_callout(ccx, ccy, rad, val, miny):
     _ax = 0.8660254037844387
     _ay = 0.5
     sx = ccx + rad * _ax
     sy = ccy - rad * _ay
-    lead = rad * 0.6 + 6.0
+    lead = rad * 0.6 + _cur_off
     elbx = sx + _ax * lead
     elby = sy - _ay * lead
-    if elby > miny - 3.0:
-        elby = miny - 3.0
-    shx = elbx + 6.0
+    if elby > miny - _cur_gap:
+        elby = miny - _cur_gap
+    shx = elbx + _cur_off
     shy = elby
     out = ['<g>']
     out.append(_arrow(sx, sy, -_ax, _ay))
     out.append('<line x1="' + _fmt(sx) + '" y1="' + _fmt(sy) + '" x2="' + _fmt(elbx) + '" y2="' + _fmt(elby) + '" stroke="black" stroke-width="0.25"/>')
     out.append('<line x1="' + _fmt(elbx) + '" y1="' + _fmt(elby) + '" x2="' + _fmt(shx) + '" y2="' + _fmt(shy) + '" stroke="black" stroke-width="0.25"/>')
-    out.append('<text x="' + _fmt(shx + 1.0) + '" y="' + _fmt(shy - 1.0) + '" font-family="sans-serif" font-size="3.5" fill="black">' + "Ø" + ("%.2f" % val) + '</text>')
+    out.append('<text x="' + _fmt(shx + _cur_gap) + '" y="' + _fmt(shy - _cur_gap) + '" font-family="sans-serif" font-size="' + _fmt(_cur_fs) + '" fill="black">' + "Ø" + ("%.2f" % val) + '</text>')
     out.append('</g>')
     return "".join(out)
 
@@ -218,11 +229,24 @@ for name, direction in _views.items():
         for _ei in range(len(_ve)):
             _e = _ve[_ei]
             _p = _edge_points(_e)
-            _edges.append({"e": _e, "pts": _p, "circle": _edge_is_circle(_e)})
+            _isc = _edge_is_circle(_e)
+            _edges.append({"e": _e, "pts": _p, "circle": _isc})
             if _p:
                 (_ax0, _ay0), (_bx0, _by0) = _p
                 _xs.append(_ax0); _xs.append(_bx0)
                 _ys.append(_ay0); _ys.append(_by0)
+            # A full circle's two endpoints coincide at the seam, so they don't span
+            # its extent — an end-on circular view would otherwise measure as a POINT
+            # (degenerate bbox -> tiny viewBox -> the circle bursts out of frame). Add
+            # the circle's center +/- radius so its true extent is captured.
+            if _isc:
+                try:
+                    _crx = float(_e.Curve.Radius)
+                    _ccg = _e.Curve.Center
+                    _xs.append(float(_ccg.x) - _crx); _xs.append(float(_ccg.x) + _crx)
+                    _ys.append(float(_ccg.y) - _crx); _ys.append(float(_ccg.y) + _crx)
+                except Exception:
+                    pass
         _anns = []
         _vd = []
         _have_bbox = False
@@ -235,6 +259,15 @@ for name, direction in _views.items():
             # Annotated extent — measured, not estimated. Starts at the part bbox and
             # grows to cover every annotation actually drawn.
             _axmin = _minx; _axmax = _maxx; _aymin = _miny; _aymax = _maxy
+            # RELATIVE annotation scale from this view's own content span, so the dim
+            # geometry is proportionate at any part size (was hard 10/1.5/3.5/2.0mm).
+            _vspan = max(_maxx - _minx, _maxy - _miny)
+            _cur_off = max(0.12 * _vspan, 6.0)
+            _cur_gap = max(0.02 * _vspan, 1.0)
+            _cur_fs = max(0.045 * _vspan, 2.5)
+            _cur_arrowlen = max(0.025 * _vspan, 1.5)
+            _cur_aw = _cur_arrowlen * 0.4
+            print("VIEW_SPAN " + name + ": " + str(_vspan))
             if name == "iso":
                 print("DIM_SKIPPED iso pictorial-no-dims")
             else:
@@ -261,24 +294,24 @@ for name, direction in _views.items():
                     else:
                         _emit_h = (_w > 1e-6)
                 if _emit_h:
-                    _yline = _maxy + 10.0 + 7.0 * _hcount
+                    _yline = _maxy + _cur_off + _cur_off * _hcount
                     _anns.append(_hdim(_minx, _maxx, _maxy, _yline, _w))
                     _vd.append(name + ":DistanceX")
                     _hcount += 1
-                    _aymax = max(_aymax, _yline + 1.5)
-                    _aymin = min(_aymin, _yline - 1.2 - 3.5)
+                    _aymax = max(_aymax, _yline + _cur_gap)
+                    _aymin = min(_aymin, _yline - _cur_gap - _cur_fs)
                     _midh = (_minx + _maxx) / 2.0
-                    _thw = len("%.2f" % _w) * 3.5 * 0.35
+                    _thw = len("%.2f" % _w) * _cur_fs * 0.35
                     _axmin = min(_axmin, _midh - _thw)
                     _axmax = max(_axmax, _midh + _thw)
                 # VERTICAL (height) ownership: FRONT ONLY (top/right never re-dimension it).
                 if name == "front":
                     if _h > 1e-6:
-                        _xline = _minx - 10.0 - 7.0 * _vcount
+                        _xline = _minx - _cur_off - _cur_off * _vcount
                         _anns.append(_vdim(_miny, _maxy, _minx, _xline, _h))
                         _vd.append(name + ":DistanceY")
                         _vcount += 1
-                        _axmin = min(_axmin, _xline - 1.5 - 4.0)
+                        _axmin = min(_axmin, _xline - _cur_gap - _cur_fs)
                 else:
                     if _h > 1e-6:
                         print("DIM_REDUNDANT_SKIPPED " + name + " vertical")
@@ -293,21 +326,21 @@ for name, direction in _views.items():
                                 _anns.append(_dia_callout(float(_cc.x), float(_cc.y), _rad, 2.0 * _rad, _miny))
                                 _vd.append("top:Diameter")
                                 _ndia += 1
-                                # Cover the callout extent (same geometry as _dia_callout).
+                                # Cover the callout extent (same scaled geometry as _dia_callout).
                                 _ax30 = 0.8660254037844387
                                 _ay30 = 0.5
                                 _sx = float(_cc.x) + _rad * _ax30
                                 _sy = float(_cc.y) - _rad * _ay30
-                                _lead = _rad * 0.6 + 6.0
+                                _lead = _rad * 0.6 + _cur_off
                                 _elbx = _sx + _ax30 * _lead
                                 _elby = _sy - _ay30 * _lead
-                                if _elby > _miny - 3.0:
-                                    _elby = _miny - 3.0
-                                _shx = _elbx + 6.0
+                                if _elby > _miny - _cur_gap:
+                                    _elby = _miny - _cur_gap
+                                _shx = _elbx + _cur_off
                                 _dtxt = "Ø" + ("%.2f" % (2.0 * _rad))
-                                _axmax = max(_axmax, _shx + 6.0 + len(_dtxt) * 2.1, _elbx, _sx)
+                                _axmax = max(_axmax, _shx + _cur_gap + len(_dtxt) * _cur_fs * 0.6, _elbx, _sx)
                                 _axmin = min(_axmin, _elbx, _sx)
-                                _aymin = min(_aymin, _elby - 4.5)
+                                _aymin = min(_aymin, _elby - _cur_fs)
                             except Exception as _de:
                                 print("DIM_SKIPPED top Diameter " + str(_de))
         print("DIM_COMPUTED " + name + ": " + _json.dumps(_vd))
@@ -326,13 +359,18 @@ for name, direction in _views.items():
         # Per-view viewBox from the MEASURED content extent — the annotated bbox when
         # the annotations were accepted, else the plain part bbox (so the box matches
         # what was actually written). TRUE 1:1: no scaling, the box just frames content
-        # plus a small margin. Falls back to a symmetric box when no geometry was found.
+        # plus a small margin. The symmetric circumradius box is a LAST RESORT, used
+        # ONLY when the measured extent is degenerate (no geometry, or a single point/
+        # line whose width or height collapses to ~0) — never for a view that has a
+        # real, small end-on feature like a 33mm circle.
         _pad_v = 3.0
-        if _have_bbox:
-            if _accepted:
-                _exmin = _axmin; _exmax = _axmax; _eymin = _aymin; _eymax = _aymax
-            else:
-                _exmin = _minx; _exmax = _maxx; _eymin = _miny; _eymax = _maxy
+        if _have_bbox and _accepted:
+            _exmin = _axmin; _exmax = _axmax; _eymin = _aymin; _eymax = _aymax
+        elif _have_bbox:
+            _exmin = _minx; _exmax = _maxx; _eymin = _miny; _eymax = _maxy
+        else:
+            _exmin = 0.0; _exmax = 0.0; _eymin = 0.0; _eymax = 0.0
+        if (_exmax - _exmin) > 1e-6 and (_eymax - _eymin) > 1e-6:
             _view_ann[name] = (_exmin, _exmax, _eymin, _eymax)
             print("VIEW_EXTENT " + name + ": " + _json.dumps([_exmin, _exmax, _eymin, _eymax]))
             _vbx = _exmin - _pad_v
@@ -343,7 +381,7 @@ for name, direction in _views.items():
             _Rf = (_r + _m) + 12.0
             _vbx = -_Rf; _vby = -_Rf; _vbw = 2.0 * _Rf; _vbh = 2.0 * _Rf
             _view_ann[name] = (-_Rf, _Rf, -_Rf, _Rf)
-            print("VIEW_EXTENT " + name + ": " + _json.dumps([-_Rf, _Rf, -_Rf, _Rf]))
+            print("VIEW_EXTENT " + name + ": DEGENERATE " + _json.dumps([-_Rf, _Rf, -_Rf, _Rf]))
         with open("/work/out/part_" + name + ".svg", "w") as _sf:
             _sf.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
                 'viewBox="%f %f %f %f" width="100%%" height="100%%" '
