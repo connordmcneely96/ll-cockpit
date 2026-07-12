@@ -354,6 +354,13 @@ def _freecad_techdraw(_p):
     except Exception as _e:
         print("FREECAD_DRAWINGS_FALLBACK:", _e)
         return False
+    # Surface the captured subprocess output onto the /run stdout channel so the
+    # FreeCAD diagnostics (TECHDRAW_*, DIM_*, DIMENSIONS_EMITTED, ...) are no longer
+    # silently discarded. "FC|" does not match the GEOMETRY_METRICS regex.
+    for _line in (_res.stdout or "").splitlines():
+        print("FC| " + _line)
+    for _line in (_res.stderr or "").splitlines()[:40]:
+        print("FCERR| " + _line)
     _svgs = [n for n in ("front", "top", "right", "iso") if _os.path.exists(_OUT + "/part_" + n + ".svg")]
     if _res.returncode == 0 and "FREECAD_DRAWINGS_OK" in (_res.stdout or "") and _svgs:
         print("DRAWINGS_EMITTED:", _json.dumps({"engine": "freecad-techdraw", "views": _svgs}))
