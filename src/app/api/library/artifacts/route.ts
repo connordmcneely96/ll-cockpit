@@ -15,7 +15,7 @@ export async function GET(req: Request) {
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
     const list = await env.DB.prepare(
-      `SELECT id, producing_agent, artifact_type, artifact_name, storage_type, storage_ref, r2_bucket, format, size_bytes, quality_score, sentinel_pass, status, created_at FROM artifact_registry ${clause} ORDER BY created_at DESC LIMIT 200`
+      `SELECT id, producing_agent, artifact_type, artifact_name, storage_type, storage_ref, r2_bucket, format, size_bytes, quality_score, sentinel_pass, status, created_at, pipeline_run_id FROM artifact_registry ${clause} ORDER BY created_at DESC LIMIT 200`
     ).bind(...binds).all()
 
     const kpi = await env.DB.prepare(

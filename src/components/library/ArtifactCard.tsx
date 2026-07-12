@@ -18,6 +18,7 @@ export interface Artifact {
   sentinel_pass: number | null
   status: string | null
   created_at: number | null
+  pipeline_run_id?: string | null
 }
 
 function fmtBytes(n: number | null): string {

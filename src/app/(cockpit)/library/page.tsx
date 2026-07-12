@@ -70,25 +70,21 @@ export default function LibraryPage() {
     })
   }, [artifacts, validation, search])
 
-  // cad-drawing siblings share the same cad/<tenant>/<exec>/ directory prefix as
-  // the run's part.glb. Group them by directory so a cad-model card can render
-  // its own drawings — no extra fetch, no run-scoped API.
+  // A CAD run has multiple execution dirs but only one emits drawings, so match
+  // by RUN, not by directory: group cad-drawing rows by pipeline_run_id and let a
+  // cad-model card render the drawings sharing its run — no extra fetch, no
+  // run-scoped API.
   const drawingsFor = useMemo(() => {
-    const byDir = new Map<string, Artifact[]>()
+    const byRun = new Map<string, Artifact[]>()
     for (const a of artifacts) {
-      if (a.artifact_type !== 'cad-drawing' || !a.storage_ref) continue
-      const i = a.storage_ref.lastIndexOf('/')
-      if (i < 0) continue
-      const dir = a.storage_ref.slice(0, i + 1)
-      const arr = byDir.get(dir) ?? []
+      if (a.artifact_type !== 'cad-drawing' || !a.pipeline_run_id) continue
+      const arr = byRun.get(a.pipeline_run_id) ?? []
       arr.push(a)
-      byDir.set(dir, arr)
+      byRun.set(a.pipeline_run_id, arr)
     }
     return (a: Artifact): Artifact[] => {
-      if (a.artifact_type !== 'cad-model' || a.format !== 'glb' || !a.storage_ref) return []
-      const i = a.storage_ref.lastIndexOf('/')
-      if (i < 0) return []
-      return byDir.get(a.storage_ref.slice(0, i + 1)) ?? []
+      if (a.artifact_type !== 'cad-model' || a.format !== 'glb' || !a.pipeline_run_id) return []
+      return byRun.get(a.pipeline_run_id) ?? []
     }
   }, [artifacts])
 
