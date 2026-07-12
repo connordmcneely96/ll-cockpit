@@ -166,6 +166,46 @@ export async function advanceConvergence(
     .bind(nextCycle, now, runId).run()
 }
 
+/**
+ * Called from executeOneSubtask when a MODELER subtask FAILS outright (errored /
+ * empty output, so there is no GEOMETRY_METRICS to gate). Neither advanceConvergence
+ * (fires only when a REVIEWER completes) nor runGateA (fires only when a modeler
+ * COMPLETES) runs in that case, so without this the cycle's reviewer stays 'pending'
+ * forever and cad_convergence_runs.status stays 'running' — an orphaned run that never
+ * completes. This marks the run 'failed' and removes the unrun reviewer.
+ *
+ * Mirrors runGateA's cleanup so COUNT(*)-based run-completion accounting stays sound.
+ * No-op for non-convergence runs or runs no longer 'running'. Does NOT spawn a next
+ * cycle: a hard modeler failure (vs. a Gate A geometry rejection) ends the run.
+ */
+export async function failConvergenceOnModelerFailure(
+  env: CloudflareEnv,
+  userId: string,
+  runId: string,
+  errorText: string,
+): Promise<void> {
+  const db = env.DB
+  const row = await db
+    .prepare(`SELECT run_id, cycle, status FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
+    .bind(runId, userId)
+    .first<{ run_id: string; cycle: number; status: string }>()
+  if (!row || row.status !== 'running') return
+
+  const now = Math.floor(Date.now() / 1000)
+  console.error(`convergence run ${runId} failed: cycle ${row.cycle} modeler errored: ${errorText}`)
+  // Remove this cycle's unrun reviewer so it never judges missing geometry and does
+  // not hang COUNT(*) completion. Guarded to the current cycle + pending only —
+  // identical shape to runGateA's cleanup.
+  await db
+    .prepare(`DELETE FROM agent_subtasks WHERE pipeline_run_id = ? AND short_id = ? AND agent_name = 'reviewer' AND status = 'pending'`)
+    .bind(runId, `st_r${row.cycle}`)
+    .run()
+  await db
+    .prepare(`UPDATE cad_convergence_runs SET status = 'failed', updated_at = ? WHERE run_id = ?`)
+    .bind(now, runId)
+    .run()
+}
+
 export interface GateAResult { pass: boolean; failures: string[] }
 
 // Deterministic geometry gate. Parses the LAST GEOMETRY_METRICS JSON line from
