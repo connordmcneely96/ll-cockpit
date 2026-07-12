@@ -190,7 +190,7 @@ def _edge_is_circle(_e):
     return False
 
 _view_bbox = {}
-_view_R = {}
+_view_ann = {}
 _view_scale = {}
 for name, direction in _views.items():
     try:
@@ -225,82 +225,129 @@ for name, direction in _views.items():
                 _ys.append(_ay0); _ys.append(_by0)
         _anns = []
         _vd = []
-        _max_stacked = 0
-        if name == "iso":
-            print("DIM_SKIPPED iso pictorial-no-dims")
-        elif _xs and _ys:
+        _have_bbox = False
+        _minx = 0.0; _maxx = 0.0; _miny = 0.0; _maxy = 0.0
+        _axmin = 0.0; _axmax = 0.0; _aymin = 0.0; _aymax = 0.0
+        if _xs and _ys:
+            _have_bbox = True
             _minx = min(_xs); _maxx = max(_xs)
             _miny = min(_ys); _maxy = max(_ys)
-            _w = _maxx - _minx
-            _h = _maxy - _miny
-            _view_bbox[name] = (_minx, _maxx, _miny, _maxy, _w, _h)
-            _hcount = 0
-            _vcount = 0
-            _fw = _view_bbox.get("front", (0, 0, 0, 0, None, 0))[4]
-            _tw = _view_bbox.get("top", (0, 0, 0, 0, None, 0))[4]
-            # HORIZONTAL (width) ownership: front always; top/right only if non-redundant.
-            _emit_h = False
-            if name == "front":
-                _emit_h = (_w > 1e-6)
-            elif name == "top":
-                if _fw is not None and abs(_w - _fw) <= 1e-6:
-                    print("DIM_REDUNDANT_SKIPPED top horizontal")
-                else:
-                    _emit_h = (_w > 1e-6)
-            elif name == "right":
-                _red = (_fw is not None and abs(_w - _fw) <= 1e-6) or (_tw is not None and abs(_w - _tw) <= 1e-6)
-                if _red:
-                    print("DIM_REDUNDANT_SKIPPED right horizontal")
-                else:
-                    _emit_h = (_w > 1e-6)
-            if _emit_h:
-                _yline = _maxy + 10.0 + 7.0 * _hcount
-                _anns.append(_hdim(_minx, _maxx, _maxy, _yline, _w))
-                _vd.append(name + ":DistanceX")
-                _hcount += 1
-            # VERTICAL (height) ownership: FRONT ONLY (top/right never re-dimension it).
-            if name == "front":
-                if _h > 1e-6:
-                    _xline = _minx - 10.0 - 7.0 * _vcount
-                    _anns.append(_vdim(_miny, _maxy, _minx, _xline, _h))
-                    _vd.append(name + ":DistanceY")
-                    _vcount += 1
+            # Annotated extent — measured, not estimated. Starts at the part bbox and
+            # grows to cover every annotation actually drawn.
+            _axmin = _minx; _axmax = _maxx; _aymin = _miny; _aymax = _maxy
+            if name == "iso":
+                print("DIM_SKIPPED iso pictorial-no-dims")
             else:
-                if _h > 1e-6:
-                    print("DIM_REDUNDANT_SKIPPED " + name + " vertical")
-            # DIAMETER callouts: TOP view only, capped at 2.
-            if name == "top":
-                _ndia = 0
-                for _ed in _edges:
-                    if _ed["circle"] and _ndia < 2:
-                        try:
-                            _rad = float(_ed["e"].Curve.Radius)
-                            _cc = _ed["e"].Curve.Center
-                            _anns.append(_dia_callout(float(_cc.x), float(_cc.y), _rad, 2.0 * _rad, _miny))
-                            _vd.append("top:Diameter")
-                            _ndia += 1
-                        except Exception as _de:
-                            print("DIM_SKIPPED top Diameter " + str(_de))
-            _max_stacked = max(_hcount, _vcount)
+                _w = _maxx - _minx
+                _h = _maxy - _miny
+                _view_bbox[name] = (_minx, _maxx, _miny, _maxy, _w, _h)
+                _hcount = 0
+                _vcount = 0
+                _fw = _view_bbox.get("front", (0, 0, 0, 0, None, 0))[4]
+                _tw = _view_bbox.get("top", (0, 0, 0, 0, None, 0))[4]
+                # HORIZONTAL (width) ownership: front always; top/right only if non-redundant.
+                _emit_h = False
+                if name == "front":
+                    _emit_h = (_w > 1e-6)
+                elif name == "top":
+                    if _fw is not None and abs(_w - _fw) <= 1e-6:
+                        print("DIM_REDUNDANT_SKIPPED top horizontal")
+                    else:
+                        _emit_h = (_w > 1e-6)
+                elif name == "right":
+                    _red = (_fw is not None and abs(_w - _fw) <= 1e-6) or (_tw is not None and abs(_w - _tw) <= 1e-6)
+                    if _red:
+                        print("DIM_REDUNDANT_SKIPPED right horizontal")
+                    else:
+                        _emit_h = (_w > 1e-6)
+                if _emit_h:
+                    _yline = _maxy + 10.0 + 7.0 * _hcount
+                    _anns.append(_hdim(_minx, _maxx, _maxy, _yline, _w))
+                    _vd.append(name + ":DistanceX")
+                    _hcount += 1
+                    _aymax = max(_aymax, _yline + 1.5)
+                    _aymin = min(_aymin, _yline - 1.2 - 3.5)
+                    _midh = (_minx + _maxx) / 2.0
+                    _thw = len("%.2f" % _w) * 3.5 * 0.35
+                    _axmin = min(_axmin, _midh - _thw)
+                    _axmax = max(_axmax, _midh + _thw)
+                # VERTICAL (height) ownership: FRONT ONLY (top/right never re-dimension it).
+                if name == "front":
+                    if _h > 1e-6:
+                        _xline = _minx - 10.0 - 7.0 * _vcount
+                        _anns.append(_vdim(_miny, _maxy, _minx, _xline, _h))
+                        _vd.append(name + ":DistanceY")
+                        _vcount += 1
+                        _axmin = min(_axmin, _xline - 1.5 - 4.0)
+                else:
+                    if _h > 1e-6:
+                        print("DIM_REDUNDANT_SKIPPED " + name + " vertical")
+                # DIAMETER callouts: TOP view only, capped at 2.
+                if name == "top":
+                    _ndia = 0
+                    for _ed in _edges:
+                        if _ed["circle"] and _ndia < 2:
+                            try:
+                                _rad = float(_ed["e"].Curve.Radius)
+                                _cc = _ed["e"].Curve.Center
+                                _anns.append(_dia_callout(float(_cc.x), float(_cc.y), _rad, 2.0 * _rad, _miny))
+                                _vd.append("top:Diameter")
+                                _ndia += 1
+                                # Cover the callout extent (same geometry as _dia_callout).
+                                _ax30 = 0.8660254037844387
+                                _ay30 = 0.5
+                                _sx = float(_cc.x) + _rad * _ax30
+                                _sy = float(_cc.y) - _rad * _ay30
+                                _lead = _rad * 0.6 + 6.0
+                                _elbx = _sx + _ax30 * _lead
+                                _elby = _sy - _ay30 * _lead
+                                if _elby > _miny - 3.0:
+                                    _elby = _miny - 3.0
+                                _shx = _elbx + 6.0
+                                _dtxt = "Ø" + ("%.2f" % (2.0 * _rad))
+                                _axmax = max(_axmax, _shx + 6.0 + len(_dtxt) * 2.1, _elbx, _sx)
+                                _axmin = min(_axmin, _elbx, _sx)
+                                _aymin = min(_aymin, _elby - 4.5)
+                            except Exception as _de:
+                                print("DIM_SKIPPED top Diameter " + str(_de))
         print("DIM_COMPUTED " + name + ": " + _json.dumps(_vd))
-        # WRITE dimensions INTO part_<view>.svg, with an expanded viewBox so the
-        # extension lines / text are not clipped. REGRESSION GUARD: only keep the
+        # WRITE dimensions INTO part_<view>.svg. REGRESSION GUARD: only keep the
         # annotated body if it is strictly larger AND contains <text and <polygon;
         # otherwise write the plain (correct, undimensioned) body and print the
         # rejection line — a view is NEVER lost or silently un-dimensioned.
-        _R = (_r + _m) + 10.0 + 7.0 * _max_stacked + 12.0
-        _view_R[name] = _R
         _annotated = svg_body + "".join(_anns)
-        if len(_annotated) > len(svg_body) and ("<text" in _annotated) and ("<polygon" in _annotated):
+        _accepted = (len(_annotated) > len(svg_body) and ("<text" in _annotated) and ("<polygon" in _annotated))
+        if _accepted:
             _inner = _annotated
             _dimensions_emitted.extend(_vd)
         else:
             _inner = svg_body
             print("DIM_RENDER_REJECTED " + name)
+        # Per-view viewBox from the MEASURED content extent — the annotated bbox when
+        # the annotations were accepted, else the plain part bbox (so the box matches
+        # what was actually written). TRUE 1:1: no scaling, the box just frames content
+        # plus a small margin. Falls back to a symmetric box when no geometry was found.
+        _pad_v = 3.0
+        if _have_bbox:
+            if _accepted:
+                _exmin = _axmin; _exmax = _axmax; _eymin = _aymin; _eymax = _aymax
+            else:
+                _exmin = _minx; _exmax = _maxx; _eymin = _miny; _eymax = _maxy
+            _view_ann[name] = (_exmin, _exmax, _eymin, _eymax)
+            print("VIEW_EXTENT " + name + ": " + _json.dumps([_exmin, _exmax, _eymin, _eymax]))
+            _vbx = _exmin - _pad_v
+            _vby = _eymin - _pad_v
+            _vbw = (_exmax - _exmin) + 2.0 * _pad_v
+            _vbh = (_eymax - _eymin) + 2.0 * _pad_v
+        else:
+            _Rf = (_r + _m) + 12.0
+            _vbx = -_Rf; _vby = -_Rf; _vbw = 2.0 * _Rf; _vbh = 2.0 * _Rf
+            _view_ann[name] = (-_Rf, _Rf, -_Rf, _Rf)
+            print("VIEW_EXTENT " + name + ": " + _json.dumps([-_Rf, _Rf, -_Rf, _Rf]))
         with open("/work/out/part_" + name + ".svg", "w") as _sf:
             _sf.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
                 'viewBox="%f %f %f %f" width="100%%" height="100%%" '
-                'preserveAspectRatio="xMidYMid meet">' % (-_R, -_R, 2.0 * _R, 2.0 * _R)) + _inner + '</svg>')
+                'preserveAspectRatio="xMidYMid meet">' % (_vbx, _vby, _vbw, _vbh)) + _inner + '</svg>')
         TechDraw.writeDXFView(view, "/work/out/part_" + name + ".dxf")
         emitted.append(name)
         _bodies[name] = _inner
@@ -315,34 +362,42 @@ try:
     _date = _dtmod.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     def _c(v):
         return "%.3f" % v
-    # Size the 2x2 cells to the LARGEST expanded per-view radius so the outside-placed
-    # Y14.5 annotations (dims at minx-10 / maxy+10, the diameter leader) are not clipped
-    # by the neighbouring cell or the sheet border. The per-view _R formula is unchanged.
-    _Rmax = max(_view_R.values()) if _view_R else (_r + _m)
-    _s = 2.0 * _Rmax
-    _pad = _m
-    _gap = max(_s * 0.18, 8.0)
-    _cw = 2.0 * _s + _gap
-    _titleH = max(_s * 0.35, 30.0)
-    _sw = _cw + 2.0 * _pad
-    _sh = _cw + 2.0 * _pad + _titleH
-    _stroke = max(_s * 0.004, 0.3)
-    _pos = {
-        "front": (_pad + _s / 2.0, _pad + _s / 2.0),
-        "top": (_pad + _s + _gap + _s / 2.0, _pad + _s / 2.0),
-        "right": (_pad + _s / 2.0, _pad + _s + _gap + _s / 2.0),
-        "iso": (_pad + _s + _gap + _s / 2.0, _pad + _s + _gap + _s / 2.0),
-    }
-    _parts = ['<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ' + _c(_sw) + ' ' + _c(_sh) + '" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">']
-    _parts.append('<rect x="' + _c(_pad * 0.5) + '" y="' + _c(_pad * 0.5) + '" width="' + _c(_sw - _pad) + '" height="' + _c(_sh - _pad) + '" fill="white" stroke="black" stroke-width="' + _c(_stroke) + '"/>')
+    # Content-measured 2x2 layout — TRUE 1:1, NO scaling. Each cell is sized to its
+    # OWN view's MEASURED extent (_view_ann, the annotated bbox), not to a shared
+    # circumradius, so the sheet is dense instead of ~15% filled. Grid:
+    # col0={front,right}, col1={top,iso}; row0={front,top}, row1={right,iso}. A
+    # per-view label band (_labelh) is reserved at the top of every cell. The sheet
+    # size FOLLOWS from the summed cells — the views are never resized.
+    _cellpad = 6.0
+    _labelh = 6.0
+    _margin = 8.0
+    _gap = 6.0
+    _grid = {"front": (0, 0), "top": (1, 0), "right": (0, 1), "iso": (1, 1)}
+    def _ext(_nm):
+        _a = _view_ann.get(_nm)
+        if _a is None:
+            return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        _x0, _x1, _y0, _y1 = _a
+        return (_x0, _x1, _y0, _y1, _x1 - _x0, _y1 - _y0)
+    _colw = [0.0, 0.0]
+    _rowh = [0.0, 0.0]
     for _vn in ["front", "top", "right", "iso"]:
-        if _vn in _bodies:
-            _cx, _cy = _pos[_vn]
-            _parts.append('<g transform="translate(' + _c(_cx) + ',' + _c(_cy) + ')">' + _bodies[_vn] + '</g>')
-            _parts.append('<text x="' + _c(_cx) + '" y="' + _c(_cy - _s * 0.44) + '" font-family="sans-serif" font-size="' + _c(max(_s * 0.05, 3.0)) + '" text-anchor="middle" fill="black">' + _vn.upper() + '</text>')
-    # Size the title block FROM the text so nothing clips: box height >=
-    # (len(lines)+0.5)*line_height, and the font is shrunk to fit the box width.
-    # PART NAME line only when a real name is known — never a placeholder default.
+        if _vn in _bodies and _vn in _view_ann:
+            _gc, _gr = _grid[_vn]
+            _ee = _ext(_vn)
+            if _ee[4] > _colw[_gc]:
+                _colw[_gc] = _ee[4]
+            if _ee[5] > _rowh[_gr]:
+                _rowh[_gr] = _ee[5]
+    _cellw = [_colw[0] + _cellpad, _colw[1] + _cellpad]
+    _cellh = [_rowh[0] + _cellpad + _labelh, _rowh[1] + _cellpad + _labelh]
+    _colx = [_margin, _margin + _cellw[0] + _gap]
+    _rowy = [_margin, _margin + _cellh[0] + _gap]
+    _viewsw = _margin + _cellw[0] + _gap + _cellw[1] + _margin
+    _viewsh = _margin + _cellh[0] + _gap + _cellh[1] + _margin
+    # Title block content — unchanged. PART NAME line only when a real name is known;
+    # SCALE asserted from the recomputed view.Scale ("SCALE 1:1" only if every view
+    # is truly 1.0, else the actual value(s)).
     _pname = None
     try:
         _cand = str(getattr(obj, "Label", "") or "").strip()
@@ -350,8 +405,6 @@ try:
             _pname = _cand
     except Exception:
         _pname = None
-    # SCALE asserted from the recomputed view.Scale (not assumed): "SCALE 1:1" only if
-    # every view is truly 1.0, else the actual value(s).
     _scales = list(_view_scale.values())
     if not _scales or all(abs(_sc - 1.0) < 1e-6 for _sc in _scales):
         _scale_line = "SCALE 1:1"
@@ -366,13 +419,15 @@ try:
     _lines.append("DATE " + _date)
     _lines.append("VIEWS " + ", ".join(emitted))
     _lines.append("GENERATED BY NEXUS")
-    _lh = max(_titleH * 0.14, 3.0)
+    # Title block sized FROM the text so nothing clips: box height >=
+    # (len(lines)+0.5)*line_height, font shrunk to fit the box width.
+    _lh = 4.0
     _fs = _lh * 0.62
     _maxchars = 1
     for _ln in _lines:
         if len(_ln) > _maxchars:
             _maxchars = len(_ln)
-    _availw = min(_cw * 0.6, _s * 2.2)
+    _availw = max(_viewsw * 0.6, 40.0)
     _needw = _maxchars * _fs * 0.6 + 2.0 * _lh
     if _needw > _availw:
         _fs = max((_availw - 2.0 * _lh) / (_maxchars * 0.6), 1.5)
@@ -380,8 +435,30 @@ try:
     else:
         _tbw = _needw
     _tbh = (len(_lines) + 0.5) * _lh
-    _tbx = _sw - _pad * 0.5 - _tbw
-    _tby = _sh - _pad * 0.5 - _tbh
+    # Sheet size FOLLOWS from the cells + a title-block band at the bottom.
+    _titleH = _tbh + 2.0 * _margin
+    _sw = _viewsw
+    _sh = _viewsh + _titleH
+    _stroke = max(min(_sw, _sh) * 0.002, 0.3)
+    _parts = ['<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ' + _c(_sw) + ' ' + _c(_sh) + '" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">']
+    _parts.append('<rect x="' + _c(_margin * 0.5) + '" y="' + _c(_margin * 0.5) + '" width="' + _c(_sw - _margin) + '" height="' + _c(_sh - _margin) + '" fill="white" stroke="black" stroke-width="' + _c(_stroke) + '"/>')
+    for _vn in ["front", "top", "right", "iso"]:
+        if _vn in _bodies:
+            _gc, _gr = _grid[_vn]
+            _ee = _ext(_vn)
+            # Centre the view inside its column/row content area, below the label band.
+            _cx0 = _colx[_gc] + _cellpad / 2.0 + (_colw[_gc] - _ee[4]) / 2.0
+            _cy0 = _rowy[_gr] + _labelh + _cellpad / 2.0 + (_rowh[_gr] - _ee[5]) / 2.0
+            # translate(colX - axmin, rowY - aymin): the view sits at TRUE 1:1, its
+            # measured content top-left mapped to the cell content origin.
+            _tX = _cx0 - _ee[0]
+            _tY = _cy0 - _ee[2]
+            _parts.append('<g transform="translate(' + _c(_tX) + ',' + _c(_tY) + ')">' + _bodies[_vn] + '</g>')
+            _lx = _colx[_gc] + _cellw[_gc] / 2.0
+            _ly = _rowy[_gr] + _labelh * 0.75
+            _parts.append('<text x="' + _c(_lx) + '" y="' + _c(_ly) + '" font-family="sans-serif" font-size="' + _c(max(_labelh * 0.5, 3.0)) + '" text-anchor="middle" fill="black">' + _vn.upper() + '</text>')
+    _tbx = _sw - _margin * 0.5 - _tbw
+    _tby = _sh - _margin * 0.5 - _tbh
     _parts.append('<rect x="' + _c(_tbx) + '" y="' + _c(_tby) + '" width="' + _c(_tbw) + '" height="' + _c(_tbh) + '" fill="white" stroke="black" stroke-width="' + _c(_stroke) + '"/>')
     _ty = _tby + _lh
     for _ln in _lines:
