@@ -92,39 +92,67 @@ _dimensions_emitted = []
 def _fmt(v):
     return "%.3f" % v
 
-# Self-rendered dimension annotation. FreeCAD headless never draws TechDraw
-# dimensions (QGIViewDimension is Gui-only), so from the projected edge endpoints +
-# computed span we draw them ourselves: two extension lines (8mm offset), a
-# dimension line, two filled arrowheads, and the value text.
-def _ann_group(p0x, p0y, p1x, p1y, val, offset):
-    dx = p1x - p0x
-    dy = p1y - p0y
-    L = (dx * dx + dy * dy) ** 0.5
-    if L < 1e-9:
-        return None
-    ux = dx / L
-    uy = dy / L
-    nx = -uy
-    ny = ux
-    e0x = p0x + nx * offset
-    e0y = p0y + ny * offset
-    e1x = p1x + nx * offset
-    e1y = p1y + ny * offset
+# ASME Y14.5-style annotation, drawn OUTSIDE the view outline. NOTE: TechDraw view
+# SVG has +y DOWN, so "below the part" = LARGER y. _arrow: filled 2mm head, tip at
+# (tipx,tipy) pointing along the unit (dirx,diry).
+def _arrow(tipx, tipy, dirx, diry):
     alen = 2.0
-    aw = alen * 0.4
+    aw = 0.8
+    bx = tipx - dirx * alen
+    by = tipy - diry * alen
+    px = -diry
+    py = dirx
+    return '<polygon points="' + _fmt(tipx) + ',' + _fmt(tipy) + ' ' + _fmt(bx + px * aw) + ',' + _fmt(by + py * aw) + ' ' + _fmt(bx - px * aw) + ',' + _fmt(by - py * aw) + '" fill="black"/>'
+
+# Horizontal dimension of the extent [x0,x1] taken at the object bottom yobj, with
+# the dimension line placed BELOW at yline (yline > yobj). 1.5mm extension gap +
+# 1.5mm overshoot; arrowheads point outward; value centered 1.2mm above the line.
+def _hdim(x0, x1, yobj, yline, val):
     out = ['<g>']
-    out.append('<line x1="' + _fmt(p0x) + '" y1="' + _fmt(p0y) + '" x2="' + _fmt(e0x) + '" y2="' + _fmt(e0y) + '" stroke="black" stroke-width="0.25"/>')
-    out.append('<line x1="' + _fmt(p1x) + '" y1="' + _fmt(p1y) + '" x2="' + _fmt(e1x) + '" y2="' + _fmt(e1y) + '" stroke="black" stroke-width="0.25"/>')
-    out.append('<line x1="' + _fmt(e0x) + '" y1="' + _fmt(e0y) + '" x2="' + _fmt(e1x) + '" y2="' + _fmt(e1y) + '" stroke="black" stroke-width="0.25"/>')
-    b0x = e0x + ux * alen
-    b0y = e0y + uy * alen
-    out.append('<polygon points="' + _fmt(e0x) + ',' + _fmt(e0y) + ' ' + _fmt(b0x + nx * aw) + ',' + _fmt(b0y + ny * aw) + ' ' + _fmt(b0x - nx * aw) + ',' + _fmt(b0y - ny * aw) + '" fill="black"/>')
-    b1x = e1x - ux * alen
-    b1y = e1y - uy * alen
-    out.append('<polygon points="' + _fmt(e1x) + ',' + _fmt(e1y) + ' ' + _fmt(b1x + nx * aw) + ',' + _fmt(b1y + ny * aw) + ' ' + _fmt(b1x - nx * aw) + ',' + _fmt(b1y - ny * aw) + '" fill="black"/>')
-    mx = (e0x + e1x) / 2.0 + nx * 3.5
-    my = (e0y + e1y) / 2.0 + ny * 3.5
-    out.append('<text x="' + _fmt(mx) + '" y="' + _fmt(my) + '" font-family="sans-serif" font-size="3.5" text-anchor="middle" fill="black">' + ("%.2f" % val) + '</text>')
+    out.append('<line x1="' + _fmt(x0) + '" y1="' + _fmt(yobj + 1.5) + '" x2="' + _fmt(x0) + '" y2="' + _fmt(yline + 1.5) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(x1) + '" y1="' + _fmt(yobj + 1.5) + '" x2="' + _fmt(x1) + '" y2="' + _fmt(yline + 1.5) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(x0) + '" y1="' + _fmt(yline) + '" x2="' + _fmt(x1) + '" y2="' + _fmt(yline) + '" stroke="black" stroke-width="0.25"/>')
+    out.append(_arrow(x0, yline, -1.0, 0.0))
+    out.append(_arrow(x1, yline, 1.0, 0.0))
+    out.append('<text x="' + _fmt((x0 + x1) / 2.0) + '" y="' + _fmt(yline - 1.2) + '" font-family="sans-serif" font-size="3.5" text-anchor="middle" fill="black">' + ("%.2f" % val) + '</text>')
+    out.append('</g>')
+    return "".join(out)
+
+# Vertical dimension of the extent [y0,y1] taken at the object left xobj, with the
+# dimension line placed LEFT at xline (xline < xobj). Value rotated -90 left of it.
+def _vdim(y0, y1, xobj, xline, val):
+    _tx = xline - 1.2
+    _ty = (y0 + y1) / 2.0
+    out = ['<g>']
+    out.append('<line x1="' + _fmt(xobj - 1.5) + '" y1="' + _fmt(y0) + '" x2="' + _fmt(xline - 1.5) + '" y2="' + _fmt(y0) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(xobj - 1.5) + '" y1="' + _fmt(y1) + '" x2="' + _fmt(xline - 1.5) + '" y2="' + _fmt(y1) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(xline) + '" y1="' + _fmt(y0) + '" x2="' + _fmt(xline) + '" y2="' + _fmt(y1) + '" stroke="black" stroke-width="0.25"/>')
+    out.append(_arrow(xline, y0, 0.0, -1.0))
+    out.append(_arrow(xline, y1, 0.0, 1.0))
+    out.append('<text x="' + _fmt(_tx) + '" y="' + _fmt(_ty) + '" font-family="sans-serif" font-size="3.5" text-anchor="middle" fill="black" transform="rotate(-90 ' + _fmt(_tx) + ' ' + _fmt(_ty) + ')">' + ("%.2f" % val) + '</text>')
+    out.append('</g>')
+    return "".join(out)
+
+# Diameter callout: leader (with an arrowhead) from the circle EDGE at 30deg up out
+# past the bbox top, a ~6mm horizontal shoulder, then the Ø value — kept above the
+# bbox so it can never cross the below-placed width dimension.
+def _dia_callout(ccx, ccy, rad, val, miny):
+    _ax = 0.8660254037844387
+    _ay = 0.5
+    sx = ccx + rad * _ax
+    sy = ccy - rad * _ay
+    lead = rad * 0.6 + 6.0
+    elbx = sx + _ax * lead
+    elby = sy - _ay * lead
+    if elby > miny - 3.0:
+        elby = miny - 3.0
+    shx = elbx + 6.0
+    shy = elby
+    out = ['<g>']
+    out.append(_arrow(sx, sy, -_ax, _ay))
+    out.append('<line x1="' + _fmt(sx) + '" y1="' + _fmt(sy) + '" x2="' + _fmt(elbx) + '" y2="' + _fmt(elby) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(elbx) + '" y1="' + _fmt(elby) + '" x2="' + _fmt(shx) + '" y2="' + _fmt(shy) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<text x="' + _fmt(shx + 1.0) + '" y="' + _fmt(shy - 1.0) + '" font-family="sans-serif" font-size="3.5" fill="black">' + "Ø" + ("%.2f" % val) + '</text>')
     out.append('</g>')
     return "".join(out)
 
@@ -161,6 +189,7 @@ def _edge_is_circle(_e):
         pass
     return False
 
+_view_bbox = {}
 for name, direction in _views.items():
     try:
         view = doc.addObject("TechDraw::DrawViewPart", "V_" + name)
@@ -170,95 +199,90 @@ for name, direction in _views.items():
         view.Scale = 1.0
         doc.recompute()
         svg_body = TechDraw.viewPartAsSvg(view)
-        # DIMENSIONING STRATEGY: extents + features, NOT every edge. Pick the edge that
-        # spans the max X extent (DistanceX) and the one spanning max Y (DistanceY), and
-        # up to 2 circular edges (Diameter). Each dim is INDIVIDUALLY guarded.
+        # ASME Y14.5 dimensioning from the VIEW'S PROJECTED BBOX (not edge-pick):
+        # each feature dimensioned exactly once across the sheet, placed OUTSIDE the
+        # outline. NO dimensions on the iso pictorial.
         try:
             _ve = view.getVisibleEdges()
         except Exception:
             _ve = []
         _edges = []
+        _xs = []
+        _ys = []
         for _ei in range(len(_ve)):
             _e = _ve[_ei]
-            _edges.append({"i": _ei + 1, "e": _e, "pts": _edge_points(_e), "circle": _edge_is_circle(_e)})
-        _maxx = None
-        _maxy = None
-        _mxs = -1.0
-        _mys = -1.0
-        for _ed in _edges:
-            if not _ed["pts"]:
-                continue
-            (_ax, _ay), (_bx, _by) = _ed["pts"]
-            if abs(_bx - _ax) > _mxs:
-                _mxs = abs(_bx - _ax)
-                _maxx = _ed
-            if abs(_by - _ay) > _mys:
-                _mys = abs(_by - _ay)
-                _maxy = _ed
-        _plan = []
-        if _maxx is not None:
-            _plan.append(("DistanceX", _maxx["i"]))
-        if _maxy is not None:
-            _plan.append(("DistanceY", _maxy["i"]))
-        _ndia = 0
-        for _ed in _edges:
-            if _ed["circle"] and _ndia < 2:
-                _plan.append(("Diameter", _ed["i"]))
-                _ndia += 1
-        _edge_by_i = {}
-        for _ed in _edges:
-            _edge_by_i[_ed["i"]] = _ed
+            _p = _edge_points(_e)
+            _edges.append({"e": _e, "pts": _p, "circle": _edge_is_circle(_e)})
+            if _p:
+                (_ax0, _ay0), (_bx0, _by0) = _p
+                _xs.append(_ax0); _xs.append(_bx0)
+                _ys.append(_ay0); _ys.append(_by0)
         _anns = []
         _vd = []
-        _oi = 0
-        # FreeCAD 0.19's TechDraw dimension object is an untyped FeaturePython proxy
-        # whose measurement methods are not bound, so every dim failed. Compute the
-        # values directly from the projected edge geometry we already extracted (the
-        # same HLR-projected endpoints that select _maxx/_maxy) — a broken reporting
-        # layer removed, not the source of truth.
-        for _dtype, _eidx in _plan:
-            try:
-                _ed = _edge_by_i[_eidx]
-                if _dtype == "Diameter":
-                    # radius straight from the projected circle
-                    _rad = float(_ed["e"].Curve.Radius)
-                    _val = 2.0 * _rad
-                    _cc = _ed["e"].Curve.Center
-                    _ccx = float(_cc.x)
-                    _ccy = float(_cc.y)
-                    # 45deg leader + Ø callout (verbatim geometry), using _val/_ccx/_ccy.
-                    _llen = 0.5 * _val + 6.0
-                    _lex = _ccx + 0.7071067811865476 * _llen
-                    _ley = _ccy + 0.7071067811865476 * _llen
-                    _dg = ('<g><line x1="' + _fmt(_ccx) + '" y1="' + _fmt(_ccy) + '" x2="' + _fmt(_lex) + '" y2="' + _fmt(_ley) + '" stroke="black" stroke-width="0.25"/>'
-                        + '<text x="' + _fmt(_lex) + '" y="' + _fmt(_ley) + '" font-family="sans-serif" font-size="3.5" fill="black">' + "Ø" + ("%.2f" % _val) + '</text></g>')
-                    _anns.append(_dg)
-                    _vd.append(name + ":Diameter")
-                    _oi += 1
+        _max_stacked = 0
+        if name == "iso":
+            print("DIM_SKIPPED iso pictorial-no-dims")
+        elif _xs and _ys:
+            _minx = min(_xs); _maxx = max(_xs)
+            _miny = min(_ys); _maxy = max(_ys)
+            _w = _maxx - _minx
+            _h = _maxy - _miny
+            _view_bbox[name] = (_minx, _maxx, _miny, _maxy, _w, _h)
+            _hcount = 0
+            _vcount = 0
+            _fw = _view_bbox.get("front", (0, 0, 0, 0, None, 0))[4]
+            _tw = _view_bbox.get("top", (0, 0, 0, 0, None, 0))[4]
+            # HORIZONTAL (width) ownership: front always; top/right only if non-redundant.
+            _emit_h = False
+            if name == "front":
+                _emit_h = (_w > 1e-6)
+            elif name == "top":
+                if _fw is not None and abs(_w - _fw) <= 1e-6:
+                    print("DIM_REDUNDANT_SKIPPED top horizontal")
                 else:
-                    (_ax, _ay), (_bx, _by) = _ed["pts"]
-                    if _dtype == "DistanceX":
-                        _val = abs(_bx - _ax)
-                    else:
-                        _val = abs(_by - _ay)
-                    if _val < 1e-6:
-                        print("DIM_SKIPPED " + name + " " + _dtype + " degenerate span")
-                        continue
-                    _g = _ann_group(_ax, _ay, _bx, _by, _val, 8.0 + 6.0 * _oi)
-                    if _g:
-                        _anns.append(_g)
-                        _vd.append(name + ":" + _dtype)
-                        _oi += 1
-            except Exception as _de:
-                print("DIM_SKIPPED " + name + " " + _dtype + " " + str(_de))
+                    _emit_h = (_w > 1e-6)
+            elif name == "right":
+                _red = (_fw is not None and abs(_w - _fw) <= 1e-6) or (_tw is not None and abs(_w - _tw) <= 1e-6)
+                if _red:
+                    print("DIM_REDUNDANT_SKIPPED right horizontal")
+                else:
+                    _emit_h = (_w > 1e-6)
+            if _emit_h:
+                _yline = _maxy + 10.0 + 7.0 * _hcount
+                _anns.append(_hdim(_minx, _maxx, _maxy, _yline, _w))
+                _vd.append(name + ":DistanceX")
+                _hcount += 1
+            # VERTICAL (height) ownership: FRONT ONLY (top/right never re-dimension it).
+            if name == "front":
+                if _h > 1e-6:
+                    _xline = _minx - 10.0 - 7.0 * _vcount
+                    _anns.append(_vdim(_miny, _maxy, _minx, _xline, _h))
+                    _vd.append(name + ":DistanceY")
+                    _vcount += 1
+            else:
+                if _h > 1e-6:
+                    print("DIM_REDUNDANT_SKIPPED " + name + " vertical")
+            # DIAMETER callouts: TOP view only, capped at 2.
+            if name == "top":
+                _ndia = 0
+                for _ed in _edges:
+                    if _ed["circle"] and _ndia < 2:
+                        try:
+                            _rad = float(_ed["e"].Curve.Radius)
+                            _cc = _ed["e"].Curve.Center
+                            _anns.append(_dia_callout(float(_cc.x), float(_cc.y), _rad, 2.0 * _rad, _miny))
+                            _vd.append("top:Diameter")
+                            _ndia += 1
+                        except Exception as _de:
+                            print("DIM_SKIPPED top Diameter " + str(_de))
+            _max_stacked = max(_hcount, _vcount)
         print("DIM_COMPUTED " + name + ": " + _json.dumps(_vd))
         # WRITE dimensions INTO part_<view>.svg, with an expanded viewBox so the
         # extension lines / text are not clipped. REGRESSION GUARD: only keep the
         # annotated body if it is strictly larger AND contains <text and <polygon;
         # otherwise write the plain (correct, undimensioned) body and print the
         # rejection line — a view is NEVER lost or silently un-dimensioned.
-        _ndims = len(_vd)
-        _R = (_r + _m) + (8.0 + 6.0 * _ndims + 8.0)
+        _R = (_r + _m) + 10.0 + 7.0 * _max_stacked + 12.0
         _annotated = svg_body + "".join(_anns)
         if len(_annotated) > len(svg_body) and ("<text" in _annotated) and ("<polygon" in _annotated):
             _inner = _annotated
@@ -304,17 +328,30 @@ try:
             _cx, _cy = _pos[_vn]
             _parts.append('<g transform="translate(' + _c(_cx) + ',' + _c(_cy) + ')">' + _bodies[_vn] + '</g>')
             _parts.append('<text x="' + _c(_cx) + '" y="' + _c(_cy - _s * 0.44) + '" font-family="sans-serif" font-size="' + _c(max(_s * 0.05, 3.0)) + '" text-anchor="middle" fill="black">' + _vn.upper() + '</text>')
-    _tbw = min(_cw * 0.55, _s * 1.7)
-    _tbh = _titleH * 0.85
+    # Size the title block FROM the text so nothing clips: box height >=
+    # (len(lines)+0.5)*line_height, and the font is shrunk to fit the box width.
+    _lines = ["PART NAME: PART", "SCALE 1:1", "UNITS mm", "TOLERANCES UNLESS NOTED: X.XX +/- 0.25mm", "DATE " + _date, "VIEWS " + ", ".join(emitted), "GENERATED BY NEXUS"]
+    _lh = max(_titleH * 0.14, 3.0)
+    _fs = _lh * 0.62
+    _maxchars = 1
+    for _ln in _lines:
+        if len(_ln) > _maxchars:
+            _maxchars = len(_ln)
+    _availw = min(_cw * 0.6, _s * 2.2)
+    _needw = _maxchars * _fs * 0.6 + 2.0 * _lh
+    if _needw > _availw:
+        _fs = max((_availw - 2.0 * _lh) / (_maxchars * 0.6), 1.5)
+        _tbw = _availw
+    else:
+        _tbw = _needw
+    _tbh = (len(_lines) + 0.5) * _lh
     _tbx = _sw - _pad * 0.5 - _tbw
     _tby = _sh - _pad * 0.5 - _tbh
-    _fs = max(_titleH * 0.13, 2.5)
     _parts.append('<rect x="' + _c(_tbx) + '" y="' + _c(_tby) + '" width="' + _c(_tbw) + '" height="' + _c(_tbh) + '" fill="white" stroke="black" stroke-width="' + _c(_stroke) + '"/>')
-    _lines = ["PART", "SCALE 1:1", "UNITS mm", "DATE " + _date, "VIEWS " + ", ".join(emitted), "GENERATED BY NEXUS"]
-    _ty = _tby + _fs * 1.6
+    _ty = _tby + _lh
     for _ln in _lines:
-        _parts.append('<text x="' + _c(_tbx + _tbw * 0.03) + '" y="' + _c(_ty) + '" font-family="sans-serif" font-size="' + _c(_fs) + '" fill="black">' + _ln + '</text>')
-        _ty += _fs * 1.7
+        _parts.append('<text x="' + _c(_tbx + _lh * 0.3) + '" y="' + _c(_ty) + '" font-family="sans-serif" font-size="' + _c(_fs) + '" fill="black">' + _ln + '</text>')
+        _ty += _lh
     _parts.append('</svg>')
     with open("/work/out/part_sheet.svg", "w") as _shf:
         _shf.write("".join(_parts))
