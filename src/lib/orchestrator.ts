@@ -27,7 +27,7 @@ import type {
 import { getAgent } from './agents'
 import { cascadeReady, refreshRunAggregates } from './hermes'
 import { promoteArtifactsForRun } from './artifacts'
-import { advanceConvergence, runGateA } from './cad-convergence'
+import { advanceConvergence, runGateA, failConvergenceOnModelerFailure } from './cad-convergence'
 import { route } from './llm/router'
 import { executeAssembler, finalizeIterationIfReady } from './design/pipeline'
 import { runToolLoop, getAgentTools } from './tool-loop'
@@ -297,6 +297,14 @@ export async function executeOneSubtask(
   if (!failedReason && subtask.agent_name === 'modeler') {
     try { await runGateA(env, userId, subtask.pipeline_run_id, output) }
     catch (err) { console.error(`Gate A failed for run ${subtask.pipeline_run_id}:`, err) }
+  }
+
+  // A hard modeler FAILURE fires neither advanceConvergence (reviewer-only) nor
+  // runGateA (modeler-completes-only); without this the convergence run would be
+  // orphaned in 'running' with a pending reviewer that never runs.
+  if (failedReason && subtask.agent_name === 'modeler') {
+    try { await failConvergenceOnModelerFailure(env, userId, subtask.pipeline_run_id, failedReason) }
+    catch (err) { console.error(`convergence fail-reaper failed for run ${subtask.pipeline_run_id}:`, err) }
   }
 
   await cascadeReady(db, subtask.pipeline_run_id)
