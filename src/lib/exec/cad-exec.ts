@@ -77,6 +77,14 @@ tmpl.Template = _tmpl
 page.Template = tmpl
 doc.recompute()
 _views = {"front": (0.0, -1.0, 0.0), "top": (0.0, 0.0, 1.0), "right": (1.0, 0.0, 0.0), "iso": (1.0, -1.0, 1.0)}
+# TechDraw view SVG is centered on the view origin (drawing spans negative coords too),
+# so a symmetric viewBox about 0,0 sized to the shape's circumradius makes every view
+# render legibly regardless of direction. Without it browsers assume a 300x150 canvas
+# at the origin and the drawing collapses into a corner speck.
+_bb = shape.BoundBox
+_r = 0.5 * ((_bb.XLength**2 + _bb.YLength**2 + _bb.ZLength**2) ** 0.5)
+_m = max(_r * 0.15, 2.0)
+_s = 2.0 * (_r + _m)
 emitted = []
 for name, direction in _views.items():
     try:
@@ -88,7 +96,9 @@ for name, direction in _views.items():
         doc.recompute()
         svg_body = TechDraw.viewPartAsSvg(view)
         with open("/work/out/part_" + name + ".svg", "w") as _sf:
-            _sf.write('<svg xmlns="http://www.w3.org/2000/svg" version="1.1">' + svg_body + '</svg>')
+            _sf.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+                'viewBox="%f %f %f %f" width="100%%" height="100%%" '
+                'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + svg_body + '</svg>')
         TechDraw.writeDXFView(view, "/work/out/part_" + name + ".dxf")
         emitted.append(name)
     except Exception as _ve:
