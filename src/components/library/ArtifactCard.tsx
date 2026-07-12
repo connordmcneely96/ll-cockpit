@@ -108,6 +108,10 @@ export function ArtifactCard({ artifact, list = false, drawings }: { artifact: A
 
       {/* Actions */}
       <div className="flex items-center gap-1.5">
+        {artifact.artifact_type === 'cad-model' && fmt === 'glb' && artifact.pipeline_run_id && (
+          <a href={`/cad/${artifact.pipeline_run_id}`} title="Open the full CAD deliverable page"
+            className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-cyan font-mono text-[9px] rounded hover:border-cyan/30 hover:bg-cyan/5 transition-colors">Open deliverable</a>
+        )}
         <button onClick={openTab} title="Open the deliverable in a new tab"
           className="px-2 py-0.5 bg-base-4 border border-white/[0.06] text-blue font-mono text-[9px] rounded hover:border-blue/30 hover:bg-blue/5 transition-colors">Open</button>
         {fmt !== 'step' && (
