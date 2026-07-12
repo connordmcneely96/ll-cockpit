@@ -228,6 +228,11 @@ If a needed input is not derivable from the spec, do NOT fabricate it — state 
         type: 'object',
         properties: {
           script: { type: 'string', description: 'Complete build123d Python script. Must create /work/out and export a binary GLB there.' },
+          drawings: {
+            type: 'boolean',
+            description:
+              'Set true ONLY on your FINAL accepted build to generate engineering drawings (front/top/right/iso SVG+DXF + the dimensioned sheet). Leave false/omitted for intermediate or self-heal attempts — drawings are expensive and would be discarded.',
+          },
         },
         required: ['script'],
       },
@@ -235,8 +240,9 @@ If a needed input is not derivable from the spec, do NOT fabricate it — state 
     handler: async (input, { env, userId, logContext }) => {
       const script = typeof input.script === 'string' ? input.script : ''
       if (!script.trim()) return JSON.stringify({ error: 'script is required' })
+      const drawings = input.drawings === true
       const executionId = crypto.randomUUID()
-      const result = await runCadScript(env, { script, tenantId: userId, executionId, timeoutMs: 60000 })
+      const result = await runCadScript(env, { script, tenantId: userId, executionId, timeoutMs: 60000 }, { drawings })
       try { await meterCadExec(env, { tenantId: userId, executionId, result, pipelineRunId: logContext?.pipelineRunId, subtaskId: logContext?.subtaskId }) } catch {}
       // Parse deterministic OpenCascade-measured metrics emitted by the script as a
       // single 'GEOMETRY_METRICS: {...}' line. Parse from the full (untruncated)

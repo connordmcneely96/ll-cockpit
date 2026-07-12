@@ -681,9 +681,14 @@ except Exception as _e:
 export async function runCadScript(
   env: CloudflareEnv,
   args: { script: string; tenantId: string; executionId: string; timeoutMs?: number },
+  opts?: { drawings?: boolean },
 ): Promise<CadExecResult> {
   const { script, tenantId, executionId, timeoutMs } = args
-  const fullScript = script + '\n' + CAD_DRAWING_HELPER
+  // Engineering drawings (4 views + dims + DXF + sheet) are expensive and only the
+  // FINAL accepted model needs them — append the helper ONLY when explicitly opted
+  // in. The GEOMETRY_METRICS contract (Gate A + reviewer) comes from the modeler's
+  // own code either way, so intermediate/self-heal builds still validate.
+  const fullScript = opts?.drawings === true ? script + '\n' + CAD_DRAWING_HELPER : script
   const res = await env.NEXUS_EXEC.fetch('https://nexus-exec/run', {
     method: 'POST',
     headers: {
