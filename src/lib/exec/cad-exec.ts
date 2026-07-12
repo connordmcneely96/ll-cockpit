@@ -104,16 +104,30 @@ for name, direction in _views.items():
         TechDraw.writeDXFView(view, "/work/out/part_" + name + ".dxf")
         emitted.append(name)
         _bodies[name] = svg_body
-        # Best-effort DrawViewDimension for the view's principal extents. Each dim is
-        # guarded so a dimension failure never loses the already-emitted view; on
-        # success the per-view SVG is re-rendered with the dimensions shown.
+        # Best-effort DrawViewDimension for the view's principal extents. Fully
+        # non-destructive: the known-good plain part_<view>.svg is NEVER rewritten.
+        # A dimensioned re-render is written to a SEPARATE part_<view>_dim.svg, and
+        # only when it contains real geometry — so a dimension attempt can never
+        # damage the plain view.
         try:
             _vd = []
             for _dtype, _ox, _oy in (("DistanceX", 0.0, (_r + _m) * 0.9), ("DistanceY", -(_r + _m) * 0.9, 0.0)):
                 try:
                     _dim = doc.addObject("TechDraw::DrawViewDimension", "Dim_" + name + "_" + _dtype)
                     _dim.Type = _dtype
-                    _dim.References2D = [(view, "Edge0")]
+                    # TechDraw edges are 1-indexed; try a few and take the first that recomputes.
+                    _ref_ok = False
+                    for _ref in ("Edge1", "Edge2", "Edge0"):
+                        try:
+                            _dim.References2D = [(view, _ref)]
+                            doc.recompute()
+                            _ref_ok = True
+                            break
+                        except Exception:
+                            continue
+                    if not _ref_ok:
+                        print("DIM_SKIPPED " + name + " " + _dtype + " no-valid-edge")
+                        continue
                     page.addView(_dim)
                     doc.recompute()
                     _dim.X = _ox
@@ -123,12 +137,15 @@ for name, direction in _views.items():
                 except Exception as _de:
                     print("DIM_SKIPPED " + name + " " + _dtype + ": " + str(_de))
             if _vd:
-                _svg2 = TechDraw.viewPartAsSvg(view)
-                with open("/work/out/part_" + name + ".svg", "w") as _sf2:
-                    _sf2.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
-                        'viewBox="%f %f %f %f" width="100%%" height="100%%" '
-                        'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + _svg2 + '</svg>')
                 _dimensions_emitted.extend(_vd)
+                _svg2 = TechDraw.viewPartAsSvg(view)
+                if _svg2 and ("<path" in _svg2 or "<circle" in _svg2 or "<ellipse" in _svg2):
+                    with open("/work/out/part_" + name + "_dim.svg", "w") as _sf2:
+                        _sf2.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+                            'viewBox="%f %f %f %f" width="100%%" height="100%%" '
+                            'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + _svg2 + '</svg>')
+                else:
+                    print("DIM_RENDER_REJECTED " + name)
         except Exception as _dme:
             print("DIM_SKIPPED " + name + " block: " + str(_dme))
     except Exception as _ve:
