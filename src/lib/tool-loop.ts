@@ -469,6 +469,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     return { ok: true, finalText, stopReason, iterations: iter, toolCalls, inputTokens, outputTokens }
   }
 
+  const lastToolName = toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].tool : undefined
   return {
     ok: false,
     finalText: '',
@@ -477,7 +478,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     toolCalls,
     inputTokens,
     outputTokens,
-    error: `tool loop exceeded ${maxIterations} iterations without completing`,
+    error: `tool loop exceeded ${maxIterations} iterations without completing (last tool: ${lastToolName ?? 'none'}; tool calls: ${toolCalls.length})`,
   }
 }
 
