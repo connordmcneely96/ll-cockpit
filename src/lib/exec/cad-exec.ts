@@ -77,7 +77,17 @@ tmpl.Template = _tmpl
 page.Template = tmpl
 doc.recompute()
 _views = {"front": (0.0, -1.0, 0.0), "top": (0.0, 0.0, 1.0), "right": (1.0, 0.0, 0.0), "iso": (1.0, -1.0, 1.0)}
+# TechDraw view SVG is centered on the view origin (drawing spans negative coords too),
+# so a symmetric viewBox about 0,0 sized to the shape's circumradius makes every view
+# render legibly regardless of direction. Without it browsers assume a 300x150 canvas
+# at the origin and the drawing collapses into a corner speck.
+_bb = shape.BoundBox
+_r = 0.5 * ((_bb.XLength**2 + _bb.YLength**2 + _bb.ZLength**2) ** 0.5)
+_m = max(_r * 0.15, 2.0)
+_s = 2.0 * (_r + _m)
 emitted = []
+_bodies = {}
+_dimensions_emitted = []
 for name, direction in _views.items():
     try:
         view = doc.addObject("TechDraw::DrawViewPart", "V_" + name)
@@ -88,12 +98,105 @@ for name, direction in _views.items():
         doc.recompute()
         svg_body = TechDraw.viewPartAsSvg(view)
         with open("/work/out/part_" + name + ".svg", "w") as _sf:
-            _sf.write('<svg xmlns="http://www.w3.org/2000/svg" version="1.1">' + svg_body + '</svg>')
+            _sf.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+                'viewBox="%f %f %f %f" width="100%%" height="100%%" '
+                'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + svg_body + '</svg>')
         TechDraw.writeDXFView(view, "/work/out/part_" + name + ".dxf")
         emitted.append(name)
+        _bodies[name] = svg_body
+        # Best-effort DrawViewDimension for the view's principal extents. Fully
+        # non-destructive: the known-good plain part_<view>.svg is NEVER rewritten.
+        # A dimensioned re-render is written to a SEPARATE part_<view>_dim.svg, and
+        # only when it contains real geometry — so a dimension attempt can never
+        # damage the plain view.
+        try:
+            _vd = []
+            for _dtype, _ox, _oy in (("DistanceX", 0.0, (_r + _m) * 0.9), ("DistanceY", -(_r + _m) * 0.9, 0.0)):
+                try:
+                    _dim = doc.addObject("TechDraw::DrawViewDimension", "Dim_" + name + "_" + _dtype)
+                    _dim.Type = _dtype
+                    # TechDraw edges are 1-indexed; try a few and take the first that recomputes.
+                    _ref_ok = False
+                    for _ref in ("Edge1", "Edge2", "Edge0"):
+                        try:
+                            _dim.References2D = [(view, _ref)]
+                            doc.recompute()
+                            _ref_ok = True
+                            break
+                        except Exception:
+                            continue
+                    if not _ref_ok:
+                        print("DIM_SKIPPED " + name + " " + _dtype + " no-valid-edge")
+                        continue
+                    page.addView(_dim)
+                    doc.recompute()
+                    _dim.X = _ox
+                    _dim.Y = _oy
+                    doc.recompute()
+                    _vd.append(name + ":" + _dtype)
+                except Exception as _de:
+                    print("DIM_SKIPPED " + name + " " + _dtype + ": " + str(_de))
+            if _vd:
+                _dimensions_emitted.extend(_vd)
+                _svg2 = TechDraw.viewPartAsSvg(view)
+                if _svg2 and ("<path" in _svg2 or "<circle" in _svg2 or "<ellipse" in _svg2):
+                    with open("/work/out/part_" + name + "_dim.svg", "w") as _sf2:
+                        _sf2.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+                            'viewBox="%f %f %f %f" width="100%%" height="100%%" '
+                            'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + _svg2 + '</svg>')
+                else:
+                    print("DIM_RENDER_REJECTED " + name)
+        except Exception as _dme:
+            print("DIM_SKIPPED " + name + " block: " + str(_dme))
     except Exception as _ve:
         print("FREECAD_VIEW_SKIPPED " + name + ": " + str(_ve))
 print("FREECAD_DRAWINGS_OK: " + _json.dumps({"views": emitted}))
+# Combined engineering sheet: the 4 views laid out 2x2 with a border and a
+# lower-right title block. Fully guarded — any failure degrades to the plain
+# 4-view output (the per-view files are already written) and never loses drawings.
+try:
+    import datetime as _dtmod
+    _date = _dtmod.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    def _c(v):
+        return "%.3f" % v
+    _pad = _m
+    _gap = _s * 0.12
+    _cw = 2.0 * _s + _gap
+    _titleH = max(_s * 0.35, 30.0)
+    _sw = _cw + 2.0 * _pad
+    _sh = _cw + 2.0 * _pad + _titleH
+    _stroke = max(_s * 0.004, 0.3)
+    _pos = {
+        "front": (_pad + _s / 2.0, _pad + _s / 2.0),
+        "top": (_pad + _s + _gap + _s / 2.0, _pad + _s / 2.0),
+        "right": (_pad + _s / 2.0, _pad + _s + _gap + _s / 2.0),
+        "iso": (_pad + _s + _gap + _s / 2.0, _pad + _s + _gap + _s / 2.0),
+    }
+    _parts = ['<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ' + _c(_sw) + ' ' + _c(_sh) + '" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">']
+    _parts.append('<rect x="' + _c(_pad * 0.5) + '" y="' + _c(_pad * 0.5) + '" width="' + _c(_sw - _pad) + '" height="' + _c(_sh - _pad) + '" fill="white" stroke="black" stroke-width="' + _c(_stroke) + '"/>')
+    for _vn in ["front", "top", "right", "iso"]:
+        if _vn in _bodies:
+            _cx, _cy = _pos[_vn]
+            _parts.append('<g transform="translate(' + _c(_cx) + ',' + _c(_cy) + ')">' + _bodies[_vn] + '</g>')
+            _parts.append('<text x="' + _c(_cx) + '" y="' + _c(_cy - _s * 0.44) + '" font-family="sans-serif" font-size="' + _c(max(_s * 0.05, 3.0)) + '" text-anchor="middle" fill="black">' + _vn.upper() + '</text>')
+    _tbw = min(_cw * 0.55, _s * 1.7)
+    _tbh = _titleH * 0.85
+    _tbx = _sw - _pad * 0.5 - _tbw
+    _tby = _sh - _pad * 0.5 - _tbh
+    _fs = max(_titleH * 0.13, 2.5)
+    _parts.append('<rect x="' + _c(_tbx) + '" y="' + _c(_tby) + '" width="' + _c(_tbw) + '" height="' + _c(_tbh) + '" fill="white" stroke="black" stroke-width="' + _c(_stroke) + '"/>')
+    _lines = ["PART", "SCALE 1:1", "UNITS mm", "DATE " + _date, "VIEWS " + ", ".join(emitted), "GENERATED BY NEXUS"]
+    _ty = _tby + _fs * 1.6
+    for _ln in _lines:
+        _parts.append('<text x="' + _c(_tbx + _tbw * 0.03) + '" y="' + _c(_ty) + '" font-family="sans-serif" font-size="' + _c(_fs) + '" fill="black">' + _ln + '</text>')
+        _ty += _fs * 1.7
+    _parts.append('</svg>')
+    with open("/work/out/part_sheet.svg", "w") as _shf:
+        _shf.write("".join(_parts))
+    print("TITLEBLOCK_OK: " + _json.dumps({"sheet": "part_sheet.svg", "views": emitted}))
+except Exception as _tbe:
+    print("TITLEBLOCK_SKIPPED: " + str(_tbe))
+print("DIMENSIONS_EMITTED: " + _json.dumps(_dimensions_emitted))
 """
 
 def _ensure_step(_p):
