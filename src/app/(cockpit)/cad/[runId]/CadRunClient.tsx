@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import ModelViewer from '@/components/library/ModelViewer'
+import DrawingViewer from '@/components/cad/DrawingViewer'
 
 interface Artifact {
   id: string
@@ -56,6 +57,7 @@ export default function CadRunClient({ runId }: { runId: string }) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [viewer, setViewer] = useState<{ src: string; label: string; dxfUrl: string | null } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -87,6 +89,7 @@ export default function CadRunClient({ runId }: { runId: string }) {
   const glb = artifacts.find((a) => a.artifact_type === 'cad-model' && a.format === 'glb' && a.storage_ref)
   const sheet = artifacts.find((a) => a.artifact_name === 'part_sheet.svg' && a.storage_ref)
   const viewSvg = (v: string) => artifacts.find((a) => a.artifact_name === `part_${v}.svg` && a.storage_ref)
+  const viewDxf = (v: string) => artifacts.find((a) => a.artifact_name === `part_${v}.dxf` && a.storage_ref)
   const badge = 'px-1.5 py-0.5 font-mono text-[9px] rounded uppercase border'
 
   return (
@@ -122,7 +125,13 @@ export default function CadRunClient({ runId }: { runId: string }) {
           <div className="mb-3 rounded-lg border border-white/[0.06] bg-base-2 p-2">
             <p className="font-mono text-[9px] uppercase tracking-widest text-text3 mb-1.5">Sheet (title block)</p>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={r2(sheet.storage_ref!)} alt="engineering sheet" loading="lazy" className="w-full max-h-[70vh] object-contain bg-white rounded" />
+            <img
+              src={r2(sheet.storage_ref!)}
+              alt="engineering sheet"
+              loading="lazy"
+              onClick={() => setViewer({ src: r2(sheet.storage_ref!), label: 'Sheet (title block)', dxfUrl: null })}
+              className="w-full max-h-[70vh] object-contain bg-white rounded cursor-zoom-in"
+            />
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
@@ -133,7 +142,13 @@ export default function CadRunClient({ runId }: { runId: string }) {
               <div key={v} className="rounded-lg border border-white/[0.06] bg-base-2 p-2">
                 <p className="font-mono text-[9px] uppercase tracking-widest text-text3 mb-1.5">{VIEW_LABEL[v]}</p>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={r2(a.storage_ref!)} alt={`${VIEW_LABEL[v]} drawing`} loading="lazy" className="w-full h-40 object-contain bg-white rounded" />
+                <img
+                  src={r2(a.storage_ref!)}
+                  alt={`${VIEW_LABEL[v]} drawing`}
+                  loading="lazy"
+                  onClick={() => setViewer({ src: r2(a.storage_ref!), label: `${VIEW_LABEL[v]} view`, dxfUrl: viewDxf(v)?.storage_ref ? r2(viewDxf(v)!.storage_ref!) : null })}
+                  className="w-full h-40 object-contain bg-white rounded cursor-zoom-in"
+                />
               </div>
             )
           })}
@@ -162,6 +177,10 @@ export default function CadRunClient({ runId }: { runId: string }) {
           ))}
         </div>
       </div>
+
+      {viewer && (
+        <DrawingViewer src={viewer.src} label={viewer.label} dxfUrl={viewer.dxfUrl} onClose={() => setViewer(null)} />
+      )}
     </div>
   )
 }
