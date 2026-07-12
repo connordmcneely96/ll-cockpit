@@ -92,6 +92,15 @@ _dimensions_emitted = []
 def _fmt(v):
     return "%.3f" % v
 
+# getLinearPoints() element shape is not guaranteed: some FreeCAD builds expose
+# .x/.y, others are tuple-like. Coerce both so a linear dim never silently
+# AttributeErrors into DIM_SKIPPED.
+def _pxy(_p):
+    try:
+        return (float(_p.x), float(_p.y))
+    except Exception:
+        return (float(_p[0]), float(_p[1]))
+
 # Self-rendered dimension annotation. FreeCAD headless never draws TechDraw
 # dimensions (QGIViewDimension is Gui-only), so from the PROVEN measured endpoints
 # (dim.getLinearPoints()) + dim.getDimValue() we draw them ourselves: two extension
@@ -180,7 +189,7 @@ for name, direction in _views.items():
         _edges = []
         for _ei in range(len(_ve)):
             _e = _ve[_ei]
-            _edges.append({"i": _ei + 1, "pts": _edge_points(_e), "circle": _edge_is_circle(_e)})
+            _edges.append({"i": _ei + 1, "e": _e, "pts": _edge_points(_e), "circle": _edge_is_circle(_e)})
         _maxx = None
         _maxy = None
         _mxs = -1.0
@@ -205,9 +214,13 @@ for name, direction in _views.items():
             if _ed["circle"] and _ndia < 2:
                 _plan.append(("Diameter", _ed["i"]))
                 _ndia += 1
+        _edge_by_i = {}
+        for _ed in _edges:
+            _edge_by_i[_ed["i"]] = _ed
         _anns = []
         _vd = []
         _oi = 0
+        _lp_logged = False
         for _dtype, _eidx in _plan:
             try:
                 _dim = doc.addObject("TechDraw::DrawViewDimension", "Dim_" + name + "_" + _dtype + "_" + str(_eidx))
@@ -215,13 +228,34 @@ for name, direction in _views.items():
                 _dim.References2D = [(view, "Edge" + str(_eidx))]
                 page.addView(_dim)
                 doc.recompute()
-                _lp = _dim.getLinearPoints()
                 _val = _dim.getDimValue()
-                _g = _ann_group(_lp[0].x, _lp[0].y, _lp[1].x, _lp[1].y, _val, 8.0 + 6.0 * _oi)
-                if _g:
-                    _anns.append(_g)
-                    _vd.append(name + ":" + _dtype)
+                if _dtype == "Diameter":
+                    # Diameter dims are arc measurements (arcPoints, not a linear pointPair),
+                    # so getLinearPoints() is wrong for them. Render a centered callout: a
+                    # 45deg leader from the circle center out past the rim, with the Ø value.
+                    _cc = _edge_by_i[_eidx]["e"].Curve.Center
+                    _ccx = float(_cc.x)
+                    _ccy = float(_cc.y)
+                    _llen = 0.5 * _val + 6.0
+                    _lex = _ccx + 0.7071067811865476 * _llen
+                    _ley = _ccy + 0.7071067811865476 * _llen
+                    _dg = ('<g><line x1="' + _fmt(_ccx) + '" y1="' + _fmt(_ccy) + '" x2="' + _fmt(_lex) + '" y2="' + _fmt(_ley) + '" stroke="black" stroke-width="0.25"/>'
+                        + '<text x="' + _fmt(_lex) + '" y="' + _fmt(_ley) + '" font-family="sans-serif" font-size="3.5" fill="black">' + "Ø" + ("%.2f" % _val) + '</text></g>')
+                    _anns.append(_dg)
+                    _vd.append(name + ":Diameter")
                     _oi += 1
+                else:
+                    _lp = _dim.getLinearPoints()
+                    if not _lp_logged:
+                        print("DIM_LP_SHAPE " + name + ": " + repr(type(_lp[0])))
+                        _lp_logged = True
+                    _a = _pxy(_lp[0])
+                    _b = _pxy(_lp[1])
+                    _g = _ann_group(_a[0], _a[1], _b[0], _b[1], _val, 8.0 + 6.0 * _oi)
+                    if _g:
+                        _anns.append(_g)
+                        _vd.append(name + ":" + _dtype)
+                        _oi += 1
             except Exception as _de:
                 print("DIM_SKIPPED " + name + " " + _dtype + " " + str(_de))
         # WRITE dimensions INTO part_<view>.svg, with an expanded viewBox so the
