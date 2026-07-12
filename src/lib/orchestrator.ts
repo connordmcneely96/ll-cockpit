@@ -68,9 +68,9 @@ const AGENT_MAX_TOKENS: Record<string, number> = {
 }
 // Per-agent tool-loop iteration budget. Agents absent here fall back to
 // runToolLoop's DEFAULT_MAX_ITERATIONS (5). The modeler needs more headroom
-// for query_knowledge + execute_cad_code + self-heal retries (cycle-2 rebuilds
-// failed at 5).
-const AGENT_MAX_ITERATIONS: Record<string, number> = { modeler: 10 }
+// for query_knowledge + execute_cad_code + self-heal retries. 10 was still
+// exhausted on cycle-2 shaft rebuilds (runs dbe0d0b2, 1a78b457) — raised to 16.
+const AGENT_MAX_ITERATIONS: Record<string, number> = { modeler: 16 }
 const DEFAULT_MAX_TOKENS = 2048
 
 const DEFAULT_MAX_PARALLEL = 4
