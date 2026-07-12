@@ -92,19 +92,10 @@ _dimensions_emitted = []
 def _fmt(v):
     return "%.3f" % v
 
-# getLinearPoints() element shape is not guaranteed: some FreeCAD builds expose
-# .x/.y, others are tuple-like. Coerce both so a linear dim never silently
-# AttributeErrors into DIM_SKIPPED.
-def _pxy(_p):
-    try:
-        return (float(_p.x), float(_p.y))
-    except Exception:
-        return (float(_p[0]), float(_p[1]))
-
 # Self-rendered dimension annotation. FreeCAD headless never draws TechDraw
-# dimensions (QGIViewDimension is Gui-only), so from the PROVEN measured endpoints
-# (dim.getLinearPoints()) + dim.getDimValue() we draw them ourselves: two extension
-# lines (8mm offset), a dimension line, two filled arrowheads, and the value text.
+# dimensions (QGIViewDimension is Gui-only), so from the projected edge endpoints +
+# computed span we draw them ourselves: two extension lines (8mm offset), a
+# dimension line, two filled arrowheads, and the value text.
 def _ann_group(p0x, p0y, p1x, p1y, val, offset):
     dx = p1x - p0x
     dy = p1y - p0y
@@ -220,22 +211,22 @@ for name, direction in _views.items():
         _anns = []
         _vd = []
         _oi = 0
-        _lp_logged = False
+        # FreeCAD 0.19's TechDraw dimension object is an untyped FeaturePython proxy
+        # whose measurement methods are not bound, so every dim failed. Compute the
+        # values directly from the projected edge geometry we already extracted (the
+        # same HLR-projected endpoints that select _maxx/_maxy) — a broken reporting
+        # layer removed, not the source of truth.
         for _dtype, _eidx in _plan:
             try:
-                _dim = doc.addObject("TechDraw::DrawViewDimension", "Dim_" + name + "_" + _dtype + "_" + str(_eidx))
-                _dim.Type = _dtype
-                _dim.References2D = [(view, "Edge" + str(_eidx))]
-                page.addView(_dim)
-                doc.recompute()
-                _val = _dim.getDimValue()
+                _ed = _edge_by_i[_eidx]
                 if _dtype == "Diameter":
-                    # Diameter dims are arc measurements (arcPoints, not a linear pointPair),
-                    # so getLinearPoints() is wrong for them. Render a centered callout: a
-                    # 45deg leader from the circle center out past the rim, with the Ø value.
-                    _cc = _edge_by_i[_eidx]["e"].Curve.Center
+                    # radius straight from the projected circle
+                    _rad = float(_ed["e"].Curve.Radius)
+                    _val = 2.0 * _rad
+                    _cc = _ed["e"].Curve.Center
                     _ccx = float(_cc.x)
                     _ccy = float(_cc.y)
+                    # 45deg leader + Ø callout (verbatim geometry), using _val/_ccx/_ccy.
                     _llen = 0.5 * _val + 6.0
                     _lex = _ccx + 0.7071067811865476 * _llen
                     _ley = _ccy + 0.7071067811865476 * _llen
@@ -245,19 +236,22 @@ for name, direction in _views.items():
                     _vd.append(name + ":Diameter")
                     _oi += 1
                 else:
-                    _lp = _dim.getLinearPoints()
-                    if not _lp_logged:
-                        print("DIM_LP_SHAPE " + name + ": " + repr(type(_lp[0])))
-                        _lp_logged = True
-                    _a = _pxy(_lp[0])
-                    _b = _pxy(_lp[1])
-                    _g = _ann_group(_a[0], _a[1], _b[0], _b[1], _val, 8.0 + 6.0 * _oi)
+                    (_ax, _ay), (_bx, _by) = _ed["pts"]
+                    if _dtype == "DistanceX":
+                        _val = abs(_bx - _ax)
+                    else:
+                        _val = abs(_by - _ay)
+                    if _val < 1e-6:
+                        print("DIM_SKIPPED " + name + " " + _dtype + " degenerate span")
+                        continue
+                    _g = _ann_group(_ax, _ay, _bx, _by, _val, 8.0 + 6.0 * _oi)
                     if _g:
                         _anns.append(_g)
                         _vd.append(name + ":" + _dtype)
                         _oi += 1
             except Exception as _de:
                 print("DIM_SKIPPED " + name + " " + _dtype + " " + str(_de))
+        print("DIM_COMPUTED " + name + ": " + _json.dumps(_vd))
         # WRITE dimensions INTO part_<view>.svg, with an expanded viewBox so the
         # extension lines / text are not clipped. REGRESSION GUARD: only keep the
         # annotated body if it is strictly larger AND contains <text and <polygon;
