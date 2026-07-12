@@ -88,6 +88,88 @@ _s = 2.0 * (_r + _m)
 emitted = []
 _bodies = {}
 _dimensions_emitted = []
+
+def _fmt(v):
+    return "%.3f" % v
+
+# getLinearPoints() element shape is not guaranteed: some FreeCAD builds expose
+# .x/.y, others are tuple-like. Coerce both so a linear dim never silently
+# AttributeErrors into DIM_SKIPPED.
+def _pxy(_p):
+    try:
+        return (float(_p.x), float(_p.y))
+    except Exception:
+        return (float(_p[0]), float(_p[1]))
+
+# Self-rendered dimension annotation. FreeCAD headless never draws TechDraw
+# dimensions (QGIViewDimension is Gui-only), so from the PROVEN measured endpoints
+# (dim.getLinearPoints()) + dim.getDimValue() we draw them ourselves: two extension
+# lines (8mm offset), a dimension line, two filled arrowheads, and the value text.
+def _ann_group(p0x, p0y, p1x, p1y, val, offset):
+    dx = p1x - p0x
+    dy = p1y - p0y
+    L = (dx * dx + dy * dy) ** 0.5
+    if L < 1e-9:
+        return None
+    ux = dx / L
+    uy = dy / L
+    nx = -uy
+    ny = ux
+    e0x = p0x + nx * offset
+    e0y = p0y + ny * offset
+    e1x = p1x + nx * offset
+    e1y = p1y + ny * offset
+    alen = 2.0
+    aw = alen * 0.4
+    out = ['<g>']
+    out.append('<line x1="' + _fmt(p0x) + '" y1="' + _fmt(p0y) + '" x2="' + _fmt(e0x) + '" y2="' + _fmt(e0y) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(p1x) + '" y1="' + _fmt(p1y) + '" x2="' + _fmt(e1x) + '" y2="' + _fmt(e1y) + '" stroke="black" stroke-width="0.25"/>')
+    out.append('<line x1="' + _fmt(e0x) + '" y1="' + _fmt(e0y) + '" x2="' + _fmt(e1x) + '" y2="' + _fmt(e1y) + '" stroke="black" stroke-width="0.25"/>')
+    b0x = e0x + ux * alen
+    b0y = e0y + uy * alen
+    out.append('<polygon points="' + _fmt(e0x) + ',' + _fmt(e0y) + ' ' + _fmt(b0x + nx * aw) + ',' + _fmt(b0y + ny * aw) + ' ' + _fmt(b0x - nx * aw) + ',' + _fmt(b0y - ny * aw) + '" fill="black"/>')
+    b1x = e1x - ux * alen
+    b1y = e1y - uy * alen
+    out.append('<polygon points="' + _fmt(e1x) + ',' + _fmt(e1y) + ' ' + _fmt(b1x + nx * aw) + ',' + _fmt(b1y + ny * aw) + ' ' + _fmt(b1x - nx * aw) + ',' + _fmt(b1y - ny * aw) + '" fill="black"/>')
+    mx = (e0x + e1x) / 2.0 + nx * 3.5
+    my = (e0y + e1y) / 2.0 + ny * 3.5
+    out.append('<text x="' + _fmt(mx) + '" y="' + _fmt(my) + '" font-family="sans-serif" font-size="3.5" text-anchor="middle" fill="black">' + ("%.2f" % val) + '</text>')
+    out.append('</g>')
+    return "".join(out)
+
+def _edge_points(_e):
+    try:
+        _vx = _e.Vertexes
+        if len(_vx) >= 2:
+            return ((_vx[0].X, _vx[0].Y), (_vx[-1].X, _vx[-1].Y))
+    except Exception:
+        pass
+    try:
+        _a = _e.valueAt(_e.FirstParameter)
+        _b = _e.valueAt(_e.LastParameter)
+        return ((_a.x, _a.y), (_b.x, _b.y))
+    except Exception:
+        pass
+    try:
+        _a = _e.firstVertex().Point
+        _b = _e.lastVertex().Point
+        return ((_a.x, _a.y), (_b.x, _b.y))
+    except Exception:
+        return None
+
+def _edge_is_circle(_e):
+    try:
+        if hasattr(_e.Curve, "Radius"):
+            return True
+    except Exception:
+        pass
+    try:
+        if hasattr(_e, "Circle") or hasattr(_e, "Radius"):
+            return True
+    except Exception:
+        pass
+    return False
+
 for name, direction in _views.items():
     try:
         view = doc.addObject("TechDraw::DrawViewPart", "V_" + name)
@@ -97,59 +179,108 @@ for name, direction in _views.items():
         view.Scale = 1.0
         doc.recompute()
         svg_body = TechDraw.viewPartAsSvg(view)
+        # DIMENSIONING STRATEGY: extents + features, NOT every edge. Pick the edge that
+        # spans the max X extent (DistanceX) and the one spanning max Y (DistanceY), and
+        # up to 2 circular edges (Diameter). Each dim is INDIVIDUALLY guarded.
+        try:
+            _ve = view.getVisibleEdges()
+        except Exception:
+            _ve = []
+        _edges = []
+        for _ei in range(len(_ve)):
+            _e = _ve[_ei]
+            _edges.append({"i": _ei + 1, "e": _e, "pts": _edge_points(_e), "circle": _edge_is_circle(_e)})
+        _maxx = None
+        _maxy = None
+        _mxs = -1.0
+        _mys = -1.0
+        for _ed in _edges:
+            if not _ed["pts"]:
+                continue
+            (_ax, _ay), (_bx, _by) = _ed["pts"]
+            if abs(_bx - _ax) > _mxs:
+                _mxs = abs(_bx - _ax)
+                _maxx = _ed
+            if abs(_by - _ay) > _mys:
+                _mys = abs(_by - _ay)
+                _maxy = _ed
+        _plan = []
+        if _maxx is not None:
+            _plan.append(("DistanceX", _maxx["i"]))
+        if _maxy is not None:
+            _plan.append(("DistanceY", _maxy["i"]))
+        _ndia = 0
+        for _ed in _edges:
+            if _ed["circle"] and _ndia < 2:
+                _plan.append(("Diameter", _ed["i"]))
+                _ndia += 1
+        _edge_by_i = {}
+        for _ed in _edges:
+            _edge_by_i[_ed["i"]] = _ed
+        _anns = []
+        _vd = []
+        _oi = 0
+        _lp_logged = False
+        for _dtype, _eidx in _plan:
+            try:
+                _dim = doc.addObject("TechDraw::DrawViewDimension", "Dim_" + name + "_" + _dtype + "_" + str(_eidx))
+                _dim.Type = _dtype
+                _dim.References2D = [(view, "Edge" + str(_eidx))]
+                page.addView(_dim)
+                doc.recompute()
+                _val = _dim.getDimValue()
+                if _dtype == "Diameter":
+                    # Diameter dims are arc measurements (arcPoints, not a linear pointPair),
+                    # so getLinearPoints() is wrong for them. Render a centered callout: a
+                    # 45deg leader from the circle center out past the rim, with the Ø value.
+                    _cc = _edge_by_i[_eidx]["e"].Curve.Center
+                    _ccx = float(_cc.x)
+                    _ccy = float(_cc.y)
+                    _llen = 0.5 * _val + 6.0
+                    _lex = _ccx + 0.7071067811865476 * _llen
+                    _ley = _ccy + 0.7071067811865476 * _llen
+                    _dg = ('<g><line x1="' + _fmt(_ccx) + '" y1="' + _fmt(_ccy) + '" x2="' + _fmt(_lex) + '" y2="' + _fmt(_ley) + '" stroke="black" stroke-width="0.25"/>'
+                        + '<text x="' + _fmt(_lex) + '" y="' + _fmt(_ley) + '" font-family="sans-serif" font-size="3.5" fill="black">' + "Ø" + ("%.2f" % _val) + '</text></g>')
+                    _anns.append(_dg)
+                    _vd.append(name + ":Diameter")
+                    _oi += 1
+                else:
+                    _lp = _dim.getLinearPoints()
+                    if not _lp_logged:
+                        print("DIM_LP_SHAPE " + name + ": " + repr(type(_lp[0])))
+                        _lp_logged = True
+                    _a = _pxy(_lp[0])
+                    _b = _pxy(_lp[1])
+                    _g = _ann_group(_a[0], _a[1], _b[0], _b[1], _val, 8.0 + 6.0 * _oi)
+                    if _g:
+                        _anns.append(_g)
+                        _vd.append(name + ":" + _dtype)
+                        _oi += 1
+            except Exception as _de:
+                print("DIM_SKIPPED " + name + " " + _dtype + " " + str(_de))
+        # WRITE dimensions INTO part_<view>.svg, with an expanded viewBox so the
+        # extension lines / text are not clipped. REGRESSION GUARD: only keep the
+        # annotated body if it is strictly larger AND contains <text and <polygon;
+        # otherwise write the plain (correct, undimensioned) body and print the
+        # rejection line — a view is NEVER lost or silently un-dimensioned.
+        _ndims = len(_vd)
+        _R = (_r + _m) + (8.0 + 6.0 * _ndims + 8.0)
+        _annotated = svg_body + "".join(_anns)
+        if len(_annotated) > len(svg_body) and ("<text" in _annotated) and ("<polygon" in _annotated):
+            _inner = _annotated
+            _dimensions_emitted.extend(_vd)
+        else:
+            _inner = svg_body
+            print("DIM_RENDER_REJECTED " + name)
         with open("/work/out/part_" + name + ".svg", "w") as _sf:
             _sf.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
                 'viewBox="%f %f %f %f" width="100%%" height="100%%" '
-                'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + svg_body + '</svg>')
+                'preserveAspectRatio="xMidYMid meet">' % (-_R, -_R, 2.0 * _R, 2.0 * _R)) + _inner + '</svg>')
         TechDraw.writeDXFView(view, "/work/out/part_" + name + ".dxf")
         emitted.append(name)
-        _bodies[name] = svg_body
-        # Best-effort DrawViewDimension for the view's principal extents. Fully
-        # non-destructive: the known-good plain part_<view>.svg is NEVER rewritten.
-        # A dimensioned re-render is written to a SEPARATE part_<view>_dim.svg, and
-        # only when it contains real geometry — so a dimension attempt can never
-        # damage the plain view.
-        try:
-            _vd = []
-            for _dtype, _ox, _oy in (("DistanceX", 0.0, (_r + _m) * 0.9), ("DistanceY", -(_r + _m) * 0.9, 0.0)):
-                try:
-                    _dim = doc.addObject("TechDraw::DrawViewDimension", "Dim_" + name + "_" + _dtype)
-                    _dim.Type = _dtype
-                    # TechDraw edges are 1-indexed; try a few and take the first that recomputes.
-                    _ref_ok = False
-                    for _ref in ("Edge1", "Edge2", "Edge0"):
-                        try:
-                            _dim.References2D = [(view, _ref)]
-                            doc.recompute()
-                            _ref_ok = True
-                            break
-                        except Exception:
-                            continue
-                    if not _ref_ok:
-                        print("DIM_SKIPPED " + name + " " + _dtype + " no-valid-edge")
-                        continue
-                    page.addView(_dim)
-                    doc.recompute()
-                    _dim.X = _ox
-                    _dim.Y = _oy
-                    doc.recompute()
-                    _vd.append(name + ":" + _dtype)
-                except Exception as _de:
-                    print("DIM_SKIPPED " + name + " " + _dtype + ": " + str(_de))
-            if _vd:
-                _dimensions_emitted.extend(_vd)
-                _svg2 = TechDraw.viewPartAsSvg(view)
-                if _svg2 and ("<path" in _svg2 or "<circle" in _svg2 or "<ellipse" in _svg2):
-                    with open("/work/out/part_" + name + "_dim.svg", "w") as _sf2:
-                        _sf2.write(('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
-                            'viewBox="%f %f %f %f" width="100%%" height="100%%" '
-                            'preserveAspectRatio="xMidYMid meet">' % (-(_r+_m), -(_r+_m), _s, _s)) + _svg2 + '</svg>')
-                else:
-                    print("DIM_RENDER_REJECTED " + name)
-        except Exception as _dme:
-            print("DIM_SKIPPED " + name + " block: " + str(_dme))
-    except Exception as _ve:
-        print("FREECAD_VIEW_SKIPPED " + name + ": " + str(_ve))
+        _bodies[name] = _inner
+    except Exception as _ve2:
+        print("FREECAD_VIEW_SKIPPED " + name + ": " + str(_ve2))
 print("FREECAD_DRAWINGS_OK: " + _json.dumps({"views": emitted}))
 # Combined engineering sheet: the 4 views laid out 2x2 with a border and a
 # lower-right title block. Fully guarded — any failure degrades to the plain
