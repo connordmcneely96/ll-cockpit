@@ -10,7 +10,7 @@ type AiRunner = { run: (model: string, opts: { text: string[] }) => Promise<{ da
 type VecIndex = {
   upsert: (v: { id: string; values: number[]; metadata?: Record<string, unknown> }[]) => Promise<{ count?: number }>;
 };
-type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex };
+type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex; DB?: D1Database };
 
 export const dynamic = "force-dynamic";
 
@@ -21,12 +21,12 @@ export async function POST(req: NextRequest) {
   }
 
   const { env } = await getCloudflareContext({ async: true });
-  const { AI, ATLAS_RAG } = env as unknown as Env;
-  if (!AI || !ATLAS_RAG) {
-    return NextResponse.json({ error: "bindings_missing", ai: !!AI, atlas_rag: !!ATLAS_RAG }, { status: 500 });
+  const { AI, ATLAS_RAG, DB } = env as unknown as Env;
+  if (!AI || !ATLAS_RAG || !DB) {
+    return NextResponse.json({ error: "bindings_missing", ai: !!AI, atlas_rag: !!ATLAS_RAG, db: !!DB }, { status: 500 });
   }
 
-  const ingestEnv: IngestEnv = { AI, ATLAS_RAG };
+  const ingestEnv: IngestEnv = { AI, ATLAS_RAG, DB };
 
   try {
     const perDoc: { doc: string; chunks: number }[] = [];
