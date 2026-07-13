@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { ingestDocument, IngestEnv } from "@/lib/atlas/ingest-core";
+import { ingestDocument, IngestEnv, vectorId } from "@/lib/atlas/ingest-core";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). Uses shared ingest-core — no logic drift with seed-corpus.
@@ -10,7 +10,7 @@ type VecIndex = {
   upsert: (v: { id: string; values: number[]; metadata?: Record<string, unknown> }[]) => Promise<{ count?: number }>;
 };
 type R2Bucket = { get: (key: string) => Promise<{ text: () => Promise<string> } | null> };
-type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex; R2?: R2Bucket };
+type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex; R2?: R2Bucket; DB?: D1Database };
 
 export const dynamic = "force-dynamic";
 
@@ -21,9 +21,9 @@ export async function POST(req: NextRequest) {
   }
 
   const { env } = await getCloudflareContext({ async: true });
-  const { AI, ATLAS_RAG, R2 } = env as unknown as Env;
-  if (!AI || !ATLAS_RAG) {
-    return NextResponse.json({ error: "bindings_missing", ai: !!AI, atlas_rag: !!ATLAS_RAG }, { status: 500 });
+  const { AI, ATLAS_RAG, R2, DB } = env as unknown as Env;
+  if (!AI || !ATLAS_RAG || !DB) {
+    return NextResponse.json({ error: "bindings_missing", ai: !!AI, atlas_rag: !!ATLAS_RAG, db: !!DB }, { status: 500 });
   }
 
   let body: { doc?: string; text?: string; r2_key?: string; page?: number | null };
@@ -49,8 +49,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const ingestEnv: IngestEnv = { AI, ATLAS_RAG };
-    const result = await ingestDocument(ingestEnv, { doc, text: sourceText, page: page ?? null });
+    const ingestEnv: IngestEnv = { AI, ATLAS_RAG, DB };
+    const result = await ingestDocument(ingestEnv, { doc, text: sourceText, page: page ?? null, r2_key: r2_key ?? null });
 
     if (result.chunks_ingested === 0) {
       return NextResponse.json({ error: "no_chunks_produced" }, { status: 400 });
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
       sections_detected: result.sections_detected,
       oversized_count: result.oversized_count,
       sample: result.chunks[0]
-        ? { id: `${doc}::${result.chunks[0].chunk_index}`, section: result.chunks[0].section, text: result.chunks[0].text.slice(0, 200) }
+        ? { id: vectorId(doc, page ?? null, result.chunks[0].chunk_index), section: result.chunks[0].section, text: result.chunks[0].text.slice(0, 200) }
         : null,
     });
   } catch (e) {
