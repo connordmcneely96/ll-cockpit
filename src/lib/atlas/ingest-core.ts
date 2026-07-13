@@ -30,6 +30,15 @@ export interface IngestResult {
 const EMBED_MODEL = "@cf/baai/bge-large-en-v1.5";
 const BATCH_SIZE = 50;
 
+// Page-scoped, deterministic vector ID. The prior scheme `${doc}::${chunkIndex}`
+// collided across pages of the same doc (chunk_index restarts at 0 per call), so a
+// later page silently overwrote an earlier one in Vectorize. `page ?? 0` keeps a
+// stable ID for /ingest callers that omit page; re-ingesting the same doc+page
+// overwrites in place (idempotent) — never a random or time-based component.
+export function vectorId(doc: string, page: number | null | undefined, chunkIndex: number): string {
+  return `${doc}::p${page ?? 0}::${chunkIndex}`;
+}
+
 export async function ingestDocument(env: IngestEnv, input: IngestInput): Promise<IngestResult> {
   const chunks = chunkDocument(input.text, { doc: input.doc, page: input.page ?? null });
   if (chunks.length === 0) return { doc: input.doc, chunks_ingested: 0, sections_detected: 0, oversized_count: 0, chunks: [] };
@@ -48,7 +57,7 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
   // Upsert with structured metadata
   const upsertResult = await env.ATLAS_RAG.upsert(
     chunks.map((c, i) => ({
-      id: `${input.doc}::${c.chunk_index}`,
+      id: vectorId(input.doc, input.page, c.chunk_index),
       values: allVectors[i],
       metadata: {
         doc: c.doc,
