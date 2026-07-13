@@ -28,12 +28,24 @@ export async function POST(req: NextRequest) {
 
   const ingestEnv: IngestEnv = { AI, ATLAS_RAG, DB };
 
+  // Window the corpus: each entry costs 3 subrequests (AI.run + Vectorize.upsert +
+  // DB.batch), so 16 entries = 48, over the free-plan 50-subrequest cap. Seed in
+  // slices via ?from=&to= (default the whole corpus). [from, to), clamped in-range.
+  const total = CORPUS.length;
+  const parse = (v: string | null, dflt: number) => {
+    const n = parseInt(v ?? "", 10);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const from = Math.min(Math.max(parse(url.searchParams.get("from"), 0), 0), total);
+  const to = Math.min(Math.max(parse(url.searchParams.get("to"), total), from), total);
+  const window = CORPUS.slice(from, to);
+
   try {
     const perDoc: { doc: string; chunks: number }[] = [];
     let totalChunks = 0;
     let totalOversized = 0;
 
-    for (const entry of CORPUS) {
+    for (const entry of window) {
       const result = await ingestDocument(ingestEnv, {
         doc: entry.doc,
         text: entry.text,
@@ -55,6 +67,9 @@ export async function POST(req: NextRequest) {
       total_chunks: totalChunks,
       oversized_count: totalOversized,
       per_doc: [...docMap.entries()].map(([doc, chunks]) => ({ doc, chunks })),
+      from,
+      to,
+      corpus_total: total,
     });
   } catch (e) {
     return NextResponse.json({ error: "seed_failed", message: e instanceof Error ? e.message : String(e) }, { status: 500 });
