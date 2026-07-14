@@ -73,6 +73,11 @@ jobs:
             echo "✓ Lockfile committed back to main"
           fi
 
+      # Required gate: if the tests fail, the job fails here and NEITHER the D1
+      # migrations NOR the deploy below run. Runs on push and PR alike.
+      - name: Run tests (required — blocks deploy on failure)
+        run: npm test
+
       - name: Write build-time env vars
         run: |
           echo "NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" >> .env.production
