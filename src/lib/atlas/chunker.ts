@@ -132,6 +132,13 @@ export function chunkDocument(text: string, opts: ChunkOptions): Chunk[] {
       const pageMatch = group.text.match(/^---\s*page\s+(\d+)\s*---$/i) ||
                         group.text.match(/^\f\s*(\d+)?\s*$/);
       if (pageMatch) {
+        // A page boundary is a HARD chunk boundary: `page` is part of a chunk's
+        // identity (vector_id = `${doc}::p${page}::${chunk_index}`) and of every
+        // citation, so a chunk must not span two pages. Flush buffered content under
+        // the OLD page BEFORE bumping — else it would be stamped with the next page
+        // at emit time. flushSection() also clears overlapTail, which is correct:
+        // overlap must not carry across a page boundary. chunkIndex stays monotonic.
+        flushSection();
         if (pageMatch[1]) page = parseInt(pageMatch[1], 10);
         continue;
       }

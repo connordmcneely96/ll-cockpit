@@ -178,3 +178,53 @@ describe("chunker — 30C hardened regex", () => {
     expect(sections.some(s => s.includes("MG-1"))).toBe(true);
   });
 });
+
+// ── 196D-2: page-boundary is a hard chunk boundary ──────────────────────────
+// A chunk must not span two pages: `page` is part of its identity
+// (vector_id = `${doc}::p${page}::${chunk_index}`) and of every citation. The
+// page-marker branch now flushes the buffered content under the OLD page before
+// bumping `page`.
+
+describe("chunker — page boundaries", () => {
+  it("content authored BEFORE a `--- page 2 ---` marker keeps page 1", () => {
+    const doc = `# Section 1\nContent on page 1.\n--- page 2 ---\n# Section 2\nContent on page 2.`;
+    const chunks = chunkDocument(doc, { doc: "test", page: 1 });
+    const s1 = chunks.find(c => c.section === "Section 1");
+    const s2 = chunks.find(c => c.section === "Section 2");
+    expect(s1?.page).toBe(1); // was wrongly stamped page 2 before the fix
+    expect(s2?.page).toBe(2);
+  });
+
+  it("a SECTION SPANNING A PAGE BREAK splits into two chunks, same section, pages 1 then 2", () => {
+    const doc = `# Bearing Fits\nJournal diameter tolerance is ISO h6 on page one.\n--- page 2 ---\nShoulder fillet radius continues the same clause on page two.`;
+    const chunks = chunkDocument(doc, { doc: "span", page: 1 });
+    expect(chunks.length).toBe(2);
+    expect(chunks.every(c => c.section === "Bearing Fits")).toBe(true);
+    expect(chunks.map(c => c.page)).toEqual([1, 2]);
+  });
+
+  it("chunk_index stays globally MONOTONIC across page boundaries (does NOT reset per page)", () => {
+    const doc = `# A\nalpha\n--- page 2 ---\n# B\nbeta\n--- page 3 ---\n# C\ngamma`;
+    const chunks = chunkDocument(doc, { doc: "mono", page: 1 });
+    expect(chunks.map(c => c.chunk_index)).toEqual([0, 1, 2]);
+    expect(chunks.map(c => c.page)).toEqual([1, 2, 3]);
+  });
+
+  it("a document with NO page markers is chunked exactly as before (no regression)", () => {
+    const chunks = chunkDocument(B31_ACCEPTANCE, { doc: "no_marker" });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections.length).toBe(3);
+    // No markers -> page never changes; all chunks keep the default (null) page,
+    // and chunk_index is still 0..n-1 monotonic.
+    expect(chunks.every(c => c.page === null)).toBe(true);
+    expect(chunks.map(c => c.chunk_index)).toEqual(chunks.map((_, i) => i));
+  });
+
+  it("form-feed page markers behave the same as `--- page N ---`", () => {
+    const doc = `# S\nAlpha on page one.\n\f2\nBeta on page two.`;
+    const chunks = chunkDocument(doc, { doc: "ff", page: 1 });
+    expect(chunks.length).toBe(2);
+    expect(chunks.every(c => c.section === "S")).toBe(true);
+    expect(chunks.map(c => c.page)).toEqual([1, 2]);
+  });
+});
