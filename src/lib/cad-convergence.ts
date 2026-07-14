@@ -50,9 +50,36 @@ export function parseVerdict(text: string): Verdict {
   }
 }
 
-/** The instruction handed to a reviewer subtask (modeler output is prepended as dependencyContext). */
-export function reviewerTaskFor(spec: string): string {
-  return `SPEC:\n${spec}\n\nThe upstream MODELER output is provided above as context and includes the measured GEOMETRY_METRICS. Judge the produced geometry against this SPEC and return ONLY your verdict JSON.`
+// Inches -> millimetres. Declared ONCE and used everywhere a solved (inch)
+// dimension is compared to or shown next to GEOMETRY_METRICS (which is in mm).
+export const MM_PER_IN = 25.4
+
+/** An inches value rendered with its mm conversion, e.g. "2.375 in (60.3 mm)". */
+function inMm(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '(unspecified)'
+  return `${v} in (${(v * MM_PER_IN).toFixed(1)} mm)`
+}
+
+/**
+ * The instruction handed to a reviewer subtask (modeler output is prepended as
+ * dependencyContext). When a design exists, the reviewer judges MEASURED geometry
+ * against the SOLVED dimensions — not prose. When design is null, the legacy
+ * free-text task is returned byte-identical (generic path preserved).
+ */
+export function reviewerTaskFor(spec: string, design: SolvedDesign | null): string {
+  if (!design) {
+    return `SPEC:\n${spec}\n\nThe upstream MODELER output is provided above as context and includes the measured GEOMETRY_METRICS. Judge the produced geometry against this SPEC and return ONLY your verdict JSON.`
+  }
+  return `SOLVED DESIGN — the authority. This is what the part MUST be:
+  shaft diameter : ${inMm(design.diameter)}
+  overall length : ${inMm(design.length)}
+  features       :
+${renderFeatures(design.features)}
+
+ORIGINAL CLIENT SPEC (context only — the SOLVED DESIGN governs):
+${spec}
+
+The MODELER output above contains measured GEOMETRY_METRICS. Judge the MEASURED geometry against the SOLVED DIMENSIONS. The solved design is calc-grounded (API 610 / ISO 13709) and is NOT negotiable. If the measured geometry does not match the solved dimensions, that is a FAIL — even if the part looks reasonable, and even if it satisfies the client spec's prose. Return ONLY your verdict JSON.`
 }
 
 /** Parse a cad_convergence_runs.design_json blob back into a SolvedDesign (null on absent/invalid). */
@@ -204,7 +231,7 @@ export async function createConvergenceRun(
     `INSERT INTO agent_subtasks
       (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(reviewerId, runId, userId, 'st_r1', 'reviewer', 'Geometry review (cycle 1)', reviewerTaskFor(spec), JSON.stringify(['st_m1']), 'pending', 0, 0, now, 'default').run()
+  ).bind(reviewerId, runId, userId, 'st_r1', 'reviewer', 'Geometry review (cycle 1)', reviewerTaskFor(spec, design), JSON.stringify(['st_m1']), 'pending', 0, 0, now, 'default').run()
 
   await enqueueReadySubtasks(env, runId, userId, true)
 
@@ -260,7 +287,8 @@ export async function advanceConvergence(
 
   // Rebuild from the SOLVED design (when grounded) so a correction never loses the
   // calc-grounded dimensions; falls back to the raw spec on the generic path.
-  const baseTask = modelerTaskFor(row.spec, parseDesign(row.design_json))
+  const design = parseDesign(row.design_json)
+  const baseTask = modelerTaskFor(row.spec, design)
   const feedbackTask = `ORIGINAL TASK:\n${baseTask}\n\nYour previous attempt was REJECTED by an independent geometry reviewer. Findings:\n${verdict.discrepancies.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nThis is a direct correction, not a research task. Apply the findings above and rebuild — do NOT call query_knowledge; no standards lookup is needed to correct a geometry or dimensional discrepancy. Revise your build123d, rebuild to the dimensions above, re-export, and re-report metrics.`
 
   await db.prepare(
@@ -273,7 +301,7 @@ export async function advanceConvergence(
     `INSERT INTO agent_subtasks
       (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
+  ).bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec, design), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
 
   await db.prepare(`UPDATE orchestrator_runs SET subtask_count = subtask_count + 2 WHERE id = ?`)
     .bind(runId).run()
@@ -325,7 +353,12 @@ export interface GateAResult { pass: boolean; failures: string[] }
 
 // Deterministic geometry gate. Parses the LAST GEOMETRY_METRICS JSON line from
 // the modeler's output. FAIL-CLOSED: missing/unparseable metrics => fail.
-export function evaluateGateA(modelerOutput: string): GateAResult {
+//
+// On a GROUNDED run (design non-null) it ALSO enforces the solved dimensions:
+// bbox_mm (millimetres) must match the solved diameter and length (INCHES,
+// converted to mm via MM_PER_IN). This is what stops a topologically-valid-but-
+// wrong part (e.g. a 50mm cube) from passing when a specific shaft was solved.
+export function evaluateGateA(modelerOutput: string, design: SolvedDesign | null): GateAResult {
   const failures: string[] = []
   const matches = [...(modelerOutput ?? '').matchAll(/GEOMETRY_METRICS:[^{]*(\{.*\})/g)]
   if (matches.length === 0) return { pass: false, failures: ['GEOMETRY_METRICS line not found in modeler output (fail-closed)'] }
@@ -336,6 +369,42 @@ export function evaluateGateA(modelerOutput: string): GateAResult {
   if (!(solids >= 1)) failures.push(`solid_count ${String(m.solids)} is not >= 1`)
   if (!(volume > 0)) failures.push(`volume_mm3 ${String(m.volume_mm3)} is not > 0`)
   if (m.is_valid !== true) failures.push('is_valid is not true — invalid B-rep; STEP would not be manufacturable')
+
+  // Dimensional checks — GROUNDED runs only. Ungrounded runs (cubes, brackets,
+  // pipes) have no solved design and keep passing on the three checks above.
+  if (design !== null) {
+    const bbox = m.bbox_mm
+    const ext = Array.isArray(bbox) ? bbox.map(Number) : null
+    // FAIL-CLOSED: a grounded run with no usable bounding box cannot be verified.
+    if (!ext || ext.length !== 3 || !ext.every((x) => Number.isFinite(x) && x > 0)) {
+      failures.push(`bbox_mm is missing, not a 3-element array, or not three finite positive numbers (got ${JSON.stringify(bbox)}) — a grounded run cannot be dimensionally verified, fail-closed`)
+    } else {
+      // A shaft lies along one axis: the two SMALLER extents ~= body diameter,
+      // the LARGEST ~= overall length. (Profile invariant: every feature diameter
+      // <= body diameter, so the cross-section is the body diameter.)
+      const [a, b, c] = [...ext].sort((x, y) => x - y)
+
+      // CHECK 4 — diameter (compare in mm; convert the solved INCH value to mm).
+      if (design.diameter !== null && design.diameter !== undefined) {
+        const expected = design.diameter * MM_PER_IN
+        const tol = Math.max(0.02 * expected, 1.0)
+        if (Math.abs(a - expected) > tol || Math.abs(b - expected) > tol) {
+          const measured = Math.abs(a - expected) > tol ? a : b
+          failures.push(`measured cross-section ${measured} mm does not match the solved shaft diameter ${design.diameter} in (${expected.toFixed(1)} mm) within ${tol.toFixed(1)} mm`)
+        }
+      }
+
+      // CHECK 5 — overall length (largest extent).
+      if (design.length !== null && design.length !== undefined) {
+        const expected = design.length * MM_PER_IN
+        const tol = Math.max(0.02 * expected, 1.0)
+        if (Math.abs(c - expected) > tol) {
+          failures.push(`measured overall length ${c} mm does not match the solved length ${design.length} in (${expected.toFixed(1)} mm) within ${tol.toFixed(1)} mm`)
+        }
+      }
+    }
+  }
+
   return { pass: failures.length === 0, failures }
 }
 
@@ -350,7 +419,8 @@ export async function runGateA(env: CloudflareEnv, userId: string, runId: string
   const row = await db.prepare(`SELECT run_id, spec, max_cycles, cycle, status, design_json FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
     .bind(runId, userId).first<{ run_id: string; spec: string; max_cycles: number; cycle: number; status: string; design_json: string | null }>()
   if (!row || row.status !== 'running') return
-  const result = evaluateGateA(modelerOutput)
+  const design = parseDesign(row.design_json)
+  const result = evaluateGateA(modelerOutput, design)
   if (result.pass) return
   const now = Math.floor(Date.now() / 1000)
   // Remove this cycle's unrun reviewer so it never judges bad geometry and does
@@ -366,12 +436,12 @@ export async function runGateA(env: CloudflareEnv, userId: string, runId: string
   const reviewerId = crypto.randomUUID()
   const modelerShort = `st_m${nextCycle}`
   const reviewerShort = `st_r${nextCycle}`
-  const baseTask = modelerTaskFor(row.spec, parseDesign(row.design_json))
+  const baseTask = modelerTaskFor(row.spec, design)
   const feedbackTask = `ORIGINAL TASK:\n${baseTask}\n\nYour previous attempt FAILED automated geometry validation (Gate A) before review. Failures:\n${result.failures.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n\nThese are deterministic geometry errors — the produced part is not a valid manufacturable solid. Rebuild your build123d so part.is_valid() is True, the part is a single closed solid with positive volume, and re-export GLB + STEP. Re-emit the exact GEOMETRY_METRICS line (including is_valid) verbatim in your final summary. Do NOT call query_knowledge — this is a geometry construction fix, not a standards lookup.`
   await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(modelerId, runId, userId, modelerShort, 'modeler', `CAD model (cycle ${nextCycle})`, feedbackTask, null, 'ready', 0, 0, now, 'default').run()
   await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
+    .bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec, design), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
   await db.prepare(`UPDATE orchestrator_runs SET subtask_count = subtask_count + 2 WHERE id = ?`).bind(runId).run()
   await db.prepare(`UPDATE cad_convergence_runs SET cycle = ?, updated_at = ? WHERE run_id = ?`).bind(nextCycle, now, runId).run()
 }
