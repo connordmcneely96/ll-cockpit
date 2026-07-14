@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "test": "vitest run",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -52,6 +53,7 @@
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
+    "vitest": "^2.1.9",
     "wrangler": "^4.0.0"
   }
 }
