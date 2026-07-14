@@ -14,6 +14,17 @@
  */
 import type { CloudflareEnv } from '@/types'
 import { enqueueReadySubtasks } from '@/workers/subtask-consumer'
+import type { PumpShaftDuty } from './cad/duty'
+import { solvePumpShaft, type SolvedDesign } from './cad/solve-design'
+
+/**
+ * Result of createConvergenceRun. 'infeasible' means the design gate closed BEFORE
+ * any geometry — no modeler, no reviewer, no subtasks. 'created' means a converged
+ * (or ungrounded) design produced the modeler+reviewer pair.
+ */
+export type CreateConvergenceResult =
+  | { runId: string; status: 'infeasible'; diagnosis: string }
+  | { runId: string; status: 'created'; modelerId: string; reviewerId: string; designStatus: 'converged' | 'ungrounded' }
 
 export interface Verdict {
   pass: boolean
@@ -62,10 +73,42 @@ export async function createConvergenceRun(
   spec: string,
   maxCycles: number,
   seedFlaw: boolean,
-): Promise<{ runId: string; modelerId: string; reviewerId: string }> {
+  duty?: PumpShaftDuty,
+): Promise<CreateConvergenceResult> {
   const db = env.DB
   const now = Math.floor(Date.now() / 1000)
   const runId = crypto.randomUUID()
+
+  // ── THE GATE: solve the design FIRST when a duty is supplied. ──
+  // No geometry without a converged design. An infeasible design is not a failure —
+  // it is a correct ANSWER, so it is persisted with its verbatim diagnosis and NO
+  // subtasks are created. A duty that solves is grounded ('converged'); a run with
+  // no duty is the generic path, marked 'ungrounded' so the gap is visible/countable.
+  let designStatus: 'converged' | 'ungrounded' = 'ungrounded'
+  let design: SolvedDesign | null = null
+
+  if (duty) {
+    const outcome = await solvePumpShaft(env, duty)
+    if (outcome.status === 'infeasible') {
+      await db.prepare(
+        `INSERT INTO orchestrator_runs
+          (id, user_id, original_task, summary, status, subtask_count, subtasks_completed, subtasks_failed, actual_cost_usd, tokens, started_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, 'CAD design gate — infeasible (196D)', 'infeasible', 0, 0, 0, 0, 0, now, now).run()
+
+      await db.prepare(
+        `INSERT INTO cad_convergence_runs
+          (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_status, design_diagnosis)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, maxCycles, 1, 'infeasible', now, now, JSON.stringify(duty), 'infeasible', outcome.diagnosis).run()
+
+      // NO subtasks. No modeler. No reviewer. Enqueue nothing. Geometry is FORBIDDEN.
+      return { runId, status: 'infeasible', diagnosis: outcome.diagnosis }
+    }
+    designStatus = 'converged'
+    design = outcome.design
+  }
+
   const modelerId = crypto.randomUUID()
   const reviewerId = crypto.randomUUID()
 
@@ -77,9 +120,9 @@ export async function createConvergenceRun(
 
   await db.prepare(
     `INSERT INTO cad_convergence_runs
-      (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now).run()
+      (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_json, design_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now, duty ? JSON.stringify(duty) : null, design ? JSON.stringify(design) : null, designStatus).run()
 
   const modelerTask = seedFlaw ? SEED_FLAW_SPEC : spec
   await db.prepare(
@@ -96,7 +139,7 @@ export async function createConvergenceRun(
 
   await enqueueReadySubtasks(env, runId, userId, true)
 
-  return { runId, modelerId, reviewerId }
+  return { runId, status: 'created', modelerId, reviewerId, designStatus }
 }
 
 /**
