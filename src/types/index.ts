@@ -459,6 +459,10 @@ export interface CloudflareEnv {
   // Sprint 151A calc engine — deterministic engineering formulas (service binding)
   ENGINEERING_CALCS: Fetcher
   EXEC_SECRET: string
+  // Sprint 196D — optional shared secret for the engineering-calcs worker. The
+  // binding is internal and today needs no auth; when provisioned, solvePumpShaft
+  // sends it as the X-Calc-Secret header.
+  CALC_SECRET?: string
 }
 
 export interface CommandItem {

@@ -14,6 +14,17 @@
  */
 import type { CloudflareEnv } from '@/types'
 import { enqueueReadySubtasks } from '@/workers/subtask-consumer'
+import type { PumpShaftDuty } from './cad/duty'
+import { solvePumpShaft, type SolvedDesign, type DesignFeature, type DesignCheck, type DesignAssumption } from './cad/solve-design'
+
+/**
+ * Result of createConvergenceRun. 'infeasible' means the design gate closed BEFORE
+ * any geometry — no modeler, no reviewer, no subtasks. 'created' means a converged
+ * (or ungrounded) design produced the modeler+reviewer pair.
+ */
+export type CreateConvergenceResult =
+  | { runId: string; status: 'infeasible'; diagnosis: string }
+  | { runId: string; status: 'created'; modelerId: string; reviewerId: string; designStatus: 'converged' | 'ungrounded' }
 
 export interface Verdict {
   pass: boolean
@@ -44,6 +55,74 @@ export function reviewerTaskFor(spec: string): string {
   return `SPEC:\n${spec}\n\nThe upstream MODELER output is provided above as context and includes the measured GEOMETRY_METRICS. Judge the produced geometry against this SPEC and return ONLY your verdict JSON.`
 }
 
+/** Parse a cad_convergence_runs.design_json blob back into a SolvedDesign (null on absent/invalid). */
+export function parseDesign(designJson: string | null | undefined): SolvedDesign | null {
+  if (!designJson) return null
+  try {
+    const d = JSON.parse(designJson)
+    return d && typeof d === 'object' ? (d as SolvedDesign) : null
+  } catch {
+    return null
+  }
+}
+
+function num(v: unknown): string {
+  return v === null || v === undefined || v === '' ? '(unspecified)' : String(v)
+}
+
+function renderFeatures(features?: DesignFeature[]): string {
+  if (!Array.isArray(features) || features.length === 0) {
+    return '    (none — build the plain shaft to the diameter and length above)'
+  }
+  return features.map((f) => {
+    const parts: string[] = []
+    if (f.type != null) parts.push(String(f.type))
+    if (f.axialPosition != null) parts.push(`axial ${f.axialPosition}`)
+    if (f.diameter != null) parts.push(`Ø${f.diameter} in`)
+    if (f.notes != null) parts.push(String(f.notes))
+    return `    - ${parts.join(' — ')}`
+  }).join('\n')
+}
+
+function renderChecks(checks?: DesignCheck[]): string {
+  if (!Array.isArray(checks) || checks.length === 0) return '    (none reported)'
+  return checks.map((c) =>
+    `    - ${num(c.criterion)}: computed ${num(c.computed)} vs limit ${num(c.limit)} [${num(c.citation)}]`,
+  ).join('\n')
+}
+
+function renderAssumptions(assumptions?: DesignAssumption[]): string {
+  if (!Array.isArray(assumptions) || assumptions.length === 0) return '    (none reported)'
+  return assumptions.map((a) =>
+    `    - ${num(a.parameter)}: ${num(a.basis)} (impact: ${num(a.impact)})`,
+  ).join('\n')
+}
+
+/**
+ * The instruction handed to a MODELER subtask. When a converged design exists the
+ * task is TRANSCRIPTION — the modeler builds the SOLVED numbers exactly and never
+ * designs. When design is null (the generic path) the original free-text spec is
+ * returned UNCHANGED so cubes/brackets/pipes keep working.
+ */
+export function modelerTaskFor(spec: string, design: SolvedDesign | null): string {
+  if (!design) return spec
+  return `SOLVED DESIGN — these dimensions are the OUTPUT of a calc-grounded solver (API 610 / ISO 13709). They are NOT suggestions. Build EXACTLY these.
+
+  shaft diameter : ${num(design.diameter)} in
+  overall length : ${num(design.length)} in
+  material       : ${num(design.material)}
+  features       :
+${renderFeatures(design.features)}
+
+CHECKS (each with its standard):
+${renderChecks(design.checks)}
+
+ASSUMPTIONS:
+${renderAssumptions(design.assumptions)}
+
+You are TRANSCRIBING a solved design into build123d. You will NOT choose, round, adjust, or "improve" any dimension. If a dimension appears wrong, STOP and say so in your output — do NOT silently substitute your own value. Do NOT call engineering_calc. The design is already solved. Emit GEOMETRY_METRICS exactly as today.`
+}
+
 // Deterministic seed flaw (test only, designed for the default cube spec): the cycle-1
 // modeler is handed a normal, self-consistent WRONG spec instead of the real one, so it
 // faithfully builds the wrong part with no fight against its grounding. The reviewer still
@@ -62,10 +141,42 @@ export async function createConvergenceRun(
   spec: string,
   maxCycles: number,
   seedFlaw: boolean,
-): Promise<{ runId: string; modelerId: string; reviewerId: string }> {
+  duty?: PumpShaftDuty,
+): Promise<CreateConvergenceResult> {
   const db = env.DB
   const now = Math.floor(Date.now() / 1000)
   const runId = crypto.randomUUID()
+
+  // ── THE GATE: solve the design FIRST when a duty is supplied. ──
+  // No geometry without a converged design. An infeasible design is not a failure —
+  // it is a correct ANSWER, so it is persisted with its verbatim diagnosis and NO
+  // subtasks are created. A duty that solves is grounded ('converged'); a run with
+  // no duty is the generic path, marked 'ungrounded' so the gap is visible/countable.
+  let designStatus: 'converged' | 'ungrounded' = 'ungrounded'
+  let design: SolvedDesign | null = null
+
+  if (duty) {
+    const outcome = await solvePumpShaft(env, duty)
+    if (outcome.status === 'infeasible') {
+      await db.prepare(
+        `INSERT INTO orchestrator_runs
+          (id, user_id, original_task, summary, status, subtask_count, subtasks_completed, subtasks_failed, actual_cost_usd, tokens, started_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, 'CAD design gate — infeasible (196D)', 'infeasible', 0, 0, 0, 0, 0, now, now).run()
+
+      await db.prepare(
+        `INSERT INTO cad_convergence_runs
+          (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_status, design_diagnosis)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, maxCycles, 1, 'infeasible', now, now, JSON.stringify(duty), 'infeasible', outcome.diagnosis).run()
+
+      // NO subtasks. No modeler. No reviewer. Enqueue nothing. Geometry is FORBIDDEN.
+      return { runId, status: 'infeasible', diagnosis: outcome.diagnosis }
+    }
+    designStatus = 'converged'
+    design = outcome.design
+  }
+
   const modelerId = crypto.randomUUID()
   const reviewerId = crypto.randomUUID()
 
@@ -77,11 +188,12 @@ export async function createConvergenceRun(
 
   await db.prepare(
     `INSERT INTO cad_convergence_runs
-      (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now).run()
+      (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_json, design_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now, duty ? JSON.stringify(duty) : null, design ? JSON.stringify(design) : null, designStatus).run()
 
-  const modelerTask = seedFlaw ? SEED_FLAW_SPEC : spec
+  // Transcription task when a design was solved; raw spec on the generic path.
+  const modelerTask = seedFlaw ? SEED_FLAW_SPEC : modelerTaskFor(spec, design)
   await db.prepare(
     `INSERT INTO agent_subtasks
       (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type)
@@ -96,7 +208,7 @@ export async function createConvergenceRun(
 
   await enqueueReadySubtasks(env, runId, userId, true)
 
-  return { runId, modelerId, reviewerId }
+  return { runId, status: 'created', modelerId, reviewerId, designStatus }
 }
 
 /**
@@ -114,9 +226,9 @@ export async function advanceConvergence(
 ): Promise<void> {
   const db = env.DB
   const row = await db
-    .prepare(`SELECT run_id, spec, max_cycles, cycle, status FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
+    .prepare(`SELECT run_id, spec, max_cycles, cycle, status, design_json FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
     .bind(runId, userId)
-    .first<{ run_id: string; spec: string; max_cycles: number; cycle: number; status: string }>()
+    .first<{ run_id: string; spec: string; max_cycles: number; cycle: number; status: string; design_json: string | null }>()
 
   if (!row || row.status !== 'running') return
 
@@ -146,7 +258,10 @@ export async function advanceConvergence(
   const modelerShort = `st_m${nextCycle}`
   const reviewerShort = `st_r${nextCycle}`
 
-  const feedbackTask = `ORIGINAL SPEC:\n${row.spec}\n\nYour previous attempt was REJECTED by an independent geometry reviewer. Findings:\n${verdict.discrepancies.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nThis is a direct correction, not a research task. Apply the findings above and rebuild — do NOT call query_knowledge; no standards lookup is needed to correct a geometry or dimensional discrepancy. Revise your build123d, rebuild to the ORIGINAL spec dimensions, re-export, and re-report metrics.`
+  // Rebuild from the SOLVED design (when grounded) so a correction never loses the
+  // calc-grounded dimensions; falls back to the raw spec on the generic path.
+  const baseTask = modelerTaskFor(row.spec, parseDesign(row.design_json))
+  const feedbackTask = `ORIGINAL TASK:\n${baseTask}\n\nYour previous attempt was REJECTED by an independent geometry reviewer. Findings:\n${verdict.discrepancies.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nThis is a direct correction, not a research task. Apply the findings above and rebuild — do NOT call query_knowledge; no standards lookup is needed to correct a geometry or dimensional discrepancy. Revise your build123d, rebuild to the dimensions above, re-export, and re-report metrics.`
 
   await db.prepare(
     `INSERT INTO agent_subtasks
@@ -232,8 +347,8 @@ export function evaluateGateA(modelerOutput: string): GateAResult {
 // No-op for non-convergence runs or runs no longer 'running'.
 export async function runGateA(env: CloudflareEnv, userId: string, runId: string, modelerOutput: string): Promise<void> {
   const db = env.DB
-  const row = await db.prepare(`SELECT run_id, spec, max_cycles, cycle, status FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
-    .bind(runId, userId).first<{ run_id: string; spec: string; max_cycles: number; cycle: number; status: string }>()
+  const row = await db.prepare(`SELECT run_id, spec, max_cycles, cycle, status, design_json FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
+    .bind(runId, userId).first<{ run_id: string; spec: string; max_cycles: number; cycle: number; status: string; design_json: string | null }>()
   if (!row || row.status !== 'running') return
   const result = evaluateGateA(modelerOutput)
   if (result.pass) return
@@ -251,7 +366,8 @@ export async function runGateA(env: CloudflareEnv, userId: string, runId: string
   const reviewerId = crypto.randomUUID()
   const modelerShort = `st_m${nextCycle}`
   const reviewerShort = `st_r${nextCycle}`
-  const feedbackTask = `ORIGINAL SPEC:\n${row.spec}\n\nYour previous attempt FAILED automated geometry validation (Gate A) before review. Failures:\n${result.failures.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n\nThese are deterministic geometry errors — the produced part is not a valid manufacturable solid. Rebuild your build123d so part.is_valid() is True, the part is a single closed solid with positive volume, and re-export GLB + STEP. Re-emit the exact GEOMETRY_METRICS line (including is_valid) verbatim in your final summary. Do NOT call query_knowledge — this is a geometry construction fix, not a standards lookup.`
+  const baseTask = modelerTaskFor(row.spec, parseDesign(row.design_json))
+  const feedbackTask = `ORIGINAL TASK:\n${baseTask}\n\nYour previous attempt FAILED automated geometry validation (Gate A) before review. Failures:\n${result.failures.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n\nThese are deterministic geometry errors — the produced part is not a valid manufacturable solid. Rebuild your build123d so part.is_valid() is True, the part is a single closed solid with positive volume, and re-export GLB + STEP. Re-emit the exact GEOMETRY_METRICS line (including is_valid) verbatim in your final summary. Do NOT call query_knowledge — this is a geometry construction fix, not a standards lookup.`
   await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(modelerId, runId, userId, modelerShort, 'modeler', `CAD model (cycle ${nextCycle})`, feedbackTask, null, 'ready', 0, 0, now, 'default').run()
   await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
