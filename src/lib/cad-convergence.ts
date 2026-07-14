@@ -50,9 +50,36 @@ export function parseVerdict(text: string): Verdict {
   }
 }
 
-/** The instruction handed to a reviewer subtask (modeler output is prepended as dependencyContext). */
-export function reviewerTaskFor(spec: string): string {
-  return `SPEC:\n${spec}\n\nThe upstream MODELER output is provided above as context and includes the measured GEOMETRY_METRICS. Judge the produced geometry against this SPEC and return ONLY your verdict JSON.`
+// Inches -> millimetres. Declared ONCE and used everywhere a solved (inch)
+// dimension is compared to or shown next to GEOMETRY_METRICS (which is in mm).
+export const MM_PER_IN = 25.4
+
+/** An inches value rendered with its mm conversion, e.g. "2.375 in (60.3 mm)". */
+function inMm(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '(unspecified)'
+  return `${v} in (${(v * MM_PER_IN).toFixed(1)} mm)`
+}
+
+/**
+ * The instruction handed to a reviewer subtask (modeler output is prepended as
+ * dependencyContext). When a design exists, the reviewer judges MEASURED geometry
+ * against the SOLVED dimensions — not prose. When design is null, the legacy
+ * free-text task is returned byte-identical (generic path preserved).
+ */
+export function reviewerTaskFor(spec: string, design: SolvedDesign | null): string {
+  if (!design) {
+    return `SPEC:\n${spec}\n\nThe upstream MODELER output is provided above as context and includes the measured GEOMETRY_METRICS. Judge the produced geometry against this SPEC and return ONLY your verdict JSON.`
+  }
+  return `SOLVED DESIGN — the authority. This is what the part MUST be:
+  shaft diameter : ${inMm(design.diameter)}
+  overall length : ${inMm(design.length)}
+  features       :
+${renderFeatures(design.features)}
+
+ORIGINAL CLIENT SPEC (context only — the SOLVED DESIGN governs):
+${spec}
+
+The MODELER output above contains measured GEOMETRY_METRICS. Judge the MEASURED geometry against the SOLVED DIMENSIONS. The solved design is calc-grounded (API 610 / ISO 13709) and is NOT negotiable. If the measured geometry does not match the solved dimensions, that is a FAIL — even if the part looks reasonable, and even if it satisfies the client spec's prose. Return ONLY your verdict JSON.`
 }
 
 /** Parse a cad_convergence_runs.design_json blob back into a SolvedDesign (null on absent/invalid). */
@@ -204,7 +231,7 @@ export async function createConvergenceRun(
     `INSERT INTO agent_subtasks
       (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(reviewerId, runId, userId, 'st_r1', 'reviewer', 'Geometry review (cycle 1)', reviewerTaskFor(spec), JSON.stringify(['st_m1']), 'pending', 0, 0, now, 'default').run()
+  ).bind(reviewerId, runId, userId, 'st_r1', 'reviewer', 'Geometry review (cycle 1)', reviewerTaskFor(spec, design), JSON.stringify(['st_m1']), 'pending', 0, 0, now, 'default').run()
 
   await enqueueReadySubtasks(env, runId, userId, true)
 
@@ -260,7 +287,8 @@ export async function advanceConvergence(
 
   // Rebuild from the SOLVED design (when grounded) so a correction never loses the
   // calc-grounded dimensions; falls back to the raw spec on the generic path.
-  const baseTask = modelerTaskFor(row.spec, parseDesign(row.design_json))
+  const design = parseDesign(row.design_json)
+  const baseTask = modelerTaskFor(row.spec, design)
   const feedbackTask = `ORIGINAL TASK:\n${baseTask}\n\nYour previous attempt was REJECTED by an independent geometry reviewer. Findings:\n${verdict.discrepancies.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nThis is a direct correction, not a research task. Apply the findings above and rebuild — do NOT call query_knowledge; no standards lookup is needed to correct a geometry or dimensional discrepancy. Revise your build123d, rebuild to the dimensions above, re-export, and re-report metrics.`
 
   await db.prepare(
@@ -273,7 +301,7 @@ export async function advanceConvergence(
     `INSERT INTO agent_subtasks
       (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
+  ).bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec, design), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
 
   await db.prepare(`UPDATE orchestrator_runs SET subtask_count = subtask_count + 2 WHERE id = ?`)
     .bind(runId).run()
@@ -366,12 +394,13 @@ export async function runGateA(env: CloudflareEnv, userId: string, runId: string
   const reviewerId = crypto.randomUUID()
   const modelerShort = `st_m${nextCycle}`
   const reviewerShort = `st_r${nextCycle}`
-  const baseTask = modelerTaskFor(row.spec, parseDesign(row.design_json))
+  const design = parseDesign(row.design_json)
+  const baseTask = modelerTaskFor(row.spec, design)
   const feedbackTask = `ORIGINAL TASK:\n${baseTask}\n\nYour previous attempt FAILED automated geometry validation (Gate A) before review. Failures:\n${result.failures.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n\nThese are deterministic geometry errors — the produced part is not a valid manufacturable solid. Rebuild your build123d so part.is_valid() is True, the part is a single closed solid with positive volume, and re-export GLB + STEP. Re-emit the exact GEOMETRY_METRICS line (including is_valid) verbatim in your final summary. Do NOT call query_knowledge — this is a geometry construction fix, not a standards lookup.`
   await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(modelerId, runId, userId, modelerShort, 'modeler', `CAD model (cycle ${nextCycle})`, feedbackTask, null, 'ready', 0, 0, now, 'default').run()
   await db.prepare(`INSERT INTO agent_subtasks (id, pipeline_run_id, user_id, short_id, agent_name, title, task, depends_on, status, cost_usd, tokens, created_at, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
+    .bind(reviewerId, runId, userId, reviewerShort, 'reviewer', `Geometry review (cycle ${nextCycle})`, reviewerTaskFor(row.spec, design), JSON.stringify([modelerShort]), 'pending', 0, 0, now, 'default').run()
   await db.prepare(`UPDATE orchestrator_runs SET subtask_count = subtask_count + 2 WHERE id = ?`).bind(runId).run()
   await db.prepare(`UPDATE cad_convergence_runs SET cycle = ?, updated_at = ? WHERE run_id = ?`).bind(nextCycle, now, runId).run()
 }
