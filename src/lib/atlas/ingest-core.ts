@@ -42,11 +42,13 @@ async function sha256Hex(text: string): Promise<string> {
     .join("");
 }
 
-// Page-scoped, deterministic vector ID. The prior scheme `${doc}::${chunkIndex}`
-// collided across pages of the same doc (chunk_index restarts at 0 per call), so a
-// later page silently overwrote an earlier one in Vectorize. `page ?? 0` keeps a
-// stable ID for /ingest callers that omit page; re-ingesting the same doc+page
-// overwrites in place (idempotent) — never a random or time-based component.
+// Page-scoped, deterministic vector ID. The `page` component is the CHUNK's page
+// (c.page) — where the chunk's content actually lives — NOT the ingest call's page,
+// because a single call can span multiple pages (a doc with `--- page N ---`
+// markers chunked in one call). `page ?? 0` still holds for callers that supply no
+// page at all. Uniqueness is preserved because chunkIndex is monotonic across the
+// WHOLE document (never reset per page), so `${doc}::p${page}::${chunkIndex}` stays
+// unique even with several pages in one call — re-ingesting overwrites in place.
 export function vectorId(doc: string, page: number | null | undefined, chunkIndex: number): string {
   return `${doc}::p${page ?? 0}::${chunkIndex}`;
 }
@@ -69,7 +71,7 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
   // Upsert with structured metadata
   const upsertResult = await env.ATLAS_RAG.upsert(
     chunks.map((c, i) => ({
-      id: vectorId(input.doc, input.page, c.chunk_index),
+      id: vectorId(input.doc, c.page, c.chunk_index),
       values: allVectors[i],
       metadata: {
         doc: c.doc,
@@ -83,20 +85,35 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
   );
 
   // Ledger (SSOT) — written ONLY after the Vectorize upsert succeeds, so the ledger
-  // never claims a write that did not land. One rag_documents row per ingest call;
-  // rag_chunks is cleared for THIS doc+page only, then re-inserted.
+  // never claims a write that did not land. A single call can span MULTIPLE pages
+  // (one doc chunked across `--- page N ---` markers), so the ledger is written
+  // per-page: one rag_documents row per distinct page (chunk_count = chunks ON that
+  // page), and rag_chunks scoped to exactly the pages this call writes.
   const tenantId = "default";
-  const ledgerPage = input.page ?? 0;
-  const sha256 = await sha256Hex(input.text);
-  await env.DB.batch([
+  // A chunk's ledger page mirrors vectorId's `page ?? 0` — keep them in lockstep.
+  const pageOf = (c: Chunk): number => c.page ?? 0;
+  const pages = [...new Set(chunks.map(pageOf))];              // distinct pages in this call
+  const countByPage = new Map<number, number>();
+  for (const c of chunks) countByPage.set(pageOf(c), (countByPage.get(pageOf(c)) ?? 0) + 1);
+  const sha256 = await sha256Hex(input.text);                 // identifies the source, same on every page row
+  const placeholders = pages.map(() => "?").join(", ");
+
+  const stmts = [
+    // One rag_documents row PER DISTINCT PAGE so SUM(chunk_count) reconciles against
+    // the upserted vector count.
+    ...pages.map((p) =>
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO rag_documents
+           (tenant_id, doc, page, r2_key, sha256, chunk_count, embed_model, dims)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(tenantId, input.doc, p, input.r2_key ?? null, sha256, countByPage.get(p) ?? 0, EMBED_MODEL, EMBED_DIMS)
+    ),
+    // Clear ONLY the pages this call is about to write — never the whole doc (a
+    // caller may still ingest one page at a time, as the live corpus was built).
     env.DB.prepare(
-      `INSERT OR REPLACE INTO rag_documents
-         (tenant_id, doc, page, r2_key, sha256, chunk_count, embed_model, dims)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(tenantId, input.doc, ledgerPage, input.r2_key ?? null, sha256, chunks.length, EMBED_MODEL, EMBED_DIMS),
-    env.DB.prepare(
-      `DELETE FROM rag_chunks WHERE tenant_id = ? AND doc = ? AND page = ?`
-    ).bind(tenantId, input.doc, ledgerPage),
+      `DELETE FROM rag_chunks WHERE tenant_id = ? AND doc = ? AND page IN (${placeholders})`
+    ).bind(tenantId, input.doc, ...pages),
+    // One row per chunk, stamped with the CHUNK's page (not the call's page).
     ...chunks.map((c) =>
       env.DB.prepare(
         `INSERT OR REPLACE INTO rag_chunks
@@ -105,15 +122,16 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
       ).bind(
         tenantId,
         input.doc,
-        ledgerPage,
+        pageOf(c),
         c.chunk_index,
-        vectorId(input.doc, input.page, c.chunk_index),
+        vectorId(input.doc, c.page, c.chunk_index),
         c.section || null,
         c.text.length,
         c.oversized ? 1 : 0
       )
     ),
-  ]);
+  ];
+  await env.DB.batch(stmts);
 
   const sections = [...new Set(chunks.map(c => c.section).filter(Boolean))];
   return {
