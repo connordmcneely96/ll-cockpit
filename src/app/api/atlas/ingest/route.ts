@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
       sections_detected: result.sections_detected,
       oversized_count: result.oversized_count,
       sample: result.chunks[0]
-        ? { id: vectorId(doc, page ?? null, result.chunks[0].chunk_index), section: result.chunks[0].section, text: result.chunks[0].text.slice(0, 200) }
+        ? { id: vectorId(tenantId, doc, page ?? null, result.chunks[0].chunk_index), section: result.chunks[0].section, text: result.chunks[0].text.slice(0, 200) }
         : null,
     });
   } catch (e) {

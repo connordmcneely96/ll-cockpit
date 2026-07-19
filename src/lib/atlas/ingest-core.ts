@@ -52,15 +52,20 @@ async function sha256Hex(text: string): Promise<string> {
     .join("");
 }
 
-// Page-scoped, deterministic vector ID. The `page` component is the CHUNK's page
-// (c.page) — where the chunk's content actually lives — NOT the ingest call's page,
-// because a single call can span multiple pages (a doc with `--- page N ---`
-// markers chunked in one call). `page ?? 0` still holds for callers that supply no
-// page at all. Uniqueness is preserved because chunkIndex is monotonic across the
-// WHOLE document (never reset per page), so `${doc}::p${page}::${chunkIndex}` stays
-// unique even with several pages in one call — re-ingesting overwrites in place.
-export function vectorId(doc: string, page: number | null | undefined, chunkIndex: number): string {
-  return `${doc}::p${page ?? 0}::${chunkIndex}`;
+// Tenant- and page-scoped, deterministic vector ID.
+// - The TENANT is part of the identity: two tenants may legitimately hold a document
+//   of the SAME NAME, and their vectors must never collide. Without the tenant in the
+//   id, the second tenant's upsert would overwrite the first's vectors — silent
+//   cross-tenant data destruction. (Safe to change the format: the delete path reads
+//   the STORED vector_id from rag_chunks, never a recomputed one.)
+// - The `page` component is the CHUNK's page (c.page) — where the content actually
+//   lives — NOT the call's page, since one call can span `--- page N ---` markers.
+//   `page ?? 0` holds for callers that supply no page.
+// chunkIndex is monotonic across the WHOLE document (never reset per page), so
+// `${tenantId}::${doc}::p${page}::${chunkIndex}` is unique even with several pages in
+// one call — re-ingesting the same tenant+doc overwrites in place.
+export function vectorId(tenantId: string, doc: string, page: number | null | undefined, chunkIndex: number): string {
+  return `${tenantId}::${doc}::p${page ?? 0}::${chunkIndex}`;
 }
 
 /**
@@ -83,7 +88,7 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
   const pageOf = (c: Chunk): number => c.page ?? 0;
   // Deterministic vector IDs, chunk-page scoped. chunkIndex is monotonic across the
   // whole doc, so these are unique even with several pages in one call.
-  const ids = chunks.map((c) => vectorId(input.doc, c.page, c.chunk_index));
+  const ids = chunks.map((c) => vectorId(input.tenantId, input.doc, c.page, c.chunk_index));
 
   // Embed in batches
   const allVectors: number[][] = [];
