@@ -5,8 +5,10 @@
 
 import { describe, it, expect } from "vitest";
 import { vectorId, ingestDocument } from "./ingest-core";
+import { retrieve } from "./retrieve";
 import { chunkDocument } from "./chunker";
 import { CORPUS } from "./corpus-seed";
+import { resolveTenantId } from "../tenant";
 
 describe("vectorId", () => {
   it("is page-scoped: same doc+chunkIndex on different pages does NOT collide", () => {
@@ -132,6 +134,21 @@ function makeFakeEnv() {
         deletedIds.push(...delIds);
         for (const id of delIds) vectorIndex.delete(id);
         return { count: delIds.length };
+      },
+      // Mirrors Vectorize filtered query: only vectors whose metadata.tenant_id
+      // matches the filter are returned. (Embeddings are fake, so ordering is
+      // irrelevant — isolation is about WHICH vectors are visible, not ranking.)
+      query: async (
+        _vec: number[],
+        opts: { topK: number; returnMetadata: string | boolean; filter?: Record<string, unknown> },
+      ) => {
+        const tid = opts.filter?.tenant_id;
+        const matches = [...vectorIndex.values()]
+          .map((v) => v as { id: string; metadata?: Record<string, unknown> })
+          .filter((v) => tid === undefined || v.metadata?.tenant_id === tid)
+          .slice(0, opts.topK)
+          .map((v) => ({ id: v.id, score: 1, metadata: v.metadata }));
+        return { matches };
       },
     },
     DB: db,
@@ -271,5 +288,68 @@ describe("ingestDocument — page fidelity", () => {
     expect(f.vectorIndex.has(fourthId)).toBe(false);
     const sum = docRows(f, "DOC").reduce((s, r) => s + Number(r.chunk_count), 0);
     expect(sum).toBe(f.vectorIndex.size);
+  });
+});
+
+// ── tenant isolation (the product promise): no cross-tenant sharing ─────────────
+describe("tenant isolation", () => {
+  it("1. ISOLATION: a query as tenant A returns ONLY A's chunks, never B's", async () => {
+    const f = makeFakeEnv();
+    await ingest(f, { doc: "A_spec", text: "# Alpha\nTenant A private content.", tenantId: "A" });
+    await ingest(f, { doc: "B_spec", text: "# Bravo\nTenant B private content.", tenantId: "B" });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aChunks = await retrieve(f.env as any, "content", "A", { useRewriter: false });
+    const aDocs = aChunks.map((c) => c.doc);
+    expect(aDocs).toContain("A_spec");
+    expect(aDocs).not.toContain("B_spec"); // B is invisible to A — this is the test that matters
+
+    // Symmetry: B sees only B.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bChunks = await retrieve(f.env as any, "content", "B", { useRewriter: false });
+    const bDocs = bChunks.map((c) => c.doc);
+    expect(bDocs).toContain("B_spec");
+    expect(bDocs).not.toContain("A_spec");
+  });
+
+  it("2. every upserted vector carries tenant_id in its metadata", async () => {
+    const f = makeFakeEnv();
+    await ingest(f, { doc: "A_spec", text: "# Alpha\nContent one. # Beta\nContent two.", tenantId: "A" });
+    expect(f.upserted.length).toBeGreaterThan(0);
+    expect(f.upserted.every((v) => v.metadata.tenant_id === "A")).toBe(true);
+  });
+
+  it("3. D1 rag_documents / rag_chunks rows carry the correct tenant_id", async () => {
+    const f = makeFakeEnv();
+    await ingest(f, { doc: "A_spec", text: "# Alpha\nContent.", tenantId: "A" });
+    expect(docRows(f, "A_spec").every((r) => r.tenant_id === "A")).toBe(true);
+    expect(chunkRows(f, "A_spec").every((r) => r.tenant_id === "A")).toBe(true);
+    expect(chunkRows(f, "A_spec").length).toBeGreaterThan(0);
+  });
+
+  it("4. FAIL CLOSED: resolveTenantId with no identity THROWS, never returns 'default'", () => {
+    expect(() => resolveTenantId({})).toThrow("tenant_unresolved");
+    expect(() => resolveTenantId({ userId: null })).toThrow("tenant_unresolved");
+    expect(() => resolveTenantId({ userId: "  " })).toThrow("tenant_unresolved");
+    // A real identity resolves to itself — NOT to 'default'.
+    expect(resolveTenantId({ userId: "user-123" })).toBe("user-123");
+  });
+
+  it("5. a re-ingest by tenant A does not delete tenant B's rows for the SAME doc name", async () => {
+    const f = makeFakeEnv();
+    // Both tenants upload a doc with the identical name.
+    await ingest(f, { doc: "shared_name", text: "# A\nA's first version.", tenantId: "A" });
+    await ingest(f, { doc: "shared_name", text: "# B\nB's version.", tenantId: "B" });
+    const bBefore = chunkRows(f, "shared_name").filter((r) => r.tenant_id === "B").length;
+    expect(bBefore).toBeGreaterThan(0);
+
+    // A re-ingests its same-named doc.
+    await ingest(f, { doc: "shared_name", text: "# A\nA's revised version, longer now.", tenantId: "A" });
+
+    // B's rows for that doc name are untouched (delete is scoped by tenant_id AND doc).
+    expect(chunkRows(f, "shared_name").filter((r) => r.tenant_id === "B").length).toBe(bBefore);
+    expect(docRows(f, "shared_name").filter((r) => r.tenant_id === "B").length).toBeGreaterThan(0);
+    // And A still has its (updated) rows.
+    expect(chunkRows(f, "shared_name").filter((r) => r.tenant_id === "A").length).toBeGreaterThan(0);
   });
 });
