@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { ingestDocument, IngestEnv } from "@/lib/atlas/ingest-core";
 import { CORPUS } from "@/lib/atlas/corpus-seed";
+import { systemTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). Uses shared ingest-core to avoid logic drift with /ingest.
@@ -45,8 +46,15 @@ export async function POST(req: NextRequest) {
     let totalChunks = 0;
     let totalOversized = 0;
 
+    // The seed corpus is the shared, open-access engineering baseline (B31.3, AISC,
+    // paraphrased ASME, ...). It has no user context, so it is written under the
+    // system tenant. JUSTIFIED systemTenantId() call site: shared baseline, not a
+    // user's private corpus.
+    const tenantId = systemTenantId();
+
     for (const entry of window) {
       const result = await ingestDocument(ingestEnv, {
+        tenantId,
         doc: entry.doc,
         text: entry.text,
         page: entry.page ?? null,

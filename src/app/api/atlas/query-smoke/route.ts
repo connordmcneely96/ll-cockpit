@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
+import { systemTenantId } from "@/lib/tenant";
 
 // TEMPORARY smoke route (Sprint 30E) — runs the ATLAS query pipeline for two fixed
 // questions (one covered by the corpus, one not) and writes the full responses to the
@@ -63,7 +64,8 @@ export async function GET(req: NextRequest) {
 
   try {
     for (const { label, q } of QUESTIONS) {
-      const chunks = await retrieve({ AI, ATLAS_RAG }, q, { topK: 5, useRewriter: true });
+      // JUSTIFIED systemTenantId(): secret-gated smoke test over the shared baseline corpus.
+      const chunks = await retrieve({ AI, ATLAS_RAG }, q, systemTenantId(), { topK: 5, useRewriter: true });
       const chunkList = chunks
         .map((c, i) => `[${i + 1}] doc=${c.doc ?? "unknown"} §${c.section ?? "?"} page=${c.page ?? "?"}\n${c.text ?? ""}`)
         .join("\n\n");
