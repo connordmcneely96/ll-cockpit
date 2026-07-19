@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { systemTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR).
 
 type AiRunner = { run: (model: string, opts: { text: string[] }) => Promise<{ data: number[][] }> };
 type VecIndex = {
-  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean }) => Promise<{
+  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean; filter?: Record<string, unknown> }) => Promise<{
     matches: { id: string; score: number; metadata?: Record<string, unknown> }[];
   }>;
 };
@@ -37,7 +38,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "unexpected_dim", got: embedResp.data[0]?.length, expected: 1024 }, { status: 500 });
     }
 
-    const result = await ATLAS_RAG.query(embedResp.data[0], { topK: 5, returnMetadata: "all" });
+    // JUSTIFIED systemTenantId(): secret-gated index diagnostic over the shared corpus.
+    const result = await ATLAS_RAG.query(embedResp.data[0], { topK: 5, returnMetadata: "all", filter: { tenant_id: systemTenantId() } });
 
     return NextResponse.json({
       query: q,

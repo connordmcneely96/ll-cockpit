@@ -113,6 +113,9 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
       id: ids[i],
       values: allVectors[i],
       metadata: {
+        // THE isolation point: a filtered query (filter: { tenant_id }) can only
+        // exclude another tenant's vectors if the tenant travels in the metadata.
+        tenant_id: tenantId,
         doc: c.doc,
         section: c.section,
         page: c.page,

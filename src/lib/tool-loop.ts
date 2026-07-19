@@ -18,6 +18,7 @@
 import type { CloudflareEnv } from '@/types'
 import { retrieve } from './atlas/retrieve'
 import { runCadScript, meterCadExec } from './exec/cad-exec'
+import { resolveTenantId } from './tenant'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -141,17 +142,21 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
         required: ['query'],
       },
     },
-    handler: async (input, { env }) => {
+    handler: async (input, { env, userId }) => {
       const query = typeof input.query === 'string' ? input.query.trim() : ''
       if (!query) return JSON.stringify({ error: 'query is required' })
       const raw = typeof input.topK === 'number' ? input.topK : 5
       const topK = Math.max(1, Math.min(Math.floor(raw), 10))
+      // Scope the agent's knowledge query to the subtask owner's tenant — never a
+      // shared partition. resolveTenantId throws if the subtask has no owner.
+      const tenantId = resolveTenantId({ userId })
       // retrieve()'s local VecIndex types returnMetadata looser (string|boolean) than the
       // official VectorizeIndex; the real binding is runtime-compatible. Cast bypasses the
       // too-loose upstream type without modifying the shared atlas/retrieve.ts.
       const chunks = await retrieve(
         { AI: env.AI, ATLAS_RAG: env.ATLAS_RAG } as unknown as Parameters<typeof retrieve>[0],
         query,
+        tenantId,
         { topK, useRewriter: true },
       )
       return JSON.stringify(chunks.map((c) => ({ doc: c.doc, section: c.section, page: c.page, score: Number(c.score.toFixed(4)), text: c.text ? c.text.slice(0, 800) : null })))

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { systemTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 
@@ -13,7 +14,7 @@ const TEST_SNIPPETS = [
 type AiRunner = { run: (model: string, opts: { text: string[] }) => Promise<{ data: number[][] }> };
 type VecIndex = {
   upsert: (v: { id: string; values: number[]; metadata?: Record<string, unknown> }[]) => Promise<{ count?: number }>;
-  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean }) => Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
+  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean; filter?: Record<string, unknown> }) => Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
 };
 type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex };
 
@@ -37,15 +38,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "unexpected_dim", got: vectors[0]?.length, expected: 1024 }, { status: 500 });
     }
 
+    // JUSTIFIED systemTenantId(): secret-gated end-to-end index test on its own test
+    // snippets — no user context. Tenant travels in metadata and the query filter so
+    // the round-trip is tenant-scoped like production.
+    const tenantId = systemTenantId();
+
     // 2. Upsert
     const upsert = await ATLAS_RAG.upsert(
-      TEST_SNIPPETS.map((s, i) => ({ id: s.id, values: vectors[i], metadata: { snippet: s.text } }))
+      TEST_SNIPPETS.map((s, i) => ({ id: s.id, values: vectors[i], metadata: { tenant_id: tenantId, snippet: s.text } }))
     );
 
     // 3. Query
     const query = "What's the formula for shell thickness in ASME BPVC?";
     const qResp = await AI.run("@cf/baai/bge-large-en-v1.5", { text: [query] });
-    const matches = await ATLAS_RAG.query(qResp.data[0], { topK: 3, returnMetadata: "all" });
+    const matches = await ATLAS_RAG.query(qResp.data[0], { topK: 3, returnMetadata: "all", filter: { tenant_id: tenantId } });
 
     return NextResponse.json({
       query,

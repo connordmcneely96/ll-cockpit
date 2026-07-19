@@ -10,7 +10,10 @@ type AiRunner = {
 };
 type VecMatch = { id: string; score: number; metadata?: Record<string, unknown> };
 type VecIndex = {
-  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean }) => Promise<{ matches: VecMatch[] }>;
+  query: (
+    vec: number[],
+    opts: { topK: number; returnMetadata: string | boolean; filter?: Record<string, unknown> },
+  ) => Promise<{ matches: VecMatch[] }>;
 };
 
 export type RetrieveEnv = { AI: AiRunner; ATLAS_RAG: VecIndex };
@@ -49,15 +52,19 @@ function toChunk(m: VecMatch): RetrievedChunk {
 export async function retrieve(
   env: RetrieveEnv,
   question: string,
+  tenantId: string,
   opts: RetrieveOptions = {}
 ): Promise<RetrievedChunk[]> {
   const topK = opts.topK ?? 5;
   const useRewriter = opts.useRewriter ?? true;
+  // Isolation: every Vectorize query is filtered to the caller's tenant. tenantId is
+  // REQUIRED (positional) so a caller cannot forget it — a missing filter is a leak.
+  const filter = { tenant_id: tenantId };
 
   if (!useRewriter) {
     // Baseline: single embed + single query
     const embedResp = await env.AI.run(EMBED_MODEL, { text: [question] });
-    const result = await env.ATLAS_RAG.query(embedResp.data[0], { topK, returnMetadata: "all" });
+    const result = await env.ATLAS_RAG.query(embedResp.data[0], { topK, returnMetadata: "all", filter });
     return result.matches.map(toChunk);
   }
 
@@ -69,9 +76,9 @@ export async function retrieve(
   const embedResp = await env.AI.run(EMBED_MODEL, { text: variants });
   const vecs = embedResp.data;
 
-  // Query in parallel — one per variant
+  // Query in parallel — one per variant, each tenant-filtered
   const variantResults = await Promise.all(
-    vecs.map(vec => env.ATLAS_RAG.query(vec, { topK: variantTopK, returnMetadata: "all" }))
+    vecs.map(vec => env.ATLAS_RAG.query(vec, { topK: variantTopK, returnMetadata: "all", filter }))
   );
 
   // Reciprocal Rank Fusion — score_id = Σ 1/(RRF_K + rank), rank 1-indexed

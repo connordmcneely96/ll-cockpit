@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
+import { createClient } from "@/lib/supabase-server";
+import { resolveTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). route() receives the raw env (CloudflareEnv).
@@ -119,7 +121,19 @@ export async function POST(req: NextRequest) {
   }
 
   const { question, project_context, max_sources } = body;
-  const userId = req.headers.get("x-user-id") ?? "system";
+
+  // Resolve the tenant from the authenticated identity — retrieval is filtered to it,
+  // so an unresolved tenant must fail closed, never fall back to a shared partition.
+  // (The former `x-user-id` header was an unauthenticated, spoofable identity.)
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  let tenantId: string;
+  try {
+    tenantId = resolveTenantId({ userId: user?.id });
+  } catch {
+    return NextResponse.json({ error: "tenant_unresolved", detail: "authentication required to query" }, { status: 401 });
+  }
+  const userId = tenantId;
 
   const { env } = await getCloudflareContext({ async: true });
   const typedEnv = env as unknown as Env;
@@ -133,7 +147,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── 1. Retrieve ──
-    const chunks = await retrieve({ AI, ATLAS_RAG }, question, { topK: max_sources, useRewriter: true });
+    const chunks = await retrieve({ AI, ATLAS_RAG }, question, tenantId, { topK: max_sources, useRewriter: true });
 
     // ── 2. Build grounded prompt ──
     const chunkList = chunks

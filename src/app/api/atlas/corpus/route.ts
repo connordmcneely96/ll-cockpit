@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { createClient } from "@/lib/supabase-server";
+import { resolveTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). Reads the D1 ledger (SSOT) ONLY — reports the
@@ -8,9 +10,8 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 // Deliberately does NOT touch the ATLAS_RAG binding — honest and deterministic.
 
 type D1Result<T> = { results: T[] };
-type EnvDB = {
-  prepare: (sql: string) => { all: <T = unknown>() => Promise<D1Result<T>> };
-};
+type EnvStmt = { bind: (...v: unknown[]) => EnvStmt; all: <T = unknown>() => Promise<D1Result<T>> };
+type EnvDB = { prepare: (sql: string) => EnvStmt };
 type Env = { DB?: EnvDB };
 
 interface DocRow {
@@ -31,6 +32,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
+  // Resolve the tenant — the ledger read is scoped to it, so an unresolved tenant
+  // must fail closed rather than expose every tenant's corpus.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  let tenantId: string;
+  try {
+    tenantId = resolveTenantId({ userId: user?.id });
+  } catch {
+    return NextResponse.json({ error: "tenant_unresolved", detail: "authentication required" }, { status: 401 });
+  }
+
   const { env } = await getCloudflareContext({ async: true });
   const { DB } = env as unknown as Env;
   if (!DB) {
@@ -41,8 +53,9 @@ export async function GET(req: NextRequest) {
     const rows = await DB.prepare(
       `SELECT doc, page, chunk_count, sha256, r2_key, embed_model, ingested_at
          FROM rag_documents
+        WHERE tenant_id = ?
         ORDER BY doc, page`
-    ).all<DocRow>();
+    ).bind(tenantId).all<DocRow>();
     const documents = rows.results ?? [];
 
     const doc_count = new Set(documents.map((d) => d.doc)).size;

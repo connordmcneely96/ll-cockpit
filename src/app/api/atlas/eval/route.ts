@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { retrieve, RetrieveEnv } from "@/lib/atlas/retrieve";
+import { systemTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR).
@@ -10,7 +11,7 @@ type AiRunner = {
   run(model: string, opts: { messages: { role: string; content: string }[]; max_tokens: number }): Promise<{ response?: string }>;
 };
 type VecIndex = {
-  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean }) => Promise<{
+  query: (vec: number[], opts: { topK: number; returnMetadata: string | boolean; filter?: Record<string, unknown> }) => Promise<{
     matches: { id: string; score: number; metadata?: Record<string, unknown> }[];
   }>;
 };
@@ -143,6 +144,9 @@ export async function GET(req: NextRequest) {
   }
 
   const retrieveEnv: RetrieveEnv = { AI, ATLAS_RAG };
+  // JUSTIFIED systemTenantId(): eval is a secret-gated diagnostic over the shared
+  // baseline corpus (seeded under the system tenant), not per-user traffic.
+  const tenantId = systemTenantId();
 
   function hit(
     matches: { doc: string | null; section: string | null; score: number }[],
@@ -162,7 +166,7 @@ export async function GET(req: NextRequest) {
       const results: { q: string; hit: boolean; top3: { doc: string | null; section: string | null; score: number }[] }[] = [];
       for (const item of EVAL_SET) {
         const embedResp = await AI.run(EMBED_MODEL, { text: [item.q] });
-        const qResult = await ATLAS_RAG.query(embedResp.data[0], { topK: 3, returnMetadata: "all" });
+        const qResult = await ATLAS_RAG.query(embedResp.data[0], { topK: 3, returnMetadata: "all", filter: { tenant_id: tenantId } });
         const top3 = qResult.matches.map(m => ({
           doc: (m.metadata?.doc as string) ?? null,
           section: (m.metadata?.section as string) ?? null,
@@ -191,10 +195,10 @@ export async function GET(req: NextRequest) {
 
     for (let i = 0; i < windowItems.length; i++) {
       const item = windowItems[i];
-      const baseMatches = await retrieve(retrieveEnv, item.q, { topK: 3, useRewriter: false });
+      const baseMatches = await retrieve(retrieveEnv, item.q, tenantId, { topK: 3, useRewriter: false });
       const baseline_hit = hit(baseMatches, item.expect_doc_contains, item.expect_section_contains);
 
-      const rewriterMatches = await retrieve(retrieveEnv, item.q, { topK: 3, useRewriter: true });
+      const rewriterMatches = await retrieve(retrieveEnv, item.q, tenantId, { topK: 3, useRewriter: true });
       const rewriter_hit = hit(rewriterMatches, item.expect_doc_contains, item.expect_section_contains);
 
       results.push({
