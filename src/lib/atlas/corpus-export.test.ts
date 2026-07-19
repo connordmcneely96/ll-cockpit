@@ -10,6 +10,7 @@ import {
 } from "./corpus-export";
 import { chunkDocument } from "./chunker";
 import { CORPUS } from "./corpus-seed";
+import { ingestDocument } from "./ingest-core";
 
 describe("groupCorpusByDoc", () => {
   it("1. GROUPING: a 2-page doc -> ONE markdown with the page marker, in page order", () => {
@@ -113,5 +114,96 @@ describe("sortCorpusKeys / docNameFromKey", () => {
   it("docNameFromKey strips the prefix and .md suffix", () => {
     expect(docNameFromKey("atlas-corpus/B31.3_piping.md")).toBe("B31.3_piping");
     expect(docNameFromKey("atlas-corpus/pump_rotordynamics.md")).toBe("pump_rotordynamics");
+  });
+});
+
+// ── seed page attribution: page: 1 (starting page), not null ────────────────────
+// Mirrors the seed-corpus route: seedDocsFromR2 -> ingestDocument(..., page: 1). A
+// minimal fake env captures the upserted vector IDs and the rag_documents rows so we
+// can assert first-page content lands on page 1 (::p1::), never page 0 (::p0::).
+function makeSeedEnv() {
+  const upserted: { id: string; metadata: Record<string, unknown> }[] = [];
+  const ragDocuments: Record<string, unknown>[] = [];
+  const ragChunks: Record<string, unknown>[] = [];
+  function exec(sql: string, args: unknown[]) {
+    const insDoc = sql.match(/INSERT OR REPLACE INTO rag_documents\s*\(([^)]*)\)/i);
+    const insChunk = sql.match(/INSERT OR REPLACE INTO rag_chunks\s*\(([^)]*)\)/i);
+    if (insDoc) {
+      const cols = insDoc[1].split(",").map((s) => s.trim());
+      const row: Record<string, unknown> = {};
+      cols.forEach((c, i) => (row[c] = args[i]));
+      ragDocuments.push(row);
+    } else if (insChunk) {
+      const cols = insChunk[1].split(",").map((s) => s.trim());
+      const row: Record<string, unknown> = {};
+      cols.forEach((c, i) => (row[c] = args[i]));
+      ragChunks.push(row);
+    }
+  }
+  const db = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        __sql: sql,
+        __args: args,
+        run: async () => (exec(sql, args), { success: true }),
+        all: async () => ({ results: [] as { vector_id: string }[] }), // no prior vectors
+      }),
+    }),
+    batch: async (stmts: Array<{ __sql: string; __args: unknown[] }>) => {
+      for (const s of stmts) exec(s.__sql, s.__args);
+      return stmts.map(() => ({ success: true }));
+    },
+  };
+  const env = {
+    AI: { run: async (_m: string, { text }: { text: string[] }) => ({ data: text.map(() => new Array(1024).fill(0)) }) },
+    ATLAS_RAG: {
+      upsert: async (vs: Array<{ id: string; values: number[]; metadata?: Record<string, unknown> }>) => {
+        for (const v of vs) upserted.push({ id: v.id, metadata: v.metadata ?? {} });
+        return { count: vs.length };
+      },
+      deleteByIds: async () => ({ count: 0 }),
+    },
+    DB: db,
+  };
+  return { env, upserted, ragDocuments, ragChunks };
+}
+
+async function seedOne(f: ReturnType<typeof makeSeedEnv>, doc: string, text: string) {
+  await seedDocsFromR2(
+    [`atlas-corpus/${doc}.md`],
+    { get: async () => ({ text: async () => text }) },
+    async (d, t, key) => {
+      // Exactly what seed-corpus route does: page: 1 (starting page).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = await ingestDocument(f.env as any, { tenantId: "default", doc: d, text: t, page: 1, r2_key: key });
+      return r.chunks_ingested;
+    },
+  );
+}
+
+describe("seed page attribution (page: 1)", () => {
+  it("1. NO MARKERS: every chunk is page 1 and vector IDs contain ::p1:: (never ::p0::)", async () => {
+    const f = makeSeedEnv();
+    await seedOne(f, "nomarker", "# One\nAlpha content here.\n# Two\nBravo content here.");
+    const ids = f.upserted.map((v) => v.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.every((id) => id.includes("::p1::"))).toBe(true);
+    expect(ids.some((id) => id.includes("::p0::"))).toBe(false);
+    expect(f.upserted.every((v) => v.metadata.page === 1)).toBe(true);
+  });
+
+  it("2. MULTI-PAGE: content before --- page 2 --- is page 1, after is page 2 (::p1:: and ::p2::)", async () => {
+    const f = makeSeedEnv();
+    await seedOne(f, "twopage", "# One\nAlpha page one.\n--- page 2 ---\n# Two\nBravo page two.");
+    const ids = f.upserted.map((v) => v.id);
+    expect(ids.some((id) => id.includes("::p1::"))).toBe(true);
+    expect(ids.some((id) => id.includes("::p2::"))).toBe(true);
+    expect(ids.some((id) => id.includes("::p0::"))).toBe(false);
+  });
+
+  it("3. rag_documents rows for a 2-page doc are pages 1 and 2 (not 0 and 2)", async () => {
+    const f = makeSeedEnv();
+    await seedOne(f, "twopage", "# One\nAlpha page one.\n--- page 2 ---\n# Two\nBravo page two.");
+    expect(f.ragDocuments.map((r) => r.page).sort()).toEqual([1, 2]);
   });
 });

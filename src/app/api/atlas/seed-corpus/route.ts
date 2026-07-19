@@ -8,9 +8,11 @@ import { sortCorpusKeys, seedDocsFromR2 } from "@/lib/atlas/corpus-export";
 // Inline Env cast (Sprint 18B ADR). Uses shared ingest-core to avoid logic drift with /ingest.
 //
 // R2 is the SINGLE source of truth: this route enumerates atlas-corpus/*.md and ingests
-// each WHOLE doc once (page: null — the doc carries its own `--- page N ---` markers and
-// the chunker assigns pages). The old CORPUS-array path was a second source AND called
-// ingestDocument once per page, which the whole-document contract truncated. Both fixed.
+// each WHOLE doc once. page: 1 is the STARTING page — chunkDocument bumps it at each
+// `--- page N ---` marker, so a no-marker doc is all page 1 and content before the first
+// marker is page 1 (not page 0). This reproduces the original CORPUS page semantics. The
+// old CORPUS-array path was a second source AND called ingestDocument once per page, which
+// the whole-document contract truncated. Both fixed.
 
 type AiRunner = { run: (model: string, opts: { text: string[] }) => Promise<{ data: number[][] }> };
 type VecIndex = {
@@ -70,7 +72,9 @@ export async function POST(req: NextRequest) {
   try {
     const perDoc = await seedDocsFromR2(windowKeys, R2, async (doc, text, key) => {
       // ONE ingest per WHOLE doc — never once per page (that truncated multi-page docs).
-      const result = await ingestDocument(ingestEnv, { tenantId, doc, text, page: null, r2_key: key });
+      // page: 1 is the starting page; markers in the text bump it (content before the
+      // first marker is page 1, not page 0).
+      const result = await ingestDocument(ingestEnv, { tenantId, doc, text, page: 1, r2_key: key });
       return result.chunks_ingested;
     });
 
