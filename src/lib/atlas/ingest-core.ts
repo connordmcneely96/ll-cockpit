@@ -21,6 +21,11 @@ export interface IngestEnv {
 }
 
 export interface IngestInput {
+  // REQUIRED: the tenant this document belongs to. No default — a caller MUST
+  // resolve it from the authenticated identity (src/lib/tenant.ts). Omitting it is
+  // a compile error, by design: the old hardcoded 'default' wrote every tenant's
+  // documents into one shared partition.
+  tenantId: string;
   doc: string;
   text: string;
   page?: number | null;
@@ -73,7 +78,7 @@ export async function ingestDocument(env: IngestEnv, input: IngestInput): Promis
   const chunks = chunkDocument(input.text, { doc: input.doc, page: input.page ?? null });
   if (chunks.length === 0) return { doc: input.doc, chunks_ingested: 0, sections_detected: 0, oversized_count: 0, chunks: [] };
 
-  const tenantId = "default";
+  const tenantId = input.tenantId;
   // A chunk's ledger page mirrors vectorId's `page ?? 0` — keep them in lockstep.
   const pageOf = (c: Chunk): number => c.page ?? 0;
   // Deterministic vector IDs, chunk-page scoped. chunkIndex is monotonic across the

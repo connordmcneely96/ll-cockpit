@@ -149,9 +149,12 @@ const TWO_PAGE_VERSION = `# Section A\nAlpha.\n# Section B\nBravo.\n--- page 2 -
 const FOUR_CHUNK_DOC = `# S1\na\n# S2\nb\n# S3\nc\n# S4\nd`;
 // Single page, 3 sections -> chunks p1#0..#2 (the 4th vanishes).
 const THREE_CHUNK_DOC = `# S1\na\n# S2\nb\n# S3\nc`;
-const ingest = (f: ReturnType<typeof makeFakeEnv>, input: { doc: string; text: string; page?: number | null }) =>
+const ingest = (
+  f: ReturnType<typeof makeFakeEnv>,
+  input: { doc: string; text: string; page?: number | null; tenantId?: string },
+) =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ingestDocument(f.env as any, input);
+  ingestDocument(f.env as any, { tenantId: "default", ...input });
 const docRows = (f: ReturnType<typeof makeFakeEnv>, doc: string) =>
   [...f.ragDocuments.values()].filter((r) => r.doc === doc);
 const chunkRows = (f: ReturnType<typeof makeFakeEnv>, doc: string) =>

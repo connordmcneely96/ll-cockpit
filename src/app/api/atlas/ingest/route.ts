@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { ingestDocument, IngestEnv, vectorId } from "@/lib/atlas/ingest-core";
+import { createClient } from "@/lib/supabase-server";
+import { resolveTenantId } from "@/lib/tenant";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). Uses shared ingest-core — no logic drift with seed-corpus.
@@ -18,6 +20,17 @@ export async function POST(req: NextRequest) {
   const url = new URL(req.url);
   if (url.searchParams.get("secret") !== "engineering-30b") {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  // Resolve the tenant from the authenticated identity — never a default. A request
+  // that cannot be attributed to a user is refused, not silently shared.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  let tenantId: string;
+  try {
+    tenantId = resolveTenantId({ userId: user?.id });
+  } catch {
+    return NextResponse.json({ error: "tenant_unresolved", detail: "authentication required to ingest" }, { status: 401 });
   }
 
   const { env } = await getCloudflareContext({ async: true });
@@ -50,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const ingestEnv: IngestEnv = { AI, ATLAS_RAG, DB };
-    const result = await ingestDocument(ingestEnv, { doc, text: sourceText, page: page ?? null, r2_key: r2_key ?? null });
+    const result = await ingestDocument(ingestEnv, { tenantId, doc, text: sourceText, page: page ?? null, r2_key: r2_key ?? null });
 
     if (result.chunks_ingested === 0) {
       return NextResponse.json({ error: "no_chunks_produced" }, { status: 400 });
