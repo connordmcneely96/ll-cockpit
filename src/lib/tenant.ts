@@ -6,6 +6,13 @@
 // bug this module exists to prevent. Callers that genuinely have no user context
 // (background jobs, system seeding) must reach for systemTenantId() explicitly.
 
+// The library partition: the PE-transcribed standards baseline. This is the opt-in
+// corpus every subscriber reads — a NAMED tenant, distinct from the legacy catch-all.
+export const LIBRARY_TENANT = 'library:standards'
+
+// The fail-closed non-value / legacy catch-all. Still names the old 'default' partition
+// (0064 backfilled artifact_registry rows here). NOT the standards library — do not
+// repurpose it as such.
 export const DEFAULT_TENANT = 'default'
 
 export interface TenantContext {
@@ -27,10 +34,13 @@ export function resolveTenantId(ctx: TenantContext): string {
 }
 
 /**
- * The system/legacy tenant. Use ONLY where there is genuinely no user context — a
- * background job or the seeding of the shared baseline corpus. Every call site must
- * be justified: it writes/reads the shared 'default' partition, not a user's.
+ * The standards LIBRARY partition — the opt-in baseline corpus every subscriber reads.
+ * Use ONLY where there is genuinely no user context: seeding the shared PE-transcribed
+ * standards baseline, or a secret-gated diagnostic over that same index. It NO LONGER
+ * names the legacy 'default' catch-all (see DEFAULT_TENANT) — the library has its own
+ * name so a future subscription can never silently read the catch-all alongside it.
+ * Every call site must be justified: it writes/reads the shared library, not a user's.
  */
 export function systemTenantId(): string {
-  return DEFAULT_TENANT
+  return LIBRARY_TENANT
 }
