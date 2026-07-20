@@ -24,6 +24,7 @@ import { solvePumpShaft, type SolvedDesign, type DesignFeature, type DesignCheck
  */
 export type CreateConvergenceResult =
   | { runId: string; status: 'infeasible'; diagnosis: string }
+  | { runId: string; status: 'solver_error'; reason: string }
   | { runId: string; status: 'created'; modelerId: string; reviewerId: string; designStatus: 'converged' | 'ungrounded' }
 
 export interface Verdict {
@@ -184,6 +185,26 @@ export async function createConvergenceRun(
 
   if (duty) {
     const outcome = await solvePumpShaft(env, duty)
+    if (outcome.status === 'solver_error') {
+      // FAULT (bad request / auth / transport / timeout / bad envelope): the solver
+      // could NOT be run, so there is no engineering verdict. Record the run as failed
+      // with design_status 'solver_error' and create NO geometry work. Distinct from
+      // 'infeasible', which is a real engineering answer.
+      await db.prepare(
+        `INSERT INTO orchestrator_runs
+          (id, user_id, original_task, summary, status, subtask_count, subtasks_completed, subtasks_failed, actual_cost_usd, tokens, started_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, 'CAD design gate — solver error (196D)', 'failed', 0, 0, 0, 0, 0, now, now).run()
+
+      await db.prepare(
+        `INSERT INTO cad_convergence_runs
+          (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_status, design_diagnosis)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, maxCycles, 1, 'failed', now, now, JSON.stringify(duty), 'solver_error', outcome.reason).run()
+
+      // NO subtasks. No modeler. No reviewer. Enqueue nothing. The solver never ran.
+      return { runId, status: 'solver_error', reason: outcome.reason }
+    }
     if (outcome.status === 'infeasible') {
       await db.prepare(
         `INSERT INTO orchestrator_runs

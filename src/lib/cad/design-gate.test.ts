@@ -50,8 +50,11 @@ function makeFakeDB() {
 }
 
 // The fake solver: closes on a double_volute casing OR a modest head (<= 400 ft),
-// otherwise returns the worker's 400 { success:false, error:{ message } }. This
-// models the discrete lever the pipeline must surface.
+// otherwise returns the worker's 400 { success:false, error:{ code, message } }. This
+// models the discrete lever the pipeline must surface. Envelope shape mirrors the real
+// calc worker VERBATIM: success wraps the design under `result` (not `data`), and a
+// genuine non-convergence carries error.code 'CALCULATION_ERROR' (not 'INFEASIBLE') so
+// solvePumpShaft classifies it as an engineering infeasibility rather than a fault.
 function makeFakeEnv() {
   const db = makeFakeDB()
   const env = {
@@ -66,7 +69,7 @@ function makeFakeEnv() {
             JSON.stringify({
               success: false,
               error: {
-                code: 'INFEASIBLE',
+                code: 'CALCULATION_ERROR',
                 message: `Design does not close: shaft deflection exceeds the API 610 limit at ${duty.head} ft on a ${duty.casingType} casing. A double_volute casing halves the radial load.`,
               },
             }),
@@ -76,7 +79,7 @@ function makeFakeEnv() {
         return new Response(
           JSON.stringify({
             success: true,
-            data: {
+            result: {
               diameter: 2.375,
               length: 24,
               material: duty.material,

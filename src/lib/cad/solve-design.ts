@@ -45,7 +45,13 @@ export interface SolvedDesign {
 
 export type SolveOutcome =
   | { status: 'converged'; design: SolvedDesign }
-  | { status: 'infeasible'; diagnosis: string }
+  | { status: 'infeasible'; diagnosis: string }   // engineering: the design does not close
+  | { status: 'solver_error'; reason: string }    // fault: bad request / auth / transport / timeout / bad envelope
+
+// A dimension the design gate can verify: a finite number strictly greater than 0.
+function isFinitePositive(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0
+}
 
 const CALC_PATH = '/api/shafts/generate'
 const TIMEOUT_MS = 30000
@@ -75,30 +81,51 @@ export async function solvePumpShaft(env: CloudflareEnv, duty: PumpShaftDuty): P
     const obj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
 
     // The worker returns 400 { success:false, error:{ code, message } } on BOTH
-    // validation failure AND infeasibility. Map both to 'infeasible' and surface the
-    // worker's message VERBATIM — the diagnosis IS the deliverable, never reworded.
+    // validation failure AND infeasibility, and distinguishes them by error.code:
+    //   'CALCULATION_ERROR' -> the shaft does not converge: a genuine ENGINEERING
+    //                          verdict (message begins "shaft design infeasible: ...").
+    //   everything else ('VALIDATION_ERROR', 'UNAUTHORIZED', 'NOT_FOUND', missing
+    //                          code, any non-2xx with no usable message) -> a FAULT.
+    // Surface the worker's message VERBATIM — it IS the deliverable, never reworded.
     if (!res.ok || obj?.success === false) {
       const errField = obj?.error
+      const errObj = errField && typeof errField === 'object' ? (errField as Record<string, unknown>) : null
+      const code = errObj && typeof errObj.code === 'string' ? errObj.code : undefined
       let message: string
-      if (errField && typeof errField === 'object' && 'message' in errField) {
-        message = String((errField as Record<string, unknown>).message)
+      if (errObj && 'message' in errObj) {
+        message = String(errObj.message)
       } else if (typeof errField === 'string') {
         message = errField
       } else {
         message = text ? text.slice(0, 1000) : `shaft solver returned HTTP ${res.status}`
       }
-      return { status: 'infeasible', diagnosis: message }
+      if (code === 'CALCULATION_ERROR') return { status: 'infeasible', diagnosis: message }
+      return { status: 'solver_error', reason: message }
     }
 
-    const design = (obj?.data ?? obj?.design ?? obj ?? {}) as SolvedDesign
-    return { status: 'converged', design }
+    // SUCCESS. The worker wraps the design as { success:true, result:<SolvedDesign>, metadata }.
+    // FAIL-CLOSED: a design we cannot dimensionally verify is NOT a converged design.
+    // If result is not an object, or diameter/length are not BOTH finite-positive, this
+    // is a solver fault (bad envelope) — never a silent pass to the modeler.
+    const result = obj?.result
+    if (
+      !result || typeof result !== 'object' ||
+      !isFinitePositive((result as Record<string, unknown>).diameter) ||
+      !isFinitePositive((result as Record<string, unknown>).length)
+    ) {
+      return {
+        status: 'solver_error',
+        reason: 'solver reported success but returned no usable dimensions: ' + text.slice(0, 200),
+      }
+    }
+    return { status: 'converged', design: result as SolvedDesign }
   } catch (err) {
-    // Abort (timeout) or transport error — a stated infeasible reason, never a silent pass.
-    const diagnosis =
+    // Abort (timeout) or transport error is a FAULT, never an engineering verdict.
+    const reason =
       err instanceof Error && err.name === 'AbortError'
         ? `shaft solver timed out after ${TIMEOUT_MS / 1000}s with no response — design cannot be confirmed`
         : `shaft solver call failed: ${err instanceof Error ? err.message : String(err)}`
-    return { status: 'infeasible', diagnosis }
+    return { status: 'solver_error', reason }
   } finally {
     clearTimeout(timer)
   }
