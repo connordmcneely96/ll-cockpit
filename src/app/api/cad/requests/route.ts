@@ -55,6 +55,18 @@ export async function POST(req: Request) {
     const env = getBindings()
     const r = await createConvergenceRun(env, userId, spec, maxCycles, false, duty)
 
+    // A solver_error is a FAULT, not an engineering result: the shaft solver could
+    // not be run (bad request / auth / transport / timeout / bad envelope). Surface it
+    // as a 400 so it is never mistaken for a converged or infeasible design.
+    if (r.status === 'solver_error') {
+      return json({
+        ok: false,
+        error: 'solver_error',
+        reason: r.reason,
+        note: 'the shaft solver could not be run — this is a fault, not an engineering result',
+      }, 400)
+    }
+
     // An infeasible design is a SUCCESSFUL request with a NEGATIVE answer, not a 500:
     // the design does not close, so NO geometry was generated.
     if (r.status === 'infeasible') {
