@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest'
 import type { CloudflareEnv } from '@/types'
-import { intakeDecision } from '@/app/api/cad/requests/route'
+import { intakeDecision } from '@/lib/cad/intake-decision'
 import type { IntakeLlm } from './intake'
 
 const env = {} as unknown as CloudflareEnv
