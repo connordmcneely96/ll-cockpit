@@ -3,6 +3,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
 import { systemTenantId } from "@/lib/tenant";
+import { evaluateGrounding, extractCitedDocs } from "@/lib/atlas/grounding";
 
 // TEMPORARY smoke route (Sprint 30E) — runs the ATLAS query pipeline for two fixed
 // questions (one covered by the corpus, one not) and writes the full responses to the
@@ -25,12 +26,6 @@ type D1 = { prepare: (sql: string) => D1Stmt };
 type Env = { AI?: AiRunner; ATLAS_RAG?: VecIndex; DB?: D1; ANTHROPIC_API_KEY?: string };
 
 export const dynamic = "force-dynamic";
-
-const VALUE_WITH_UNIT_RE = /\b\d[\d,.]*\s*(psi|ksi|mpa|kpa|pa|lb|kg|n|mm|in|cm|m|rpm|hz|°f|°c|deg|%|kw|hp|ft)\b/i;
-const FORMULA_KEYWORDS_RE = /\b(t\s*=|σ|τ|f_y|s_e|k_f|L_10|h_f|NPSH|P\s*=|M_p|W_t|Z_x)\b/i;
-function hasEngineeringValues(text: string): boolean {
-  return VALUE_WITH_UNIT_RE.test(text) || FORMULA_KEYWORDS_RE.test(text);
-}
 
 const SYSTEM_PROMPT = `You are ATLAS, a mechanical and process engineering reference assistant.
 You answer engineering questions ONLY from the provided source chunks below.
@@ -60,7 +55,7 @@ export async function GET(req: NextRequest) {
   }
 
   const apiKey = (env as unknown as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY;
-  const out: { label: string; rejected: boolean; sources_count: number; confidence: number }[] = [];
+  const out: { label: string; rejected: boolean; sources_count: number; cited_docs: number; reject_reason: string | null; confidence: number }[] = [];
 
   try {
     for (const { label, q } of QUESTIONS) {
@@ -92,7 +87,7 @@ export async function GET(req: NextRequest) {
         if (!seen.has(key)) { seen.add(key); sources.push({ doc: c.doc, section: c.section ?? "", page: c.page }); }
       }
       const isInsufficient = answerText.startsWith("Insufficient sources");
-      const rejected = hasEngineeringValues(answerText) && sources.length === 0 && !isInsufficient;
+      const { rejected, reject_reason } = evaluateGrounding({ answerText, sources, isInsufficient });
 
       const responseBody = {
         question: q,
@@ -107,7 +102,7 @@ export async function GET(req: NextRequest) {
         .bind(`smoke:${label}`, label, JSON.stringify(responseBody))
         .run();
 
-      out.push({ label, rejected, sources_count: sources.length, confidence: isInsufficient ? 0.1 : 0.5 });
+      out.push({ label, rejected, sources_count: sources.length, cited_docs: extractCitedDocs(answerText).length, reject_reason, confidence: isInsufficient ? 0.1 : 0.5 });
     }
     return NextResponse.json({ ok: true, ran: out, note: "Full responses in atlas_query_smoke (SE reads via MCP)." });
   } catch (e) {
