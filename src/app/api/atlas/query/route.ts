@@ -4,6 +4,7 @@ import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
 import { createClient } from "@/lib/supabase-server";
 import { resolveTenantId } from "@/lib/tenant";
+import { hasEngineeringValues, evaluateGrounding } from "@/lib/atlas/grounding";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). route() receives the raw env (CloudflareEnv).
@@ -73,18 +74,11 @@ function parseBody(raw: unknown): { ok: true; body: QueryBody } | { ok: false; e
   };
 }
 
-// Engineering value heuristic: number followed (or not) by a known unit.
-// Used for both unit-verification and citation enforcement.
-// Conservative — default true; only flip on a clear detection.
-const VALUE_WITH_UNIT_RE = /\b\d[\d,.]*\s*(psi|ksi|mpa|kpa|pa|lb|kg|n|mm|in|cm|m|rpm|hz|°f|°c|deg|%|kw|hp|ft)\b/i;
+// Unit-consistency heuristics (engineering value + citation heuristics now live in
+// @/lib/atlas/grounding). Conservative — default true; only flip on a clear detection.
 // Bare large number adjacent to engineering keywords — possible unit omission.
 const BARE_NUMBER_RE = /\b\d{3,}(\.\d+)?\b(?!\s*(psi|ksi|mpa|kpa|pa|lb|kg|n|mm|in|cm|m|rpm|hz|°|deg|%|kw|hp|ft|\$))/i;
 const STRESS_KEYWORDS_RE = /\b(stress|pressure|load|force|moment|torque|strength|yield|tensile|shear|thickness|diameter|flow|head|speed)\b/i;
-const FORMULA_KEYWORDS_RE = /\b(t\s*=|σ|τ|f_y|s_e|k_f|L_10|h_f|NPSH|P\s*=|M_p|W_t|Z_x)\b/i;
-
-function hasEngineeringValues(text: string): boolean {
-  return VALUE_WITH_UNIT_RE.test(text) || FORMULA_KEYWORDS_RE.test(text);
-}
 
 function checkUnitConsistency(text: string): boolean {
   // Flip to false only if bare large number appears near engineering stress/pressure keywords
@@ -209,11 +203,10 @@ export async function POST(req: NextRequest) {
     const calc_units_verified = checkUnitConsistency(answerText);
 
     // ── 7. Citation enforcement ──
-    // If the answer asserts engineering values AND no RAG sources support it → reject.
-    const rejected = hasEngineeringValues(answerText) && sources.length === 0 && !isInsufficient;
-    const reject_reason = rejected
-      ? "Answer references engineering values but no RAG sources support it — must cite sources."
-      : null;
+    // Reject when the answer asserts engineering values but is not grounded in the
+    // retrieved set — no sources, no [doc §section] citation, or a cited doc that was
+    // never retrieved. (Old guard only fired when retrieval returned literally nothing.)
+    const { rejected, reject_reason } = evaluateGrounding({ answerText, sources, isInsufficient });
 
     const responseBody = {
       answer: rejected ? null : answerText,
