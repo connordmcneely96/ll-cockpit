@@ -137,3 +137,24 @@ describe('INTAKE — fills, asks, and never guesses', () => {
     expect(r).not.toHaveProperty('duty')
   })
 })
+
+// S2 — the not_applicable variant, exercised on runSpecIntake directly.
+describe('INTAKE — not_applicable (S2)', () => {
+  it('W1: LLM says the spec is not a pump shaft -> status not_applicable', async () => {
+    const r = await run({ not_applicable: 'this is a mounting bracket' })
+    expect(r.status).toBe('not_applicable')
+    if (r.status !== 'not_applicable') throw new Error('unreachable')
+    expect(r.reason).toMatch(/bracket/i)
+  })
+
+  it('W1b: an empty not_applicable string is NOT accepted (falls through the gates)', async () => {
+    // Not a valid not_applicable signal; with no duty the presence gate asks instead.
+    const r = await run({ not_applicable: '' })
+    expect(r.status).not.toBe('not_applicable')
+  })
+
+  it('W2: a pump-shaft duty missing head+flow stays needs_clarification, NOT not_applicable', async () => {
+    const r = await run({ duty: omit(complete, 'head', 'flow'), assumptions: [] })
+    expect(r.status).toBe('needs_clarification')
+  })
+})

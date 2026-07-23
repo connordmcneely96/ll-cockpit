@@ -24,6 +24,7 @@ export interface IntakeAssumption { field: string; value: string; rationale: str
 export type IntakeResult =
   | { status: 'filled'; duty: PumpShaftDuty; assumptions: IntakeAssumption[] }
   | { status: 'needs_clarification'; questions: string[] }
+  | { status: 'not_applicable'; reason: string }
   | { status: 'intake_error'; reason: string }
 
 /** Dependency-injection seam: (systemPrompt, userMessage) -> raw model text. Tests inject
@@ -124,7 +125,10 @@ RULES:
 
 OUTPUT: return ONLY valid JSON — no code fences, no preamble, the first character must be {. Exactly one of:
   {"duty": { ...only the fields you can fill from the prose... }, "assumptions": [{"field":"","value":"","rationale":""}]}
-  {"needs_clarification": ["<a specific question naming the missing field and its units>"]}`
+  {"needs_clarification": ["<a specific question naming the missing field and its units>"]}
+  {"not_applicable": "<one sentence: why this spec is not an API 610 pump SHAFT duty>"}
+
+Return not_applicable ONLY when the spec is not a rotating pump shaft at all — e.g. a bracket, a cube, a plate, a pressure vessel, or a generic 3D part. Do NOT return not_applicable merely because required fields are missing: a pump-shaft spec with gaps is needs_clarification, never not_applicable.`
 
 /** Default LLM: native fetch to Anthropic, mirroring tool-loop.ts. No tools array — INTAKE
  *  has no tools. A non-2xx or thrown fetch throws, which runSpecIntake maps to intake_error. */
@@ -192,6 +196,12 @@ export async function runSpecIntake(args: {
     // Shape 1: the LLM asked its own clarifying questions — pass them through unchanged.
     if (Array.isArray(parsed.needs_clarification) && parsed.needs_clarification.length > 0) {
       return { status: 'needs_clarification', questions: parsed.needs_clarification.map(String) }
+    }
+
+    // Shape 1b: the spec is not a pump shaft at all (a bracket, cube, vessel, generic part).
+    // Checked here — before the duty gates — so we never demand pump duty from a non-shaft.
+    if (typeof parsed.not_applicable === 'string' && parsed.not_applicable.trim().length > 0) {
+      return { status: 'not_applicable', reason: parsed.not_applicable }
     }
 
     // Shape 2: the LLM returned a duty. Gate it in order: presence FIRST, schema SECOND.

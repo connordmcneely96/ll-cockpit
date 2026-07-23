@@ -15,6 +15,7 @@
 import type { CloudflareEnv } from '@/types'
 import { enqueueReadySubtasks } from '@/workers/subtask-consumer'
 import type { PumpShaftDuty } from './cad/duty'
+import type { IntakeAssumption } from './cad/intake'
 import { solvePumpShaft, type SolvedDesign, type DesignFeature, type DesignCheck, type DesignAssumption } from './cad/solve-design'
 
 /**
@@ -170,10 +171,19 @@ export async function createConvergenceRun(
   maxCycles: number,
   seedFlaw: boolean,
   duty?: PumpShaftDuty,
+  intakeAssumptions?: IntakeAssumption[],
 ): Promise<CreateConvergenceResult> {
   const db = env.DB
   const now = Math.floor(Date.now() / 1000)
   const runId = crypto.randomUUID()
+
+  // What INTAKE assumed, persisted alongside the run so an assumption is auditable.
+  // NULL when the caller supplied no INTAKE output (e.g. a hand-written duty, or the
+  // ungrounded path). Recorded on the infeasible AND converged/enqueued paths.
+  const intakeJson =
+    intakeAssumptions !== undefined
+      ? JSON.stringify({ source: 'intake', assumptions: intakeAssumptions })
+      : null
 
   // ── THE GATE: solve the design FIRST when a duty is supplied. ──
   // No geometry without a converged design. An infeasible design is not a failure —
@@ -214,9 +224,9 @@ export async function createConvergenceRun(
 
       await db.prepare(
         `INSERT INTO cad_convergence_runs
-          (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_status, design_diagnosis)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(runId, userId, spec, maxCycles, 1, 'infeasible', now, now, JSON.stringify(duty), 'infeasible', outcome.diagnosis).run()
+          (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_status, design_diagnosis, intake_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, userId, spec, maxCycles, 1, 'infeasible', now, now, JSON.stringify(duty), 'infeasible', outcome.diagnosis, intakeJson).run()
 
       // NO subtasks. No modeler. No reviewer. Enqueue nothing. Geometry is FORBIDDEN.
       return { runId, status: 'infeasible', diagnosis: outcome.diagnosis }
@@ -236,9 +246,9 @@ export async function createConvergenceRun(
 
   await db.prepare(
     `INSERT INTO cad_convergence_runs
-      (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_json, design_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now, duty ? JSON.stringify(duty) : null, design ? JSON.stringify(design) : null, designStatus).run()
+      (run_id, user_id, spec, max_cycles, cycle, status, created_at, updated_at, duty_json, design_json, design_status, intake_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(runId, userId, spec, maxCycles, 1, 'running', now, now, duty ? JSON.stringify(duty) : null, design ? JSON.stringify(design) : null, designStatus, intakeJson).run()
 
   // Transcription task when a design was solved; raw spec on the generic path.
   const modelerTask = seedFlaw ? SEED_FLAW_SPEC : modelerTaskFor(spec, design)
