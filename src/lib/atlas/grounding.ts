@@ -24,14 +24,32 @@ export function hasEngineeringValues(text: string): boolean {
   return VALUE_WITH_UNIT_RE.test(text) || FORMULA_KEYWORDS_RE.test(text);
 }
 
-// Citations of the form [doc §section], e.g. [B31.3_piping §304.1.2]. Captures the doc.
-const CITATION_RE = /\[([A-Za-z0-9_.\-]+)\s*§[^\]]*\]/g;
+// Citations come in two shapes because the prompt says `[doc §section]` but the chunk
+// list is rendered `[N] doc=<doc> §<section> page=<p>`, so the model also mimics THAT:
+//   bare:   [B31.3_piping §304.1.2]
+//   doc=:   [doc=pump_hydraulic_design §6, pump_shaft_mechanical_design §(c)]
+//   §-only: [§304.1.1]                      (a citation, but names no doc)
+// A single bracket may carry MULTIPLE comma-separated docs. Parse in two stages: find any
+// bracket group that contains a §, then pull every doc name out of that group.
+const CITATION_GROUP_RE = /\[[^\]]*§[^\]]*\]/g;
+const DOC_IN_GROUP_RE = /(?:doc\s*=\s*)?([A-Za-z0-9_.\-]+)\s*§/g;
 
-/** Extract the deduped doc names cited in the answer via [doc §section] markers. */
+/** Count bracketed citation markers (any `[… § …]` group). §-only groups still count. */
+export function countCitationMarkers(text: string): number {
+  return Array.from(text.matchAll(CITATION_GROUP_RE)).length;
+}
+
+/**
+ * Extract the deduped doc names cited in the answer, across both citation shapes and
+ * multi-doc groups. A group that names no doc before its § (e.g. "[§304.1.1]") contributes
+ * nothing — that is a valid section-only citation, not an error.
+ */
 export function extractCitedDocs(text: string): string[] {
   const docs = new Set<string>();
-  for (const m of text.matchAll(CITATION_RE)) {
-    if (m[1]) docs.add(m[1]);
+  for (const group of text.matchAll(CITATION_GROUP_RE)) {
+    for (const m of group[0].matchAll(DOC_IN_GROUP_RE)) {
+      if (m[1]) docs.add(m[1]);
+    }
   }
   return Array.from(docs);
 }
@@ -71,13 +89,17 @@ export function evaluateGrounding(args: GroundingArgs): GroundingResult {
     };
   }
 
-  const cited = extractCitedDocs(answerText);
-  if (cited.length === 0) {
+  // A section-only citation ("[§304.1.1]") is still a citation, so gate rule 4 on the
+  // presence of ANY citation marker, not on named docs. Only a FABRICATED doc name
+  // (below, rule 5) should trip on doc identity.
+  if (countCitationMarkers(answerText) === 0) {
     return {
       rejected: true,
       reject_reason: "Answer asserts engineering values without any [doc §section] citation.",
     };
   }
+
+  const cited = extractCitedDocs(answerText);
 
   const retrievedDocs = new Set(sources.map((s) => s.doc));
   const unknown = cited.filter((d) => !retrievedDocs.has(d));
