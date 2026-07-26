@@ -3,7 +3,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
 import { systemTenantId } from "@/lib/tenant";
-import { evaluateGrounding, extractCitedDocs } from "@/lib/atlas/grounding";
+import { evaluateGrounding, extractCitedDocs, countCitationMarkers } from "@/lib/atlas/grounding";
 
 // TEMPORARY smoke route (Sprint 30E) — runs the ATLAS query pipeline for two fixed
 // questions (one covered by the corpus, one not) and writes the full responses to the
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
   }
 
   const apiKey = (env as unknown as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY;
-  const out: { label: string; rejected: boolean; sources_count: number; cited_docs: number; reject_reason: string | null; confidence: number }[] = [];
+  const out: { label: string; rejected: boolean; sources_count: number; cited_docs: number; citation_markers: number; reject_reason: string | null; confidence: number }[] = [];
 
   try {
     for (const { label, q } of QUESTIONS) {
@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
         .bind(`smoke:${label}`, label, JSON.stringify(responseBody))
         .run();
 
-      out.push({ label, rejected, sources_count: sources.length, cited_docs: extractCitedDocs(answerText).length, reject_reason, confidence: isInsufficient ? 0.1 : 0.5 });
+      out.push({ label, rejected, sources_count: sources.length, cited_docs: extractCitedDocs(answerText).length, citation_markers: countCitationMarkers(answerText), reject_reason, confidence: isInsufficient ? 0.1 : 0.5 });
     }
     return NextResponse.json({ ok: true, ran: out, note: "Full responses in atlas_query_smoke (SE reads via MCP)." });
   } catch (e) {
