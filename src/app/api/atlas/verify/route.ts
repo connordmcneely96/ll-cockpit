@@ -39,21 +39,16 @@ export async function GET(req: NextRequest) {
     }
 
     // JUSTIFIED systemTenantId(): secret-gated index diagnostic over the shared corpus.
-    // TEMPORARY S1a-DIAG: ?nofilter=1 drops the tenant filter to isolate a metadata-index vs missing-vector cause. REMOVE after diagnosis.
-    const noFilter = url.searchParams.get("nofilter") === "1";
     const tenant = systemTenantId();
-    const result = await ATLAS_RAG.query(
-      embedResp.data[0],
-      noFilter
-        ? { topK: 5, returnMetadata: "all" }
-        : { topK: 5, returnMetadata: "all", filter: { tenant_id: tenant } }
-    );
+    const result = await ATLAS_RAG.query(embedResp.data[0], {
+      topK: 5, returnMetadata: "all", filter: { tenant_id: tenant },
+    });
 
     return NextResponse.json({
       query: q,
       embedding_model: EMBED_MODEL,
-      filtered: !noFilter,
-      tenant_filter: noFilter ? null : tenant,
+      filtered: true,
+      tenant_filter: tenant,
       matches: result.matches.map(m => ({
         id: m.id,
         score: m.score,
