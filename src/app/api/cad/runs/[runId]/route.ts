@@ -19,6 +19,8 @@ interface RunRow {
   max_cycles: number
   cycle: number
   status: string
+  design_status: string | null
+  design_diagnosis: string | null
   created_at: number
   updated_at: number
 }
@@ -44,7 +46,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
     const env = getBindings()
 
     const run = await env.DB
-      .prepare(`SELECT run_id, spec, max_cycles, cycle, status, created_at, updated_at FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
+      .prepare(`SELECT run_id, spec, max_cycles, cycle, status, design_status, design_diagnosis, created_at, updated_at FROM cad_convergence_runs WHERE run_id = ? AND user_id = ?`)
       .bind(runId, user.id)
       .first<RunRow>()
     if (!run) return json({ ok: false, error: 'run not found' }, 404)
