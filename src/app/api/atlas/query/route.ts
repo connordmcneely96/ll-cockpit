@@ -4,7 +4,7 @@ import { retrieve } from "@/lib/atlas/retrieve";
 import { route } from "@/lib/llm/router";
 import { createClient } from "@/lib/supabase-server";
 import { resolveTenantId } from "@/lib/tenant";
-import { hasEngineeringValues, evaluateGrounding } from "@/lib/atlas/grounding";
+import { evaluateGrounding } from "@/lib/atlas/grounding";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). route() receives the raw env (CloudflareEnv).
