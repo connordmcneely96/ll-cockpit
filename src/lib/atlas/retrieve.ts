@@ -32,6 +32,10 @@ export interface RetrieveOptions {
   useRewriter?: boolean;
   /** Per-variant topK (fetched before merge; default = topK * 2 to give RRF more signal) */
   variantTopK?: number;
+  /** Extra tenant partitions to union into the query (e.g. subscribed libraries).
+   *  The caller's own tenantId is ALWAYS included. Empty/omitted = single-tenant,
+   *  byte-identical to prior behavior. Never a wildcard. */
+  libraryTenantIds?: string[];
 }
 
 const EMBED_MODEL = "@cf/baai/bge-large-en-v1.5";
@@ -59,7 +63,12 @@ export async function retrieve(
   const useRewriter = opts.useRewriter ?? true;
   // Isolation: every Vectorize query is filtered to the caller's tenant. tenantId is
   // REQUIRED (positional) so a caller cannot forget it — a missing filter is a leak.
-  const filter = { tenant_id: tenantId };
+  // Opt-in libraries are UNIONED in; the caller's own tenantId is always first in the
+  // set. No libraries → the exact single-tenant shape as before. Never a wildcard.
+  const libs = opts.libraryTenantIds ?? [];
+  const filter = libs.length > 0
+    ? { tenant_id: { $in: [tenantId, ...libs] } }
+    : { tenant_id: tenantId };
 
   if (!useRewriter) {
     // Baseline: single embed + single query
