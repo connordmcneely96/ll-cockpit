@@ -5,6 +5,7 @@ import { route } from "@/lib/llm/router";
 import { createClient } from "@/lib/supabase-server";
 import { resolveTenantId } from "@/lib/tenant";
 import { evaluateGrounding } from "@/lib/atlas/grounding";
+import { resolveSubscribedLibraries } from "@/lib/atlas/subscriptions";
 
 // Lesson 12: getCloudflareContext from @opennextjs/cloudflare ONLY.
 // Inline Env cast (Sprint 18B ADR). route() receives the raw env (CloudflareEnv).
@@ -141,7 +142,11 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── 1. Retrieve ──
-    const chunks = await retrieve({ AI, ATLAS_RAG }, question, tenantId, { topK: max_sources, useRewriter: true });
+    // Union in any library partitions this tenant has explicitly subscribed to. Resolver
+    // fails closed (no DB / no rows / error → no libraries), so retrieval stays single-
+    // tenant unless a subscription row exists.
+    const libraryTenantIds = DB ? await resolveSubscribedLibraries(DB as unknown as D1Database, tenantId) : [];
+    const chunks = await retrieve({ AI, ATLAS_RAG }, question, tenantId, { topK: max_sources, useRewriter: true, libraryTenantIds });
 
     // ── 2. Build grounded prompt ──
     const chunkList = chunks
