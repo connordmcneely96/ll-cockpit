@@ -18,6 +18,7 @@ interface RunRow {
   max_cycles: number
   cycle: number
   status: string
+  design_status: string | null
   created_at: number
 }
 
@@ -29,7 +30,7 @@ export async function GET() {
 
     const env = getBindings()
     const rows = await env.DB
-      .prepare(`SELECT run_id, spec, max_cycles, cycle, status, created_at FROM cad_convergence_runs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`)
+      .prepare(`SELECT run_id, spec, max_cycles, cycle, status, design_status, created_at FROM cad_convergence_runs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`)
       .bind(user.id)
       .all<RunRow>()
 

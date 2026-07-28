@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import CadStatusChip from '@/components/cad/CadStatusChip'
 
 interface Run {
   run_id: string
@@ -8,16 +9,11 @@ interface Run {
   max_cycles: number
   cycle: number
   status: string
+  design_status: string | null
   created_at: number
 }
 interface ApiResponse { ok: boolean; error?: string; runs?: Run[] }
 
-const STATUS_COLOR: Record<string, string> = {
-  converged: 'text-green border-green/30 bg-green/5',
-  running: 'text-blue border-blue/30 bg-blue/5',
-  exhausted: 'text-gold border-gold/30 bg-gold/5',
-  failed: 'text-red border-red/30 bg-red/5',
-}
 function fmtDate(sec: number): string {
   if (!sec) return '—'
   return new Date(sec * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
@@ -42,8 +38,6 @@ export default function CadIndexPage() {
       .finally(() => alive && setLoading(false))
     return () => { alive = false }
   }, [])
-
-  const badge = 'px-1.5 py-0.5 font-mono text-[9px] rounded uppercase border'
 
   return (
     <div className="h-full flex flex-col overflow-auto">
@@ -70,7 +64,7 @@ export default function CadIndexPage() {
                 className="flex items-center gap-3 bg-base-3 border border-white/[0.06] rounded-lg px-3 py-2.5 hover:border-white/[0.12] transition-colors"
               >
                 <span className="font-mono text-[11px] text-text1 truncate flex-1">{r.spec}</span>
-                <span className={`${badge} ${STATUS_COLOR[r.status] ?? 'text-text3 border-white/[0.06] bg-base-4'} shrink-0`}>{r.status}</span>
+                <span className="shrink-0"><CadStatusChip runStatus={r.status} designStatus={r.design_status} cycle={r.cycle} maxCycles={r.max_cycles} /></span>
                 <span className="font-mono text-[10px] text-text3 shrink-0">cycle {r.cycle}/{r.max_cycles}</span>
                 <span className="font-mono text-[10px] text-text3 shrink-0 hidden sm:inline">{fmtDate(r.created_at)}</span>
               </a>

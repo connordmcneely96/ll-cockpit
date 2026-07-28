@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import ModelViewer from '@/components/library/ModelViewer'
 import DrawingViewer from '@/components/cad/DrawingViewer'
+import CadStatusChip from '@/components/cad/CadStatusChip'
+import { projectBadge } from '@/lib/cad/project-badge'
 
 interface Artifact {
   id: string
@@ -20,17 +22,13 @@ interface Run {
   max_cycles: number
   cycle: number
   status: string
+  design_status: string | null
+  design_diagnosis: string | null
   created_at: number
   updated_at: number
 }
 interface ApiResponse { ok: boolean; error?: string; run?: Run; artifacts?: Artifact[] }
 
-const STATUS_COLOR: Record<string, string> = {
-  converged: 'text-green border-green/30 bg-green/5',
-  running: 'text-blue border-blue/30 bg-blue/5',
-  exhausted: 'text-gold border-gold/30 bg-gold/5',
-  failed: 'text-red border-red/30 bg-red/5',
-}
 const VIEW_ORDER = ['front', 'top', 'right', 'iso'] as const
 const VIEW_LABEL: Record<string, string> = { front: 'Front', top: 'Top', right: 'Right', iso: 'Isometric' }
 const FORMAT_PURPOSE: Record<string, string> = {
@@ -87,6 +85,8 @@ export default function CadRunClient({ runId }: { runId: string }) {
   }
 
   const glb = artifacts.find((a) => a.artifact_type === 'cad-model' && a.format === 'glb' && a.storage_ref)
+  // An infeasible run has NO geometry — its engineering deliverable is the diagnosis.
+  const showDiagnosis = projectBadge(run.status, run.design_status) === 'infeasible' && !!run.design_diagnosis
   const sheet = artifacts.find((a) => a.artifact_name === 'part_sheet.svg' && a.storage_ref)
   const viewSvg = (v: string) => artifacts.find((a) => a.artifact_name === `part_${v}.svg` && a.storage_ref)
   const viewDxf = (v: string) => artifacts.find((a) => a.artifact_name === `part_${v}.dxf` && a.storage_ref)
@@ -99,7 +99,7 @@ export default function CadRunClient({ runId }: { runId: string }) {
         <p className="text-text3 font-mono text-[10px] uppercase tracking-widest">CAD Deliverable</p>
         <p className="font-mono text-xs text-text1 mt-1 whitespace-pre-wrap break-words">{run.spec}</p>
         <div className="flex flex-wrap items-center gap-2 mt-2">
-          <span className={`${badge} ${STATUS_COLOR[run.status] ?? 'text-text3 border-white/[0.06] bg-base-4'}`}>{run.status}</span>
+          <CadStatusChip runStatus={run.status} designStatus={run.design_status} cycle={run.cycle} maxCycles={run.max_cycles} />
           <span className="font-mono text-[10px] text-text3">cycle {run.cycle} of {run.max_cycles}</span>
           <span className="font-mono text-[10px] text-text3">{fmtDate(run.created_at)}</span>
           <span className="font-mono text-[9px] text-text3 truncate">{run.run_id}</span>
@@ -112,6 +112,11 @@ export default function CadRunClient({ runId }: { runId: string }) {
         {glb ? (
           <div className="h-[55vh] rounded-lg overflow-hidden border border-white/[0.06] bg-base-2">
             <ModelViewer src={r2(glb.storage_ref!)} />
+          </div>
+        ) : showDiagnosis ? (
+          <div className="rounded-lg border border-dashed border-verdict bg-verdict/5 p-3">
+            <p className="font-mono text-[9px] uppercase tracking-widest text-verdict mb-1.5">Design infeasible — no geometry</p>
+            <p className="font-mono text-[11px] text-text1 whitespace-pre-wrap break-words">{run.design_diagnosis}</p>
           </div>
         ) : (
           <p className="font-mono text-[10px] text-text3 py-6">No model for this run.</p>
