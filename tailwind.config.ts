@@ -27,6 +27,8 @@ const config: Config = {
         cyan: '#06b6d4',
         green: '#10b981',
         red: '#ef4444',
+        verdict: '#8B7BE8',  // nexus-shell --nx-verdict — infeasible (frozen)
+        pending: '#828D9C',  // nexus-shell --nx-pending — ungrounded/NULL resting (AA-checked)
         text1: '#e2e8f0',
         text2: '#94a3b8',
         text3: '#4b5563',
