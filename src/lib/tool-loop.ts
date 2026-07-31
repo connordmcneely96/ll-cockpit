@@ -17,6 +17,7 @@
 
 import type { CloudflareEnv } from '@/types'
 import { retrieve } from './atlas/retrieve'
+import { resolveSubscribedLibraries } from './atlas/subscriptions'
 import { runCadScript, meterCadExec } from './exec/cad-exec'
 import { resolveTenantId } from './tenant'
 
@@ -150,6 +151,11 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
       // Scope the agent's knowledge query to the subtask owner's tenant — never a
       // shared partition. resolveTenantId throws if the subtask has no owner.
       const tenantId = resolveTenantId({ userId })
+      // Union in any libraries this tenant has subscribed to, so a subscribed agent run can
+      // read the shared standards library alongside its own partition. Fail-closed: missing
+      // table / no rows / error → [], so the agent falls back to single-tenant. retrieve()
+      // always includes the caller's own tenantId regardless. (env.DB is D1Database.)
+      const libraryTenantIds = await resolveSubscribedLibraries(env.DB, tenantId)
       // retrieve()'s local VecIndex types returnMetadata looser (string|boolean) than the
       // official VectorizeIndex; the real binding is runtime-compatible. Cast bypasses the
       // too-loose upstream type without modifying the shared atlas/retrieve.ts.
@@ -157,7 +163,7 @@ const SAFE_TOOLS: Record<string, SafeTool> = {
         { AI: env.AI, ATLAS_RAG: env.ATLAS_RAG } as unknown as Parameters<typeof retrieve>[0],
         query,
         tenantId,
-        { topK, useRewriter: true },
+        { topK, useRewriter: true, libraryTenantIds },
       )
       return JSON.stringify(chunks.map((c) => ({ doc: c.doc, section: c.section, page: c.page, score: Number(c.score.toFixed(4)), text: c.text ? c.text.slice(0, 800) : null })))
     },
