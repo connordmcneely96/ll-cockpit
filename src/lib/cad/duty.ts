@@ -1,5 +1,21 @@
 import { z } from 'zod'
 
+// Canonical steel-family aliases → the solver's exact "Available:" spellings.
+// Steel only (196F). Keys lowercased+trimmed; values verbatim from the
+// engineering-calcs material table. Non-steel is intentionally out of scope —
+// it's handled by the solver's fuzzy fallback (196F-b), not a hardcoded intake map.
+const STEEL_ALIASES: Record<string, string> = {
+  '1018': 'AISI 1018', 'aisi 1018': 'AISI 1018', '1018 steel': 'AISI 1018',
+  '1045': 'AISI 1045', 'aisi 1045': 'AISI 1045', '1045 steel': 'AISI 1045',
+  '4140': 'AISI 4140', 'aisi 4140': 'AISI 4140', '4140 steel': 'AISI 4140',
+  '4340': 'AISI 4340', 'aisi 4340': 'AISI 4340', '4340 steel': 'AISI 4340',
+}
+
+function normalizeMaterial(raw: string): string {
+  const key = raw.trim().toLowerCase()
+  return STEEL_ALIASES[key] ?? raw   // unknown → pass through UNCHANGED (solver still judges it)
+}
+
 /**
  * Sprint 196D — the duty becomes DATA.
  *
@@ -23,7 +39,7 @@ export const PumpShaftDutySchema = z
     power: z.number().positive(),          // HP
     speed: z.number().positive(),          // RPM
     bearingSpan: z.number().positive(),    // in
-    material: z.string(),
+    material: z.string().transform(normalizeMaterial),
 
     // Optional — refine the solve; the solver derives sensible values when omitted.
     head: z.number().positive().optional(),                 // ft
