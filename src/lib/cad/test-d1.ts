@@ -1,5 +1,5 @@
 // Real-SQLite D1 stand-in for tests: executes the actual SQL against the actual
-// migrations/*.sql (node:sqlite, Node >= 22.5). Unlike design-gate.test.ts's fake,
+// migrations/*.sql (node:sqlite, Node >= 22.13). Unlike design-gate.test.ts's fake,
 // a column/bind mismatch or schema drift fails here. Throws (never skips) on old Node.
 import fs from 'node:fs'
 import path from 'node:path'
@@ -13,8 +13,9 @@ interface Stmt { run(...a: unknown[]): unknown; get(...a: unknown[]): unknown; a
 interface Sqlite { exec(sql: string): void; prepare(sql: string): Stmt }
 
 export async function makeSqliteD1() {
-  const major = Number(process.versions.node.split('.')[0])
-  if (major < 22) throw new Error(`persistence tests need Node >= 22.5 for node:sqlite; running ${process.version}`)
+  // node:sqlite is unflagged from 22.13.0 (22.5-22.12 need --experimental-sqlite). Fail loudly, never skip.
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  if (major < 22 || (major === 22 && minor < 13)) throw new Error(`persistence tests need Node >= 22.13 for unflagged node:sqlite; running ${process.version}`)
   // createRequire: vite-node can't resolve the `node:sqlite` specifier and @types/node lacks its typings.
   const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: new (p: string) => Sqlite }
   const sqlite = new DatabaseSync(':memory:')
